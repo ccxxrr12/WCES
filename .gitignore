@@ -1,0 +1,32 @@
+# Rust build artifacts
+rust-server/target/
+
+# ESP-IDF build artifacts
+firmware/esp32-c5-csi-node/build/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules (UI)
+ui/node_modules/
+ui/package-lock.json
+
+# Environment
+.env
+.env.local
+
+# macOS
+*.pem
