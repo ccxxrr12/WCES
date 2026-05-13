@@ -1,0 +1,41 @@
+# ESP32-C5 CSI Node — Default SDK Configuration
+# ESP-IDF v5.5+ required (v5.4 has C5 CSI cache bug on 5GHz, fixed in v5.5)
+# WiFi 6 (802.11ax) support is implicit when CONFIG_IDF_TARGET=esp32c5.
+
+# Target: ESP32-C5 (RISC-V, WiFi 6)
+CONFIG_IDF_TARGET="esp32c5"
+
+# Use custom partition table (8MB flash with OTA — ADR-045)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_display.csv"
+
+# Flash configuration: 8MB (Quad SPI)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Compiler optimization: optimize for size (C5 RISC-V code can be larger)
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Enable CSI (Channel State Information) in WiFi driver
+# C5 uses the NEW CSI config struct (acquire_csi_*) — different from S3 (lltf_en etc).
+# See esp-csi example: examples/get-started/csi_recv/main/app_main.c
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+
+# NVS encryption disabled by default (requires eFuse provisioning)
+# CONFIG_NVS_ENCRYPTION is not set
+
+# Disable unused features to reduce binary size
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# LWIP: enable extended socket options for UDP multicast
+CONFIG_LWIP_SO_RCVBUF=y
+
+# FreeRTOS: task stack for CSI processing
+# C5 has 400KB SRAM (vs S3's 512KB), reduce stack slightly
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
+
+# C5: Disable display by default (GPIO pins differ from S3)
+# C5 has only 22 GPIOs (0-21). S3 display pins 38, 47, 48 don't exist on C5.
+# To enable display on C5, reassign these pins in Kconfig and rebuild.
+# CONFIG_DISPLAY_ENABLE is not set

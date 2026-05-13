@@ -1,0 +1,1906 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WCES - 方舱生命体征监测系统</title>
+    <!-- Three.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-blue: #007AFF;
+            --success-green: #34C759;
+            --warning-orange: #FF9500;
+            --danger-red: #FF3B30;
+            --gray: #8E8E93;
+            --dark-gray: #636366;
+            --light-gray: #F2F2F7;
+            --bg-primary: #000000;
+            --bg-secondary: #1C1C1E;
+            --bg-tertiary: #2C2C2E;
+            --text-primary: #FFFFFF;
+            --text-secondary: #98989D;
+            --separator: #38383A;
+            --glass-bg: rgba(30, 30, 32, 0.8);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+            font-smooth: always;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(180deg, rgba(28, 28, 30, 0.95) 0%, rgba(28, 28, 30, 0.85) 100%);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 16px 24px;
+            border-bottom: 0.5px solid var(--separator);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+            z-index: 100;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary-blue) 0%, #5856D6 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 700;
+            box-shadow: 0 4px 16px rgba(0, 122, 255, 0.3);
+        }
+
+        .logo-text h1 {
+            font-size: 17px;
+            font-weight: 600;
+            letter-spacing: -0.4px;
+        }
+
+        .logo-text p {
+            font-size: 12px;
+            color: var(--text-secondary);
+            letter-spacing: -0.2px;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg-tertiary);
+            border-radius: 20px;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--gray);
+            transition: all 0.3s ease;
+        }
+
+        .status-dot.online {
+            background: var(--success-green);
+            box-shadow: 0 0 8px rgba(52, 199, 89, 0.6);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+
+        .time-display {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Main Layout */
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            height: calc(100vh - 73px);
+            gap: 1px;
+            background: var(--separator);
+        }
+
+        /* Left Panel - Map */
+        .map-panel {
+            background: var(--bg-secondary);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .map-header {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 50;
+        }
+
+        .map-title {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 10px 16px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 500;
+            border: 0.5px solid var(--separator);
+        }
+
+        .map-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .control-btn {
+            width: 40px;
+            height: 40px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 0.5px solid var(--separator);
+            border-radius: 10px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .control-btn:hover {
+            background: var(--bg-tertiary);
+            transform: scale(1.05);
+        }
+
+        .control-btn:active {
+            transform: scale(0.95);
+        }
+
+        .map-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 80px 24px 24px;
+        }
+
+        #map {
+            background: var(--bg-tertiary);
+            border-radius: 20px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .map-legend {
+            position: absolute;
+            bottom: 24px;
+            left: 24px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 16px;
+            border-radius: 16px;
+            border: 0.5px solid var(--separator);
+            z-index: 50;
+        }
+
+        .legend-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 0;
+            font-size: 13px;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.red { background: var(--danger-red); }
+        .legend-dot.yellow { background: var(--warning-orange); }
+        .legend-dot.green { background: var(--success-green); }
+        .legend-dot.gray { background: var(--gray); }
+        .legend-dot.blue { 
+            background: var(--primary-blue); 
+            border-radius: 3px;
+            transform: rotate(45deg);
+        }
+
+        /* Right Panel */
+        .sidebar {
+            background: var(--bg-secondary);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: var(--separator);
+            border-radius: 3px;
+        }
+
+        .sidebar-section {
+            padding: 20px;
+            border-bottom: 0.5px solid var(--separator);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+        }
+
+        .stat-card {
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            padding: 12px 8px;
+            text-align: center;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gray);
+        }
+
+        .stat-card.total::before { background: var(--primary-blue); }
+        .stat-card.red::before { background: var(--danger-red); }
+        .stat-card.yellow::before { background: var(--warning-orange); }
+        .stat-card.green::before { background: var(--success-green); }
+        .stat-card.black::before { background: var(--gray); }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            margin-bottom: 4px;
+        }
+
+        .stat-card.total .stat-value { color: var(--primary-blue); }
+        .stat-card.red .stat-value { color: var(--danger-red); }
+        .stat-card.yellow .stat-value { color: var(--warning-orange); }
+        .stat-card.green .stat-value { color: var(--success-green); }
+        .stat-card.black .stat-value { color: var(--gray); }
+
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Assessment */
+        .assessment-card {
+            background: var(--bg-tertiary);
+            border-radius: 16px;
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .assessment-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--warning-orange) 0%, #FF6B00 100%);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .assessment-info {
+            flex: 1;
+        }
+
+        .assessment-severity {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .assessment-detail {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* Survivors List */
+        .survivors-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .survivor-card {
+            background: var(--bg-tertiary);
+            border-radius: 16px;
+            padding: 16px;
+            transition: all 0.3s ease;
+            border: 0.5px solid transparent;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .survivor-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: var(--primary-blue);
+        }
+
+        .survivor-card.red::before { background: var(--danger-red); }
+        .survivor-card.yellow::before { background: var(--warning-orange); }
+        .survivor-card.green::before { background: var(--success-green); }
+        .survivor-card.black::before { background: var(--gray); }
+
+        .survivor-card:hover {
+            background: rgba(80, 80, 84, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        .survivor-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .survivor-id {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .survivor-avatar {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #5856D6 0%, #AF52DE 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .survivor-info h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .survivor-info p {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .triage-badge {
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .triage-badge.red { 
+            background: rgba(255, 59, 48, 0.15); 
+            color: var(--danger-red);
+        }
+        .triage-badge.yellow { 
+            background: rgba(255, 149, 0, 0.15); 
+            color: var(--warning-orange);
+        }
+        .triage-badge.green { 
+            background: rgba(52, 199, 89, 0.15); 
+            color: var(--success-green);
+        }
+        .triage-badge.black { 
+            background: rgba(142, 142, 147, 0.15); 
+            color: var(--gray);
+        }
+
+        .deteriorating-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: rgba(255, 149, 0, 0.15);
+            color: var(--warning-orange);
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .vitals-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .vital-item {
+            background: var(--bg-secondary);
+            border-radius: 10px;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .vital-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        .vital-icon.breathing {
+            background: rgba(0, 122, 255, 0.15);
+            color: var(--primary-blue);
+        }
+
+        .vital-icon.heart {
+            background: rgba(255, 59, 48, 0.15);
+            color: var(--danger-red);
+        }
+
+        .vital-data {
+            flex: 1;
+        }
+
+        .vital-value {
+            font-size: 15px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .vital-unit {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Alerts */
+        .alerts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .alert-item {
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            padding: 12px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            transition: all 0.3s ease;
+            border-left: 3px solid var(--gray);
+        }
+
+        .alert-item.prio1 { border-left-color: var(--danger-red); }
+        .alert-item.prio2 { border-left-color: var(--warning-orange); }
+
+        .alert-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .alert-item.prio1 .alert-icon { 
+            background: rgba(255, 59, 48, 0.15);
+            color: var(--danger-red);
+        }
+        .alert-item.prio2 .alert-icon { 
+            background: rgba(255, 149, 0, 0.15);
+            color: var(--warning-orange);
+        }
+
+        .alert-content {
+            flex: 1;
+        }
+
+        .alert-title {
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+
+        .alert-time {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Wasm Alerts */
+        .wasm-alert {
+            background: var(--bg-tertiary);
+            border-radius: 10px;
+            padding: 10px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            border-left: 3px solid var(--gray);
+        }
+
+        .wasm-alert.critical { border-left-color: var(--danger-red); }
+        .wasm-alert.warning { border-left-color: var(--warning-orange); }
+        .wasm-alert.info { border-left-color: var(--primary-blue); }
+
+        .wasm-module {
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            background: var(--bg-secondary);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .wasm-value {
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 32px;
+            color: var(--text-secondary);
+        }
+
+        .empty-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        .empty-text {
+            font-size: 13px;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate-in {
+            animation: fadeIn 0.4s ease forwards;
+        }
+
+        /* Skeleton Toggle */
+        .skeleton-toggle {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--bg-tertiary);
+            padding: 12px 16px;
+            border-radius: 12px;
+        }
+
+        .toggle-label {
+            flex: 1;
+            font-size: 13px;
+        }
+
+        .toggle-btn {
+            background: var(--bg-secondary);
+            border: none;
+            color: var(--text-primary);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .toggle-btn.active {
+            background: var(--primary-blue);
+        }
+
+        .toggle-btn:hover {
+            opacity: 0.85;
+        }
+
+        /* Vital Signs Chart Area */
+        .vitals-chart-card {
+            background: var(--bg-tertiary);
+            border-radius: 16px;
+            padding: 16px;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .chart-title {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .chart-metrics {
+            display: flex;
+            gap: 16px;
+        }
+
+        .metric-item {
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 18px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .metric-item.breathing .metric-value { color: var(--primary-blue); }
+        .metric-item.heart .metric-value { color: var(--danger-red); }
+
+        .metric-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* 3D Skeleton Viewer */
+        .viewer-container {
+            width: 100%;
+            height: 100%;
+            display: none;
+        }
+
+        .viewer-container.active {
+            display: block;
+        }
+
+        #skeletonCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            border-radius: 20px;
+        }
+
+        .view-toggle {
+            display: flex;
+            gap: 8px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 4px;
+            border-radius: 10px;
+            border: 0.5px solid var(--separator);
+        }
+
+        .view-tab {
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .view-tab:hover {
+            color: var(--text-primary);
+        }
+
+        .view-tab.active {
+            background: var(--primary-blue);
+            color: white;
+        }
+
+        .skeleton-controls {
+            position: absolute;
+            bottom: 24px;
+            right: 24px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 12px;
+            border-radius: 12px;
+            border: 0.5px solid var(--separator);
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .skeleton-control-btn {
+            width: 36px;
+            height: 36px;
+            background: var(--bg-tertiary);
+            border: 0.5px solid var(--separator);
+            border-radius: 8px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .skeleton-control-btn:hover {
+            background: var(--primary-blue);
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <div class="logo-icon">W</div>
+                <div class="logo-text">
+                    <h1>WCES 生命体征监测系统</h1>
+                    <p>WiFi CSI &amp; 边缘AI驱动</p>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="time-display" id="timeDisplay">--:--:--</div>
+            <div class="status-indicator">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">等待连接</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Map Panel -->
+        <div class="map-panel">
+            <div class="map-header">
+                <div class="view-toggle">
+                    <button class="view-tab active" id="mapTab" onclick="switchView('map')">
+                        🗺️ 位置地图
+                    </button>
+                    <button class="view-tab" id="skeletonTab" onclick="switchView('skeleton')">
+                        🦴 3D骨架
+                    </button>
+                </div>
+                <div class="map-controls">
+                    <button class="control-btn" onclick="resetView()" title="重置视图">⟲</button>
+                    <button class="control-btn" onclick="toggleHeatmap()" title="热力图">🌡</button>
+                </div>
+            </div>
+            
+            <!-- Map View -->
+            <div class="map-container" id="mapContainer">
+                <canvas id="map" width="700" height="550"></canvas>
+            </div>
+            
+            <!-- 3D Skeleton View -->
+            <div class="viewer-container" id="skeletonContainer">
+                <canvas id="skeletonCanvas"></canvas>
+            </div>
+            
+            <!-- Map Legend (only in map view) -->
+            <div class="map-legend" id="mapLegend">
+                <div class="legend-title">图例</div>
+                <div class="legend-item">
+                    <span class="legend-dot red"></span>
+                    <span>紧急 (Immediate)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot yellow"></span>
+                    <span>延迟 (Delayed)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot green"></span>
+                    <span>轻伤 (Minor)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot gray"></span>
+                    <span>死亡 (Deceased)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot blue"></span>
+                    <span>ESP32-C5 节点</span>
+                </div>
+            </div>
+            
+            <!-- Skeleton Controls (only in skeleton view) -->
+            <div class="skeleton-controls" id="skeletonControls" style="display: none;">
+                <button class="skeleton-control-btn" onclick="resetCamera()" title="重置相机">🎯</button>
+                <button class="skeleton-control-btn" onclick="toggleAutoRotate()" title="自动旋转">🔄</button>
+                <button class="skeleton-control-btn" onclick="toggleWireframe()" title="线框模式">🔲</button>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <!-- Stats Section -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">分诊统计</span>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card total">
+                        <div class="stat-value" id="statTotal">0</div>
+                        <div class="stat-label">总计</div>
+                    </div>
+                    <div class="stat-card red">
+                        <div class="stat-value" id="statRed">0</div>
+                        <div class="stat-label">紧急</div>
+                    </div>
+                    <div class="stat-card yellow">
+                        <div class="stat-value" id="statYellow">0</div>
+                        <div class="stat-label">延迟</div>
+                    </div>
+                    <div class="stat-card green">
+                        <div class="stat-value" id="statGreen">0</div>
+                        <div class="stat-label">轻伤</div>
+                    </div>
+                    <div class="stat-card black">
+                        <div class="stat-value" id="statBlack">0</div>
+                        <div class="stat-label">死亡</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Assessment Section -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">伤情评估</span>
+                </div>
+                <div class="assessment-card">
+                    <div class="assessment-icon">⚠️</div>
+                    <div class="assessment-info">
+                        <div class="assessment-severity" id="severityText">等待数据</div>
+                        <div class="assessment-detail" id="rescuerText">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vital Signs Overview -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">当前生命体征</span>
+                </div>
+                <div class="vitals-chart-card">
+                    <div class="chart-header">
+                        <span class="chart-title">综合指标</span>
+                    </div>
+                    <div class="chart-metrics">
+                        <div class="metric-item breathing">
+                            <div class="metric-value" id="currentBreathing">--</div>
+                            <div class="metric-label">呼吸/分</div>
+                        </div>
+                        <div class="metric-item heart">
+                            <div class="metric-value" id="currentHeart">--</div>
+                            <div class="metric-label">心率BPM</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skeleton Toggle -->
+            <div class="sidebar-section">
+                <div class="skeleton-toggle">
+                    <span class="toggle-label">3D 骨架可视化</span>
+                    <button class="toggle-btn" id="skelBtn" onclick="toggleSkeleton()">关闭</button>
+                </div>
+            </div>
+
+            <!-- Survivors List -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">伤员列表</span>
+                </div>
+                <div class="survivors-container" id="survivorsList">
+                    <div class="empty-state">
+                        <div class="empty-icon">👤</div>
+                        <div class="empty-text">等待 CSI 数据...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alerts Section -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">告警通知</span>
+                </div>
+                <div class="alerts-container" id="alertsList">
+                    <div class="empty-state">
+                        <div class="empty-icon">🔔</div>
+                        <div class="empty-text">暂无告警</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Wasm Alerts Section -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">边缘模块事件</span>
+                </div>
+                <div class="alerts-container" id="wasmAlertsList">
+                    <div class="empty-state">
+                        <div class="empty-icon">🔬</div>
+                        <div class="empty-text">边缘模块就绪</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== Global State ====================
+        const NODES = [
+            { id: 1, x: 350, y: 120, label: 'C5 #1' },
+            { id: 2, x: 120, y: 420, label: 'C5 #2' },
+            { id: 3, x: 580, y: 420, label: 'C5 #3' }
+        ];
+        const MAP_WIDTH = 700;
+        const MAP_HEIGHT = 550;
+        const MAP_MARGIN = 50;
+        
+        let latestTriage = null;
+        let latestData = null;
+        let skeletonEnabled = false;
+        let showHeatmap = false;
+        let ws = null;
+        let currentView = 'map';
+        
+        // 3D Skeleton State
+        let scene, camera, renderer, controls;
+        let skeletonGroup;
+        let autoRotate = true;
+        let isWireframe = false;
+        let animationTime = 0;
+        
+        // Skeleton connections (26 points)
+        const SKELETON_CONNECTIONS = [
+            [0, 1], [0, 2], [1, 3], [2, 4],           // Head
+            [0, 25],                                    // Nose -> Neck
+            [25, 5], [25, 6],                           // Neck -> Shoulders
+            [5, 7], [7, 9],                             // Left arm
+            [6, 8], [8, 10],                            // Right arm
+            [5, 11], [6, 12],                           // Torso
+            [11, 12],                                   // Hips
+            [11, 13], [13, 15],                         // Left leg
+            [12, 14], [14, 16],                         // Right leg
+            [9, 17], [9, 18], [9, 19],                  // Left hand
+            [10, 20], [10, 21], [10, 22],               // Right hand
+            [15, 23], [16, 24]                          // Feet
+        ];
+        
+        // Colors
+        const COLORS = {
+            joint: 0x00d878,
+            limb: 0x3eff8a,
+            head: 0x00e5ff,
+            spine: 0x5856d6,
+            background: 0x0f0f10
+        };
+
+        // ==================== Canvas Map ====================
+        const canvas = document.getElementById('map');
+        const ctx = canvas.getContext('2d');
+
+        function drawMap() {
+            // Clear
+            ctx.clearRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+            
+            // Background gradient
+            const bgGrad = ctx.createLinearGradient(0, 0, 0, MAP_HEIGHT);
+            bgGrad.addColorStop(0, '#1C1C1E');
+            bgGrad.addColorStop(1, '#0F0F10');
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+
+            // Grid
+            ctx.strokeStyle = '#2C2C2E';
+            ctx.lineWidth = 0.5;
+            for (let x = MAP_MARGIN; x <= MAP_WIDTH - MAP_MARGIN; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, MAP_MARGIN);
+                ctx.lineTo(x, MAP_HEIGHT - MAP_MARGIN);
+                ctx.stroke();
+            }
+            for (let y = MAP_MARGIN; y <= MAP_HEIGHT - MAP_MARGIN; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(MAP_MARGIN, y);
+                ctx.lineTo(MAP_WIDTH - MAP_MARGIN, y);
+                ctx.stroke();
+            }
+
+            // Border
+            ctx.strokeStyle = '#38383A';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(MAP_MARGIN, MAP_MARGIN, MAP_WIDTH - 2 * MAP_MARGIN, MAP_HEIGHT - 2 * MAP_MARGIN);
+
+            // Scale labels
+            ctx.fillStyle = '#636366';
+            ctx.font = '11px -apple-system, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('4m', MAP_WIDTH / 2, MAP_MARGIN - 10);
+            ctx.textAlign = 'right';
+            ctx.fillText('3m', MAP_MARGIN - 10, MAP_HEIGHT / 2 + 4);
+
+            // Draw Nodes
+            NODES.forEach(node => {
+                // Range ring
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 100, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(0, 122, 255, 0.15)';
+                ctx.setLineDash([6, 6]);
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Node body
+                ctx.beginPath();
+                ctx.save();
+                ctx.translate(node.x, node.y);
+                ctx.rotate(Math.PI / 4);
+                ctx.fillStyle = '#007AFF';
+                ctx.shadowColor = 'rgba(0, 122, 255, 0.5)';
+                ctx.shadowBlur = 12;
+                ctx.fillRect(-8, -8, 16, 16);
+                ctx.restore();
+
+                // Node label
+                ctx.fillStyle = '#007AFF';
+                ctx.font = '12px -apple-system, sans-serif';
+                ctx.fontWeight = '500';
+                ctx.textAlign = 'center';
+                ctx.shadowBlur = 0;
+                ctx.fillText(node.label, node.x, node.y - 22);
+            });
+
+            // Draw Survivors
+            if (latestTriage && latestTriage.survivors) {
+                latestTriage.survivors.forEach((survivor, index) => {
+                    const px = survivor.position 
+                        ? MAP_MARGIN + (survivor.position[0] + 2) / 4 * (MAP_WIDTH - 2 * MAP_MARGIN)
+                        : MAP_WIDTH / 2;
+                    const py = survivor.position 
+                        ? MAP_MARGIN + (survivor.position[1] + 1.5) / 3 * (MAP_HEIGHT - 2 * MAP_MARGIN)
+                        : MAP_HEIGHT / 2;
+                    
+                    const cx = Math.max(MAP_MARGIN, Math.min(MAP_WIDTH - MAP_MARGIN, px));
+                    const cy = Math.max(MAP_MARGIN, Math.min(MAP_HEIGHT - MAP_MARGIN, py));
+
+                    // Deterioration ring
+                    if (survivor.triage_color === 'red' || survivor.is_deteriorating) {
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+                        const ringColor = survivor.is_deteriorating 
+                            ? 'rgba(255, 149, 0, 0.2)'
+                            : 'rgba(255, 59, 48, 0.15)';
+                        ctx.fillStyle = ringColor;
+                        ctx.fill();
+                    }
+
+                    // Survivor dot
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+                    
+                    let dotColor = '#007AFF';
+                    if (survivor.triage_color === 'red') dotColor = '#FF3B30';
+                    else if (survivor.triage_color === 'yellow') dotColor = '#FF9500';
+                    else if (survivor.triage_color === 'green') dotColor = '#34C759';
+                    else if (survivor.triage_color === 'black') dotColor = '#8E8E93';
+                    
+                    ctx.fillStyle = dotColor;
+                    ctx.shadowColor = dotColor;
+                    ctx.shadowBlur = 16;
+                    ctx.fill();
+                    
+                    // White border
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // ID label
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.font = 'bold 11px -apple-system, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(survivor.id.substring(0, 8), cx, cy - 24);
+
+                    // Breathing rate
+                    if (survivor.breathing_rate !== null && survivor.breathing_rate !== undefined) {
+                        ctx.font = '10px -apple-system, sans-serif';
+                        ctx.fillStyle = '#98989D';
+                        ctx.fillText(survivor.breathing_rate.toFixed(0) + '/min', cx, cy + 26);
+                    }
+                });
+            }
+        }
+        
+        // ==================== 3D Skeleton ====================
+        function init3D() {
+            const container = document.getElementById('skeletonContainer');
+            const canvasEl = document.getElementById('skeletonCanvas');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(COLORS.background);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                50, 
+                container.clientWidth / container.clientHeight, 
+                0.1, 
+                1000
+            );
+            camera.position.set(0, 1.2, 4);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ 
+                canvas: canvasEl, 
+                antialias: true,
+                alpha: true
+            });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.autoRotate = autoRotate;
+            controls.autoRotateSpeed = 1.0;
+            controls.minDistance = 2;
+            controls.maxDistance = 10;
+            controls.target.set(0, 1, 0);
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambientLight);
+            
+            const mainLight = new THREE.DirectionalLight(0x007AFF, 0.8);
+            mainLight.position.set(5, 10, 7);
+            mainLight.castShadow = true;
+            scene.add(mainLight);
+            
+            const fillLight = new THREE.DirectionalLight(0xFF9500, 0.3);
+            fillLight.position.set(-5, 5, -5);
+            scene.add(fillLight);
+            
+            // Ground plane
+            const groundGeometry = new THREE.CircleGeometry(3, 32);
+            const groundMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x1C1C1E,
+                metalness: 0.3,
+                roughness: 0.8
+            });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            // Grid helper
+            const gridHelper = new THREE.GridHelper(4, 20, 0x38383A, 0x2C2C2E);
+            scene.add(gridHelper);
+            
+            // Create skeleton
+            createSkeleton();
+            
+            // Resize handler
+            window.addEventListener('resize', onWindowResize);
+            
+            // Start animation
+            animate();
+        }
+        
+        function createSkeleton() {
+            skeletonGroup = new THREE.Group();
+            scene.add(skeletonGroup);
+            
+            // Create joints (spheres)
+            const joints = [];
+            for (let i = 0; i < 26; i++) {
+                const geometry = new THREE.SphereGeometry(i < 5 ? 0.06 : 0.04, 16, 16);
+                const material = new THREE.MeshStandardMaterial({
+                    color: i < 5 ? COLORS.head : COLORS.joint,
+                    emissive: i < 5 ? COLORS.head : COLORS.joint,
+                    emissiveIntensity: 0.2,
+                    metalness: 0.5,
+                    roughness: 0.3
+                });
+                const joint = new THREE.Mesh(geometry, material);
+                joint.castShadow = true;
+                joint.userData.index = i;
+                joints.push(joint);
+                skeletonGroup.add(joint);
+            }
+            
+            // Create bones (cylinders between joints)
+            const bones = [];
+            for (const [i, j] of SKELETON_CONNECTIONS) {
+                const geometry = new THREE.CylinderGeometry(0.02, 0.02, 1, 8);
+                const material = new THREE.MeshStandardMaterial({
+                    color: COLORS.limb,
+                    emissive: COLORS.limb,
+                    emissiveIntensity: 0.15,
+                    metalness: 0.3,
+                    roughness: 0.5
+                });
+                const bone = new THREE.Mesh(geometry, material);
+                bone.castShadow = true;
+                bone.userData.jointA = i;
+                bone.userData.jointB = j;
+                bones.push(bone);
+                skeletonGroup.add(bone);
+            }
+            
+            // Store references
+            skeletonGroup.userData.joints = joints;
+            skeletonGroup.userData.bones = bones;
+            
+            // Initial pose (T-pose)
+            updateSkeletonPose(getDefaultPose());
+        }
+        
+        function getDefaultPose() {
+            // Return 26-point pose in T-stance
+            return [
+                { x: 0, y: 1.7, z: 0 },       // 0: nose
+                { x: -0.08, y: 1.72, z: 0 },  // 1: left eye
+                { x: 0.08, y: 1.72, z: 0 },   // 2: right eye
+                { x: -0.12, y: 1.7, z: 0 },   // 3: left ear
+                { x: 0.12, y: 1.7, z: 0 },    // 4: right ear
+                { x: -0.25, y: 1.5, z: 0 },   // 5: left shoulder
+                { x: 0.25, y: 1.5, z: 0 },    // 6: right shoulder
+                { x: -0.5, y: 1.3, z: 0 },    // 7: left elbow
+                { x: 0.5, y: 1.3, z: 0 },     // 8: right elbow
+                { x: -0.75, y: 1.1, z: 0 },   // 9: left wrist
+                { x: 0.75, y: 1.1, z: 0 },    // 10: right wrist
+                { x: -0.15, y: 1.0, z: 0 },   // 11: left hip
+                { x: 0.15, y: 1.0, z: 0 },    // 12: right hip
+                { x: -0.18, y: 0.55, z: 0 },  // 13: left knee
+                { x: 0.18, y: 0.55, z: 0 },   // 14: right knee
+                { x: -0.2, y: 0.1, z: 0 },    // 15: left ankle
+                { x: 0.2, y: 0.1, z: 0 },     // 16: right ankle
+                { x: -0.85, y: 1.12, z: -0.05 }, // 17: left thumb
+                { x: -0.9, y: 1.08, z: 0 },    // 18: left index
+                { x: -0.85, y: 1.06, z: 0.05 }, // 19: left pinky
+                { x: 0.85, y: 1.12, z: -0.05 }, // 20: right thumb
+                { x: 0.9, y: 1.08, z: 0 },     // 21: right index
+                { x: 0.85, y: 1.06, z: 0.05 },  // 22: right pinky
+                { x: -0.25, y: 0.08, z: 0.15 }, // 23: left foot
+                { x: 0.25, y: 0.08, z: 0.15 },  // 24: right foot
+                { x: 0, y: 1.58, z: 0 }         // 25: neck
+            ];
+        }
+        
+        function updateSkeletonPose(pose) {
+            if (!skeletonGroup) return;
+            
+            const joints = skeletonGroup.userData.joints;
+            const bones = skeletonGroup.userData.bones;
+            
+            // Update joint positions
+            pose.forEach((point, i) => {
+                if (joints[i]) {
+                    joints[i].position.set(point.x, point.y, point.z);
+                }
+            });
+            
+            // Update bones (connect joints)
+            bones.forEach(bone => {
+                const jointA = joints[bone.userData.jointA];
+                const jointB = joints[bone.userData.jointB];
+                
+                if (jointA && jointB) {
+                    // Position midpoint
+                    const mid = new THREE.Vector3().addVectors(jointA.position, jointB.position).multiplyScalar(0.5);
+                    bone.position.copy(mid);
+                    
+                    // Orient towards second joint
+                    const direction = new THREE.Vector3().subVectors(jointB.position, jointA.position);
+                    const length = direction.length();
+                    
+                    bone.scale.y = length;
+                    bone.lookAt(jointB.position);
+                    bone.rotateX(Math.PI / 2);
+                }
+            });
+        }
+        
+        function animatePose(t) {
+            const basePose = getDefaultPose();
+            
+            // Add breathing animation
+            const breathing = Math.sin(t * 2) * 0.02;
+            const chest = Math.sin(t * 2) * 0.01;
+            
+            basePose[25].y += breathing; // neck
+            basePose[5].z += chest; // left shoulder
+            basePose[6].z += chest; // right shoulder
+            
+            // Add subtle arm swing
+            const armSwing = Math.sin(t * 1.5) * 0.05;
+            basePose[9].z += armSwing;
+            basePose[10].z -= armSwing;
+            
+            // Add slight body sway
+            const sway = Math.sin(t * 0.8) * 0.03;
+            basePose[0].x += sway;
+            basePose[25].x += sway * 0.5;
+            
+            updateSkeletonPose(basePose);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (currentView === 'skeleton') {
+                animationTime += 0.016;
+                
+                // Animate the skeleton
+                animatePose(animationTime);
+                
+                // Update controls
+                controls.update();
+                
+                // Render
+                renderer.render(scene, camera);
+            }
+        }
+        
+        function onWindowResize() {
+            const container = document.getElementById('skeletonContainer');
+            if (container && camera && renderer) {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            }
+        }
+        
+        // ==================== View Switching ====================
+        function switchView(view) {
+            currentView = view;
+            
+            document.getElementById('mapTab').classList.toggle('active', view === 'map');
+            document.getElementById('skeletonTab').classList.toggle('active', view === 'skeleton');
+            document.getElementById('mapContainer').style.display = view === 'map' ? 'flex' : 'none';
+            document.getElementById('skeletonContainer').classList.toggle('active', view === 'skeleton');
+            document.getElementById('mapLegend').style.display = view === 'map' ? 'block' : 'none';
+            document.getElementById('skeletonControls').style.display = view === 'skeleton' ? 'flex' : 'none';
+            
+            if (view === 'skeleton') {
+                if (!scene) {
+                    init3D();
+                } else {
+                    onWindowResize();
+                }
+            } else {
+                drawMap();
+            }
+        }
+        
+        function resetView() {
+            if (currentView === 'map') {
+                drawMap();
+            } else {
+                resetCamera();
+            }
+        }
+        
+        function resetCamera() {
+            if (camera && controls) {
+                camera.position.set(0, 1.2, 4);
+                controls.target.set(0, 1, 0);
+                controls.update();
+            }
+        }
+        
+        function toggleAutoRotate() {
+            autoRotate = !autoRotate;
+            if (controls) {
+                controls.autoRotate = autoRotate;
+            }
+        }
+        
+        function toggleWireframe() {
+            isWireframe = !isWireframe;
+            if (skeletonGroup) {
+                skeletonGroup.userData.joints.forEach(joint => {
+                    joint.material.wireframe = isWireframe;
+                });
+                skeletonGroup.userData.bones.forEach(bone => {
+                    bone.material.wireframe = isWireframe;
+                });
+            }
+        }
+
+        // ==================== Data Rendering ====================
+        function renderFromServer() {
+            if (!latestTriage) return;
+            
+            const assessment = latestTriage.assessment;
+            
+            // Update stats
+            document.getElementById('statTotal').textContent = assessment.total;
+            document.getElementById('statRed').textContent = assessment.immediate;
+            document.getElementById('statYellow').textContent = assessment.delayed;
+            document.getElementById('statGreen').textContent = assessment.minor;
+            document.getElementById('statBlack').textContent = assessment.deceased;
+
+            // Update assessment
+            document.getElementById('severityText').textContent = `伤情等级: ${assessment.severity}`;
+            document.getElementById('rescuerText').textContent = `建议救援人员: ${assessment.rescuer_estimate} 人`;
+
+            // Update survivors list
+            const survivorsList = document.getElementById('survivorsList');
+            if (!latestTriage.survivors || latestTriage.survivors.length === 0) {
+                survivorsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">👤</div>
+                        <div class="empty-text">未检测到伤员</div>
+                    </div>
+                `;
+            } else {
+                survivorsList.innerHTML = latestTriage.survivors.map((s, idx) => `
+                    <div class="survivor-card ${s.triage_color} animate-in" style="animation-delay: ${idx * 50}ms">
+                        <div class="survivor-header">
+                            <div class="survivor-id">
+                                <div class="survivor-avatar">${s.id.substring(5, 7)}</div>
+                                <div class="survivor-info">
+                                    <h3>${s.id}</h3>
+                                    <p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${s.estimated_age}</p>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                ${s.is_deteriorating ? '<span class="deteriorating-badge">⚠ 恶化</span>' : ''}
+                                <span class="triage-badge ${s.triage_color}">${s.triage}</span>
+                            </div>
+                        </div>
+                        <div class="vitals-row">
+                            <div class="vital-item">
+                                <div class="vital-icon breathing">🫁</div>
+                                <div class="vital-data">
+                                    <div class="vital-value">${s.breathing_rate?.toFixed(1) ?? '--'}</div>
+                                    <div class="vital-unit">呼吸/分</div>
+                                </div>
+                            </div>
+                            <div class="vital-item">
+                                <div class="vital-icon heart">❤️</div>
+                                <div class="vital-data">
+                                    <div class="vital-value">${s.heart_rate?.toFixed(0) ?? '--'}</div>
+                                    <div class="vital-unit">心率BPM</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Update alerts
+            const alertsList = document.getElementById('alertsList');
+            if (!latestTriage.alerts || latestTriage.alerts.length === 0) {
+                alertsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🔔</div>
+                        <div class="empty-text">暂无告警</div>
+                    </div>
+                `;
+            } else {
+                alertsList.innerHTML = latestTriage.alerts.slice(0, 10).map((alert, idx) => `
+                    <div class="alert-item prio${alert.priority} animate-in" style="animation-delay: ${idx * 50}ms">
+                        <div class="alert-icon">${alert.priority === 1 ? '🚨' : '⚠️'}</div>
+                        <div class="alert-content">
+                            <div class="alert-title">${alert.survivor_id.substring(0, 8)}: ${alert.message}</div>
+                            <div class="alert-time">${alert.time}</div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Update wasm alerts
+            const wasmAlertsList = document.getElementById('wasmAlertsList');
+            if (latestData && latestData.wasm_alerts && latestData.wasm_alerts.length > 0) {
+                wasmAlertsList.innerHTML = latestData.wasm_alerts.slice(0, 8).map((alert, idx) => `
+                    <div class="wasm-alert ${alert.severity} animate-in" style="animation-delay: ${idx * 30}ms">
+                        <span class="wasm-module">[${alert.module}]</span>
+                        <span>${alert.event_name}</span>
+                        <span class="wasm-value">${alert.value.toFixed(1)}</span>
+                    </div>
+                `).join('');
+            } else {
+                wasmAlertsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🔬</div>
+                        <div class="empty-text">边缘模块就绪</div>
+                    </div>
+                `;
+            }
+
+            // Update current vitals
+            if (latestData && latestData.vital_signs) {
+                document.getElementById('currentBreathing').textContent = 
+                    latestData.vital_signs.breathing_rate_bpm?.toFixed(0) ?? '--';
+                document.getElementById('currentHeart').textContent = 
+                    latestData.vital_signs.heart_rate_bpm?.toFixed(0) ?? '--';
+            }
+
+            drawMap();
+        }
+
+        // ==================== WebSocket ====================
+        function handleUpdate(data) {
+            latestData = data;
+            
+            if (data.triage_update) {
+                latestTriage = data.triage_update;
+                renderFromServer();
+            }
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://${location.hostname}:8765/ws/sensing`);
+            
+            ws.onopen = () => {
+                document.getElementById('statusDot').className = 'status-dot online';
+                document.getElementById('statusText').textContent = '已连接';
+                latestTriage = null;
+            };
+            
+            ws.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.type === 'sensing_update') {
+                        handleUpdate(data);
+                    }
+                } catch (err) {
+                    console.error('Parse error:', err);
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('statusDot').className = 'status-dot';
+                document.getElementById('statusText').textContent = '断开 · 5s重连';
+                setTimeout(connectWebSocket, 5000);
+            };
+            
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        // ==================== Controls ====================
+        function toggleSkeleton() {
+            skeletonEnabled = !skeletonEnabled;
+            const btn = document.getElementById('skelBtn');
+            btn.textContent = skeletonEnabled ? '已开启' : '关闭';
+            btn.classList.toggle('active', skeletonEnabled);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    cmd: skeletonEnabled ? 'enable_skeleton' : 'disable_skeleton'
+                }));
+            }
+        }
+
+        function resetMap() {
+            drawMap();
+        }
+
+        function toggleHeatmap() {
+            showHeatmap = !showHeatmap;
+            drawMap();
+        }
+
+        // ==================== Time Display ====================
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-CN', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            document.getElementById('timeDisplay').textContent = timeStr;
+        }
+
+        // ==================== Data Rendering ====================
+        function renderFromServer() {
+            if (!latestTriage) return;
+            
+            const assessment = latestTriage.assessment;
+            
+            // Update stats
+            document.getElementById('statTotal').textContent = assessment.total;
+            document.getElementById('statRed').textContent = assessment.immediate;
+            document.getElementById('statYellow').textContent = assessment.delayed;
+            document.getElementById('statGreen').textContent = assessment.minor;
+            document.getElementById('statBlack').textContent = assessment.deceased;
+
+            // Update assessment
+            document.getElementById('severityText').textContent = `伤情等级: ${assessment.severity}`;
+            document.getElementById('rescuerText').textContent = `建议救援人员: ${assessment.rescuer_estimate} 人`;
+
+            // Update survivors list
+            const survivorsList = document.getElementById('survivorsList');
+            if (!latestTriage.survivors || latestTriage.survivors.length === 0) {
+                survivorsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">👤</div>
+                        <div class="empty-text">未检测到伤员</div>
+                    </div>
+                `;
+            } else {
+                survivorsList.innerHTML = latestTriage.survivors.map((s, idx) => `
+                    <div class="survivor-card ${s.triage_color} animate-in" style="animation-delay: ${idx * 50}ms">
+                        <div class="survivor-header">
+                            <div class="survivor-id">
+                                <div class="survivor-avatar">${s.id.substring(5, 7)}</div>
+                                <div class="survivor-info">
+                                    <h3>${s.id}</h3>
+                                    <p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${s.estimated_age}</p>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                ${s.is_deteriorating ? '<span class="deteriorating-badge">⚠ 恶化</span>' : ''}
+                                <span class="triage-badge ${s.triage_color}">${s.triage}</span>
+                            </div>
+                        </div>
+                        <div class="vitals-row">
+                            <div class="vital-item">
+                                <div class="vital-icon breathing">🫁</div>
+                                <div class="vital-data">
+                                    <div class="vital-value">${s.breathing_rate?.toFixed(1) ?? '--'}</div>
+                                    <div class="vital-unit">呼吸/分</div>
+                                </div>
+                            </div>
+                            <div class="vital-item">
+                                <div class="vital-icon heart">❤️</div>
+                                <div class="vital-data">
+                                    <div class="vital-value">${s.heart_rate?.toFixed(0) ?? '--'}</div>
+                                    <div class="vital-unit">心率BPM</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Update alerts
+            const alertsList = document.getElementById('alertsList');
+            if (!latestTriage.alerts || latestTriage.alerts.length === 0) {
+                alertsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🔔</div>
+                        <div class="empty-text">暂无告警</div>
+                    </div>
+                `;
+            } else {
+                alertsList.innerHTML = latestTriage.alerts.slice(0, 10).map((alert, idx) => `
+                    <div class="alert-item prio${alert.priority} animate-in" style="animation-delay: ${idx * 50}ms">
+                        <div class="alert-icon">${alert.priority === 1 ? '🚨' : '⚠️'}</div>
+                        <div class="alert-content">
+                            <div class="alert-title">${alert.survivor_id.substring(0, 8)}: ${alert.message}</div>
+                            <div class="alert-time">${alert.time}</div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Update wasm alerts
+            const wasmAlertsList = document.getElementById('wasmAlertsList');
+            if (latestData && latestData.wasm_alerts && latestData.wasm_alerts.length > 0) {
+                wasmAlertsList.innerHTML = latestData.wasm_alerts.slice(0, 8).map((alert, idx) => `
+                    <div class="wasm-alert ${alert.severity} animate-in" style="animation-delay: ${idx * 30}ms">
+                        <span class="wasm-module">[${alert.module}]</span>
+                        <span>${alert.event_name}</span>
+                        <span class="wasm-value">${alert.value.toFixed(1)}</span>
+                    </div>
+                `).join('');
+            } else {
+                wasmAlertsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🔬</div>
+                        <div class="empty-text">边缘模块就绪</div>
+                    </div>
+                `;
+            }
+
+            // Update current vitals
+            if (latestData && latestData.vital_signs) {
+                document.getElementById('currentBreathing').textContent = 
+                    latestData.vital_signs.breathing_rate_bpm?.toFixed(0) ?? '--';
+                document.getElementById('currentHeart').textContent = 
+                    latestData.vital_signs.heart_rate_bpm?.toFixed(0) ?? '--';
+            }
+
+            if (currentView === 'map') {
+                drawMap();
+            }
+        }
+
+        // ==================== WebSocket ====================
+        function handleUpdate(data) {
+            latestData = data;
+            
+            if (data.triage_update) {
+                latestTriage = data.triage_update;
+                renderFromServer();
+            }
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://${location.hostname}:8765/ws/sensing`);
+            
+            ws.onopen = () => {
+                document.getElementById('statusDot').className = 'status-dot online';
+                document.getElementById('statusText').textContent = '已连接';
+                latestTriage = null;
+            };
+            
+            ws.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.type === 'sensing_update') {
+                        handleUpdate(data);
+                    }
+                } catch (err) {
+                    console.error('Parse error:', err);
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('statusDot').className = 'status-dot offline';
+                document.getElementById('statusText').textContent = '断开 · 5s重连';
+                setTimeout(connectWebSocket, 5000);
+            };
+            
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        // ==================== Controls ====================
+        function toggleSkeleton() {
+            skeletonEnabled = !skeletonEnabled;
+            const btn = document.getElementById('skelBtn');
+            btn.textContent = skeletonEnabled ? '已开启' : '关闭';
+            btn.classList.toggle('active', skeletonEnabled);
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    cmd: skeletonEnabled ? 'enable_skeleton' : 'disable_skeleton'
+                }));
+            }
+        }
+
+        function toggleHeatmap() {
+            showHeatmap = !showHeatmap;
+            if (currentView === 'map') {
+                drawMap();
+            }
+        }
+
+        // ==================== Time Display ====================
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-CN', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            document.getElementById('timeDisplay').textContent = timeStr;
+        }
+
+        // ==================== Init ====================
+        updateTime();
+        setInterval(updateTime, 1000);
+        drawMap();
+        connectWebSocket();
+    </script>
+</body>
+</html>

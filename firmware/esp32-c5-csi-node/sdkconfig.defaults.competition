@@ -1,0 +1,52 @@
+# ESP32-C5 CSI Node — 竞赛现场配置
+# 固定 WiFi + 高性能 CSI, 3 节点预配置
+#
+# 使用方法 (每个节点 flash 前修改 CONFIG_CSI_NODE_ID):
+#   cp sdkconfig.defaults.competition sdkconfig.defaults
+#   修改 CONFIG_CSI_NODE_ID=1 (或 2, 3)
+#   idf.py set-target esp32c5 && idf.py build && idf.py -p COMx flash
+#
+# 网络拓扑:
+#   RZ/V2H 主控:   192.168.1.1    (静态 IP, 千兆路由)
+#   ESP32-C5 #1:   192.168.1.10   (SSID: RuView-Triage, 信道 6)
+#   ESP32-C5 #2:   192.168.1.11
+#   ESP32-C5 #3:   192.168.1.12
+
+# Target
+CONFIG_IDF_TARGET="esp32c5"
+
+# WiFi
+CONFIG_CSI_WIFI_SSID="RuView-Triage"
+CONFIG_CSI_WIFI_PASSWORD="competition2026"
+CONFIG_CSI_TARGET_IP="192.168.1.1"
+CONFIG_CSI_TARGET_PORT=5005
+CONFIG_CSI_WIFI_CHANNEL=6
+CONFIG_CSI_NODE_ID=1   # ← 节点 2 改为 2, 节点 3 改为 3
+
+# 分区表 (8MB + OTA)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_display.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# CSI 启用
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+
+# 编译优化
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# 日志 (竞赛现场用 WARN 级别减少串口输出)
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+
+# 网络
+CONFIG_LWIP_SO_RCVBUF=y
+
+# 内存 (C5 400KB SRAM)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
+
+# 关闭显示 (竞赛用外部触屏连 RZ/V2H)
+# CONFIG_DISPLAY_ENABLE is not set
+
+# 关闭 mock CSI (竞赛用真实 CSI)
+# CONFIG_CSI_MOCK_ENABLED is not set
