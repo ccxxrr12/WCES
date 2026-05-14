@@ -646,6 +646,25 @@
             font-variant-numeric: tabular-nums;
         }
 
+        /* Module-specific accent colors */
+        .wasm-module.gait { color: #30D158; background: rgba(48, 209, 88, 0.12); }
+        .wasm-module.loitering { color: #FF9F0A; background: rgba(255, 159, 10, 0.12); }
+        .wasm-module.vibration { color: #BF5AF2; background: rgba(191, 90, 242, 0.12); }
+        .wasm-module.ltl { color: #FF375F; background: rgba(255, 55, 95, 0.12); }
+        .wasm-module.meta_adapt { color: #5E5CE6; background: rgba(94, 92, 230, 0.12); }
+        .wasm-module.sparse_recovery { color: #64D2FF; background: rgba(100, 210, 255, 0.12); }
+        .wasm-module.gait, .wasm-module.loitering, .wasm-module.vibration,
+        .wasm-module.ltl, .wasm-module.meta_adapt, .wasm-module.sparse_recovery {
+            font-weight: 500;
+        }
+
+        .wasm-icon {
+            font-size: 14px;
+            width: 18px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
         /* Empty State */
         .empty-state {
             text-align: center;
@@ -1013,10 +1032,11 @@
                 </div>
             </div>
 
-            <!-- Wasm Alerts Section -->
+            <!-- Wasm Alerts Section (19 Edge Modules) -->
             <div class="sidebar-section">
                 <div class="section-header">
-                    <span class="section-title">边缘模块事件</span>
+                    <span class="section-title">边缘模块事件 (19模块)</span>
+                    <span style="font-size:10px;color:var(--text-secondary);">🚶步态 ⏳徘徊 🏗️振动 ⚡LTL 🧠自适应 🔧恢复</span>
                 </div>
                 <div class="alerts-container" id="wasmAlertsList">
                     <div class="empty-state">
@@ -1670,9 +1690,19 @@
             // Update wasm alerts
             const wasmAlertsList = document.getElementById('wasmAlertsList');
             if (latestData && latestData.wasm_alerts && latestData.wasm_alerts.length > 0) {
-                wasmAlertsList.innerHTML = latestData.wasm_alerts.slice(0, 8).map((alert, idx) => `
+                const moduleIcons = {
+                    gait: '🚶', loitering: '⏳', vibration: '🏗️',
+                    ltl: '⚡', meta_adapt: '🧠', sparse_recovery: '🔧',
+                    vital_trend: '💓', attractor: '🌀', coherence: '📶',
+                    resp_distress: '🫁', confined_space: '🚧', panic_motion: '🏃',
+                    sleep_apnea: '😴', cardiac: '❤️', seizure: '⚡',
+                    intrusion: '🔒', occupancy: '👥', mincut: '🆔',
+                    weapon_detect: '🔪'
+                };
+                wasmAlertsList.innerHTML = latestData.wasm_alerts.slice(0, 12).map((alert, idx) => `
                     <div class="wasm-alert ${alert.severity} animate-in" style="animation-delay: ${idx * 30}ms">
-                        <span class="wasm-module">[${alert.module}]</span>
+                        <span class="wasm-icon">${moduleIcons[alert.module] || '📡'}</span>
+                        <span class="wasm-module ${alert.module}">[${alert.module}]</span>
                         <span>${alert.event_name}</span>
                         <span class="wasm-value">${alert.value.toFixed(1)}</span>
                     </div>

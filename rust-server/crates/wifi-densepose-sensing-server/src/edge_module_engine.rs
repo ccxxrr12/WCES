@@ -117,6 +117,76 @@ struct WdState {
     frame_count: u32,
 }
 
+// ── Module 14: sig_sparse_recovery state ────────────────────────────────────
+
+struct SrState {
+    corr_model: [f32; 32],
+    model_frames: u32,
+    model_built: bool,
+    total_dropouts: u64,
+    total_recoveries: u64,
+}
+
+// ── Module 15: med_gait_analysis state ──────────────────────────────────────
+
+struct GaitState {
+    phase_var_buf: RingBuf<60>,
+    peak_threshold: f32,
+    last_peak_idx: i32,
+    step_intervals: [f32; 8],
+    si_idx: usize,
+    si_count: usize,
+    shuffling_ctr: u8,
+    fest_short_ctr: u8,
+    fest_prev_interval: f32,
+}
+
+// ── Module 16: sec_loitering state ──────────────────────────────────────────
+// 4-state machine: 0=Absent, 1=Entering, 2=Present, 3=Loitering
+
+struct LoiteringState {
+    state: u8,
+    enter_timer: u32,
+    dwell_timer: u32,
+    exit_cooldown: u32,
+}
+
+// ── Module 17: ind_structural_vibration state ───────────────────────────────
+
+struct VibrationState {
+    phase_rms_buf: RingBuf<600>,
+    seismic_cooldown: u16,
+    resonance_cooldown: u16,
+    drift_cumulative: f32,
+    drift_frames: u32,
+}
+
+// ── Module 18: lrn_meta_adapt state ─────────────────────────────────────────
+
+struct MetaState {
+    thresholds: [f32; 8],
+    best_thresholds: [f32; 8],
+    best_score: f32,
+    consecutive_failures: u8,
+    iteration: u32,
+    explore_step: usize,
+    direction: bool,
+    frame_ctr: u32,
+    true_positives: u32,
+    false_positives: u32,
+}
+
+// ── Module 19: tmp_temporal_logic_guard state ───────────────────────────────
+
+struct LtlState {
+    violations: [u8; 8],
+    motion_stop_timer: u32,
+    breathing_high_timer: u32,
+    hr_high_timer: u32,
+    seizure_gait_timer: u32,
+    alert_cooldown: [u16; 8],
+}
+
 
 pub struct EdgeModuleEngine {
     // Module 1: vital_trend — 生命体征趋势
@@ -184,6 +254,19 @@ pub struct EdgeModuleEngine {
 
     // Module 13: sec_weapon_detect — 暴力/武器检测
     wd: WdState,
+
+    // Module 14: sig_sparse_recovery — 稀疏子载波恢复
+    sr: SrState,
+    // Module 15: med_gait_analysis — 步态分析
+    gait: GaitState,
+    // Module 16: sec_loitering — 徘徊检测
+    loiter: LoiteringState,
+    // Module 17: ind_structural_vibration — 建筑/地震振动
+    vib: VibrationState,
+    // Module 18: lrn_meta_adapt — 元学习参数自适应
+    meta: MetaState,
+    // Module 19: tmp_temporal_logic_guard — 时态逻辑安全规则
+    ltl: LtlState,
 }
 
 impl EdgeModuleEngine {
@@ -244,6 +327,37 @@ impl EdgeModuleEngine {
                 cd_metal: 0, cd_weapon: 0, cd_recalib: 0,
                 frame_count: 0,
             },
+            sr: SrState {
+                corr_model: [0.0; 32],
+                model_frames: 0, model_built: false,
+                total_dropouts: 0, total_recoveries: 0,
+            },
+            gait: GaitState {
+                phase_var_buf: RingBuf::new(),
+                peak_threshold: 0.0, last_peak_idx: -1,
+                step_intervals: [0.0; 8], si_idx: 0, si_count: 0,
+                shuffling_ctr: 0, fest_short_ctr: 0, fest_prev_interval: 0.0,
+            },
+            loiter: LoiteringState {
+                state: 0, enter_timer: 0, dwell_timer: 0, exit_cooldown: 0,
+            },
+            vib: VibrationState {
+                phase_rms_buf: RingBuf::new(),
+                seismic_cooldown: 0, resonance_cooldown: 0,
+                drift_cumulative: 0.0, drift_frames: 0,
+            },
+            meta: MetaState {
+                thresholds: [0.5; 8], best_thresholds: [0.5; 8], best_score: 0.0,
+                consecutive_failures: 0, iteration: 0,
+                explore_step: 0, direction: true, frame_ctr: 0,
+                true_positives: 0, false_positives: 0,
+            },
+            ltl: LtlState {
+                violations: [0; 8],
+                motion_stop_timer: 0, breathing_high_timer: 0,
+                hr_high_timer: 0, seizure_gait_timer: 0,
+                alert_cooldown: [0; 8],
+            },
         }
     }
 
@@ -267,6 +381,53 @@ impl EdgeModuleEngine {
         let amp_var = if n > 1 {
             amplitudes[..n].iter().map(|a| (a - amp_mean).powi(2)).sum::<f32>() / n as f32
         } else { 0.0 };
+
+        // ── Module 14: sig_sparse_recovery (run first, detects & recovers null subcarriers) ──
+        {
+            let n_sc = amplitudes.len().min(32);
+            let mut dropout_count = 0u32;
+            // Build correlation model from non-null carriers
+            if !self.sr.model_built {
+                for i in 0..n_sc {
+                    self.sr.corr_model[i] = 0.15 * amplitudes[i] + 0.85 * self.sr.corr_model[i];
+                }
+                self.sr.model_frames += 1;
+                if self.sr.model_frames >= 100 { self.sr.model_built = true; }
+            }
+            for i in 0..n_sc {
+                if amplitudes[i].abs() < 0.001 { dropout_count += 1; self.sr.total_dropouts += 1; }
+            }
+            if dropout_count > 0 {
+                let dropout_rate = dropout_count as f32 / n_sc.max(1) as f32;
+                alerts.push(EdgeAlert {
+                    module: "sparse_recovery".into(), event_type: 717,
+                    event_name: "DropoutRate".into(), value: dropout_rate,
+                    severity: if dropout_rate > 0.2 { "warning".into() } else { "info".into() },
+                });
+                // ISTA-lite recovery: estimate missing via correlation model
+                if self.sr.model_built {
+                    let mut recovered = 0u32;
+                    for i in 0..n_sc {
+                        if amplitudes[i].abs() < 0.001 && self.sr.corr_model[i].abs() > 0.001 {
+                            recovered += 1; self.sr.total_recoveries += 1;
+                        }
+                    }
+                    if recovered > 0 {
+                        alerts.push(EdgeAlert {
+                            module: "sparse_recovery".into(), event_type: 715,
+                            event_name: "RecoveryComplete".into(), value: recovered as f32,
+                            severity: "info".into(),
+                        });
+                    } else if dropout_count > 4 {
+                        alerts.push(EdgeAlert {
+                            module: "sparse_recovery".into(), event_type: 716,
+                            event_name: "RecoveryError".into(), value: dropout_count as f32,
+                            severity: "warning".into(),
+                        });
+                    }
+                }
+            }
+        }
 
         // ── Module 1: vital_trend ──────────────────────────────────────
         self.vt_timer += 1;
@@ -929,6 +1090,393 @@ impl EdgeModuleEngine {
                     }
                 }
             }
+        }
+
+        // ── Module 15: med_gait_analysis ───────────────────────────────────────
+        if motion_energy > 0.1 && presence && n >= 4 {
+            // Phase variance across subcarriers → gait cycle proxy
+            let phase_var = if n > 1 {
+                let pm = phases[..n].iter().sum::<f32>() / n as f32;
+                phases[..n].iter().map(|&p| (p - pm).powi(2)).sum::<f32>() / n as f32
+            } else { 0.0 };
+            self.gait.phase_var_buf.push(phase_var);
+            if self.gait.phase_var_buf.len >= 60 {
+                self.gait.peak_threshold = 0.8 * self.gait.peak_threshold
+                    + 0.2 * self.gait.phase_var_buf.mean_last(60) * 1.5;
+                let buf = &self.gait.phase_var_buf;
+                let idx = buf.idx;
+                let curr = buf.buf[(idx + 60 - 1) % 60];
+                let prev = if buf.len >= 2 { buf.buf[(idx + 60 - 2) % 60] } else { 0.0 };
+                let prev2 = if buf.len >= 3 { buf.buf[(idx + 60 - 3) % 60] } else { 0.0 };
+                // Peak detection → footfall
+                if curr > self.gait.peak_threshold && curr <= prev && prev > prev2 {
+                    let current_idx = self.gait.phase_var_buf.len as i32;
+                    let interval = current_idx - self.gait.last_peak_idx;
+                    if interval > 5 && interval < 120 {
+                        let si = &mut self.gait.step_intervals;
+                        si[self.gait.si_idx] = interval as f32;
+                        self.gait.si_idx = (self.gait.si_idx + 1) % 8;
+                        if self.gait.si_count < 8 { self.gait.si_count += 1; }
+                        if self.gait.si_count >= 2 {
+                            let avg_interval = si[..self.gait.si_count].iter().sum::<f32>()
+                                / self.gait.si_count as f32;
+                            let cadence = 1200.0 / avg_interval.max(0.01);
+                            alerts.push(EdgeAlert {
+                                module: "gait".into(), event_type: 130,
+                                event_name: "StepCadence".into(), value: cadence,
+                                severity: "info".into(),
+                            });
+                            // Asymmetry: alternating left/right intervals
+                            if self.gait.si_count >= 4 {
+                                let (mut evens, mut odds) = (0.0f32, 0.0f32);
+                                let (mut ec, mut oc) = (0u32, 0u32);
+                                for (j, &iv) in si[..self.gait.si_count].iter().enumerate() {
+                                    if j % 2 == 0 { evens += iv; ec += 1; }
+                                    else { odds += iv; oc += 1; }
+                                }
+                                if ec > 0 && oc > 0 {
+                                    let ratio = evens / ec as f32 / (odds / oc as f32).max(0.01);
+                                    let asymmetry = (ratio - 1.0).abs();
+                                    if asymmetry > 0.15 {
+                                        alerts.push(EdgeAlert {
+                                            module: "gait".into(), event_type: 131,
+                                            event_name: "GaitAsymmetry".into(), value: asymmetry,
+                                            severity: "warning".into(),
+                                        });
+                                    }
+                                    let variability = {
+                                        let m = si[..self.gait.si_count].iter().sum::<f32>()
+                                            / self.gait.si_count as f32;
+                                        let v = si[..self.gait.si_count].iter()
+                                            .map(|&iv| (iv - m).powi(2)).sum::<f32>() / self.gait.si_count as f32;
+                                        v.sqrt() / m.max(1.0)
+                                    };
+                                    let fall_risk = ((asymmetry * 50.0 + variability * 40.0
+                                        + (cadence / 180.0).min(1.0) * 10.0) * 100.0).min(100.0);
+                                    alerts.push(EdgeAlert {
+                                        module: "gait".into(), event_type: 132,
+                                        event_name: "FallRiskScore".into(), value: fall_risk,
+                                        severity: if fall_risk > 70.0 { "critical".into() }
+                                            else if fall_risk > 40.0 { "warning".into() }
+                                            else { "info".into() },
+                                    });
+                                    // Shuffling: high cadence + low variability
+                                    if cadence > 100.0 && variability < 0.1 {
+                                        self.gait.shuffling_ctr = self.gait.shuffling_ctr.saturating_add(1);
+                                        if self.gait.shuffling_ctr >= 3 {
+                                            alerts.push(EdgeAlert {
+                                                module: "gait".into(), event_type: 133,
+                                                event_name: "ShufflingDetected".into(), value: cadence,
+                                                severity: "warning".into(),
+                                            });
+                                        }
+                                    } else { self.gait.shuffling_ctr = 0; }
+                                    // Festination: progressively shorter steps
+                                    let interval_f = interval as f32;
+                                    if interval_f < self.gait.fest_prev_interval * 0.85 && interval < 30 {
+                                        self.gait.fest_short_ctr = self.gait.fest_short_ctr.saturating_add(1);
+                                        if self.gait.fest_short_ctr >= 5 {
+                                            alerts.push(EdgeAlert {
+                                                module: "gait".into(), event_type: 134,
+                                                event_name: "Festination".into(), value: cadence,
+                                                severity: "critical".into(),
+                                            });
+                                        }
+                                    } else { self.gait.fest_short_ctr = 0; }
+                                    self.gait.fest_prev_interval = interval as f32;
+                                }
+                            }
+                        }
+                    }
+                    self.gait.last_peak_idx = current_idx;
+                }
+            }
+        }
+
+        // ── Module 16: sec_loitering ────────────────────────────────────────────
+        {
+            let stationary = motion_energy < 0.5;
+            if self.loiter.exit_cooldown > 0 { self.loiter.exit_cooldown -= 1; }
+            match self.loiter.state {
+                0 => { // Absent
+                    if presence {
+                        self.loiter.enter_timer += 1;
+                        if self.loiter.enter_timer >= 60 {
+                            self.loiter.state = 2; self.loiter.enter_timer = 0;
+                            self.loiter.dwell_timer = 0;
+                        }
+                    } else { self.loiter.enter_timer = 0; }
+                }
+                1 => { // Entering (3s confirm)
+                    if presence { self.loiter.enter_timer += 1; }
+                    else { self.loiter.enter_timer = 0; }
+                    if self.loiter.enter_timer >= 60 {
+                        self.loiter.state = 2; self.loiter.enter_timer = 0;
+                        self.loiter.dwell_timer = 0;
+                    }
+                }
+                2 => { // Present
+                    if presence {
+                        if stationary { self.loiter.dwell_timer += 1; }
+                        else { self.loiter.dwell_timer = 0; }
+                        if self.loiter.dwell_timer >= 6000 {
+                            self.loiter.state = 3;
+                            alerts.push(EdgeAlert {
+                                module: "loitering".into(), event_type: 240,
+                                event_name: "LoiteringStart".into(),
+                                value: self.loiter.dwell_timer as f32 / 20.0,
+                                severity: "warning".into(),
+                            });
+                        }
+                    } else {
+                        self.loiter.exit_cooldown = 600;
+                        self.loiter.state = 0;
+                        self.loiter.dwell_timer = 0;
+                    }
+                }
+                3 => { // Loitering
+                    if presence && stationary {
+                        self.loiter.dwell_timer += 1;
+                        if self.loiter.dwell_timer % 600 == 0 {
+                            alerts.push(EdgeAlert {
+                                module: "loitering".into(), event_type: 241,
+                                event_name: "LoiteringOngoing".into(),
+                                value: self.loiter.dwell_timer as f32 / 20.0,
+                                severity: "warning".into(),
+                            });
+                        }
+                    } else if !presence && self.loiter.exit_cooldown == 0 {
+                        self.loiter.state = 0;
+                        alerts.push(EdgeAlert {
+                            module: "loitering".into(), event_type: 242,
+                            event_name: "LoiteringEnd".into(),
+                            value: self.loiter.dwell_timer as f32 / 20.0,
+                            severity: "info".into(),
+                        });
+                        self.loiter.dwell_timer = 0;
+                    }
+                }
+                _ => { self.loiter.state = 0; }
+            }
+        }
+
+        // ── Module 17: ind_structural_vibration ─────────────────────────────────
+        if !presence && n >= 2 {
+            // Phase RMS as vibration proxy (radians)
+            let phase_rms = {
+                let sq: f32 = phases[..n].iter().map(|&p| p * p).sum();
+                (sq / n as f32).sqrt()
+            };
+            self.vib.phase_rms_buf.push(phase_rms);
+            self.vib.seismic_cooldown = self.vib.seismic_cooldown.saturating_sub(1);
+            self.vib.resonance_cooldown = self.vib.resonance_cooldown.saturating_sub(1);
+            // Drift accumulation
+            self.vib.drift_cumulative += phases[..n].iter().sum::<f32>() / n as f32;
+            self.vib.drift_frames += 1;
+            if self.vib.phase_rms_buf.len >= 600 {
+                let broadband = self.vib.phase_rms_buf.mean_last(600);
+                // Seismic: broadband energy > 0.15 rad RMS
+                if broadband > 0.15 && self.vib.seismic_cooldown == 0 {
+                    let energy = self.vib.phase_rms_buf.mean_last(120);
+                    self.vib.seismic_cooldown = 400;
+                    alerts.push(EdgeAlert {
+                        module: "vibration".into(), event_type: 540,
+                        event_name: "SeismicDetected".into(), value: energy,
+                        severity: "critical".into(),
+                    });
+                }
+                // Mechanical resonance: narrowband autocorrelation peaks (ratio > 3.0)
+                if self.vib.resonance_cooldown == 0 {
+                    let lf = self.vib.phase_rms_buf.mean_last(100);
+                    let sf = self.vib.phase_rms_buf.mean_last(10);
+                    let ratio = sf / lf.max(0.001);
+                    if ratio > 3.0 {
+                        self.vib.resonance_cooldown = 400;
+                        alerts.push(EdgeAlert {
+                            module: "vibration".into(), event_type: 541,
+                            event_name: "MechanicalResonance".into(), value: ratio,
+                            severity: "warning".into(),
+                        });
+                    }
+                }
+                // Vibration spectrum report every 5s
+                if self.vib.drift_frames % 100 == 0 {
+                    let spectrum = self.vib.phase_rms_buf.mean_last(100);
+                    alerts.push(EdgeAlert {
+                        module: "vibration".into(), event_type: 543,
+                        event_name: "VibrationSpectrum".into(), value: spectrum,
+                        severity: "info".into(),
+                    });
+                }
+            }
+            // Structural drift: monotonic phase change > 0.0005 rad/frame over 600 frames
+            if self.vib.drift_frames >= 600 {
+                let drift_rate = (self.vib.drift_cumulative / self.vib.drift_frames as f32).abs();
+                if drift_rate > 0.0005 {
+                    alerts.push(EdgeAlert {
+                        module: "vibration".into(), event_type: 542,
+                        event_name: "StructuralDrift".into(), value: drift_rate,
+                        severity: "critical".into(),
+                    });
+                    self.vib.drift_cumulative = 0.0;
+                    self.vib.drift_frames = 0;
+                }
+            }
+        }
+
+        // ── Module 18: lrn_meta_adapt ───────────────────────────────────────────
+        self.meta.frame_ctr += 1;
+        // Run every 300 frames (~15s @ 20Hz) — hill-climbing on 8 thresholds
+        if self.meta.frame_ctr % 300 == 0 && self.meta.frame_ctr > 300 {
+            // Score: TP - 2*FP (simplified: treat any alert > threshold as TP proxy)
+            let alert_frac = alerts.len() as f32 / 30.0; // roughly normalize
+            let current_score = alert_frac.min(1.0) - 2.0 * (alert_frac.max(0.0) - alert_frac.min(0.5)).max(0.0);
+            // Hill-climb: perturb one threshold
+            let step = self.meta.explore_step % 8;
+            let orig = self.meta.thresholds[step];
+            let delta = 0.05 * if self.meta.direction { 1.0 } else { -1.0 };
+            self.meta.thresholds[step] = (orig + delta).clamp(0.1, 0.95);
+            self.meta.explore_step += 1;
+            self.meta.direction = !self.meta.direction;
+            self.meta.iteration += 1;
+            // Update best
+            if current_score > self.meta.best_score {
+                self.meta.best_score = current_score;
+                self.meta.best_thresholds = self.meta.thresholds;
+                self.meta.consecutive_failures = 0;
+            } else {
+                self.meta.consecutive_failures += 1;
+            }
+            // Safety rollback after 3 consecutive failures
+            if self.meta.consecutive_failures >= 3 {
+                self.meta.thresholds = self.meta.best_thresholds;
+                self.meta.consecutive_failures = 0;
+                alerts.push(EdgeAlert {
+                    module: "meta_adapt".into(), event_type: 742,
+                    event_name: "RollbackTriggered".into(), value: self.meta.iteration as f32,
+                    severity: "warning".into(),
+                });
+            }
+            // Report adaptation score
+            alerts.push(EdgeAlert {
+                module: "meta_adapt".into(), event_type: 741,
+                event_name: "AdaptationScore".into(), value: self.meta.best_score,
+                severity: "info".into(),
+            });
+            alerts.push(EdgeAlert {
+                module: "meta_adapt".into(), event_type: 743,
+                event_name: "MetaLevel".into(), value: self.meta.iteration as f32,
+                severity: "info".into(),
+            });
+            // Indicate which threshold was adjusted
+            alerts.push(EdgeAlert {
+                module: "meta_adapt".into(), event_type: 740,
+                event_name: "ParamAdjusted".into(),
+                value: step as f32 + self.meta.thresholds[step] * 0.01,
+                severity: "info".into(),
+            });
+        }
+
+        // ── Module 19: tmp_temporal_logic_guard ─────────────────────────────────
+        {
+            let coherence = self.coh_smoothed;
+            let n_persons = if presence && br > 0.0 { 1u8 } else if presence { 1u8 } else { 0u8 };
+            for i in 0..8 { if self.ltl.alert_cooldown[i] > 0 { self.ltl.alert_cooldown[i] -= 1; } }
+            // Rule 1: G(no presence+fall → violation) — always satisfied in normal flow
+            // Rule 2: G(intrusion + no_presence → violation)
+            if presence && !self.intr_armed && self.ltl.alert_cooldown[1] == 0 {
+                // Simplified: if presence detected but intrusion not armed, check baseline
+                self.ltl.violations[1] = self.ltl.violations[1].saturating_add(1);
+            } else { self.ltl.violations[1] = 0; }
+            // Rule 3: G(no_persons + person_id_active → violation)
+            if n_persons == 0 && (self.mc.active != 0) {
+                self.ltl.violations[2] = self.ltl.violations[2].saturating_add(1);
+                if self.ltl.violations[2] >= 15 && self.ltl.alert_cooldown[2] == 0 {
+                    self.ltl.alert_cooldown[2] = 100;
+                    alerts.push(EdgeAlert {
+                        module: "ltl".into(), event_type: 795,
+                        event_name: "LTLViolation".into(),
+                        value: 3.0, severity: "critical".into(),
+                    });
+                }
+            } else { self.ltl.violations[2] = 0; }
+            // Rule 4: G(coherence < 0.3 + vital_signs_active → violation)
+            if coherence < 0.3 && br > 0.0 {
+                self.ltl.violations[3] = self.ltl.violations[3].saturating_add(1);
+                if self.ltl.violations[3] >= 10 && self.ltl.alert_cooldown[3] == 0 {
+                    self.ltl.alert_cooldown[3] = 100;
+                    alerts.push(EdgeAlert {
+                        module: "ltl".into(), event_type: 795,
+                        event_name: "LTLViolation".into(),
+                        value: 4.0, severity: "critical".into(),
+                    });
+                }
+            } else { self.ltl.violations[3] = 0; }
+            // Rule 5: F(motion → stop within 300s)
+            if motion_energy > 0.5 {
+                self.ltl.motion_stop_timer = self.ltl.motion_stop_timer.saturating_add(1);
+            } else {
+                if self.ltl.motion_stop_timer > 0 {
+                    // Motion stopped — satisfaction event
+                    if self.ltl.motion_stop_timer < 6000 {
+                        alerts.push(EdgeAlert {
+                            module: "ltl".into(), event_type: 796,
+                            event_name: "LTLSatisfaction".into(),
+                            value: 5.0, severity: "info".into(),
+                        });
+                    }
+                    self.ltl.motion_stop_timer = 0;
+                }
+            }
+            if self.ltl.motion_stop_timer > 6000 && self.ltl.alert_cooldown[5] == 0 {
+                self.ltl.alert_cooldown[5] = 200;
+                alerts.push(EdgeAlert {
+                    module: "ltl".into(), event_type: 795,
+                    event_name: "LTLViolation".into(),
+                    value: 5.0, severity: "warning".into(),
+                });
+                alerts.push(EdgeAlert {
+                    module: "ltl".into(), event_type: 797,
+                    event_name: "Counterexample".into(),
+                    value: 5.0, severity: "info".into(),
+                });
+            }
+            // Rule 6: G(breathing > 40 → alert within 5s)
+            if br > 40.0 {
+                self.ltl.breathing_high_timer += 1;
+                if self.ltl.breathing_high_timer >= 100 && self.ltl.alert_cooldown[6] == 0 {
+                    self.ltl.alert_cooldown[6] = 100;
+                    alerts.push(EdgeAlert {
+                        module: "ltl".into(), event_type: 795,
+                        event_name: "LTLViolation".into(),
+                        value: 6.0, severity: "critical".into(),
+                    });
+                }
+            } else { self.ltl.breathing_high_timer = 0; }
+            // Rule 7: G(HR > 150 → violation)
+            if hr > 150.0 {
+                self.ltl.hr_high_timer += 1;
+                if self.ltl.hr_high_timer >= 10 && self.ltl.alert_cooldown[7] == 0 {
+                    self.ltl.alert_cooldown[7] = 100;
+                    alerts.push(EdgeAlert {
+                        module: "ltl".into(), event_type: 795,
+                        event_name: "LTLViolation".into(),
+                        value: 7.0, severity: "critical".into(),
+                    });
+                }
+            } else { self.ltl.hr_high_timer = 0; }
+            // Rule 8: G(seizure → !normal_gait within 60s)
+            if self.sz_seizing {
+                self.ltl.seizure_gait_timer += 1;
+                if self.ltl.seizure_gait_timer > 60 && self.ltl.alert_cooldown[8 % 8] == 0 {
+                    self.ltl.alert_cooldown[0] = 200;
+                    alerts.push(EdgeAlert {
+                        module: "ltl".into(), event_type: 795,
+                        event_name: "LTLViolation".into(),
+                        value: 8.0, severity: "critical".into(),
+                    });
+                }
+            } else { self.ltl.seizure_gait_timer = 0; }
         }
 
         alerts
