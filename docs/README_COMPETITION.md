@@ -121,7 +121,7 @@ ESP32-C5 ×3          RZ/V2H               7" 触屏 / Web
 | **群体伤情评估** | 严重程度 + 资源需求计算 | ✅ |
 | **告警系统** | 自动生成 + 优先级排序 | ✅ |
 | 3D 骨架重建 | ONNX DensePose (可选) | ✨ |
-| WASM 边缘医疗模块 | 10 个医疗检测模块 | ✅ |
+| WASM 边缘医疗模块 | 13 个医疗检测模块 | ✅ |
 
 ---
 
@@ -136,4 +136,8 @@ ESP32-C5 ×3          RZ/V2H               7" 触屏 / Web
 | `docs/ESP32-C5 移植审计报告.md` | C5 移植审计 |
 | `docs/PROGRESS.md` | 构建进度追踪 |
 | `docs/端侧LLM方案设计.md` | 端侧 LLM 方案 |
+| `docs/项目全览.md` | 全项目技术全览 |
+| `docs/API_REFERENCE.md` | WebSocket 数据接口文档 |
 | `docs/瑞萨 RZV2H 移植计划.md` | RZ/V2H 移植计划 |
+| `docs/目录审计报告.md` | 目录审计 |
+| `docs/PROGRESS.md` | 构建进度追踪 |

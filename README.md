@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/V2H + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10a 完成 ✅ | MAT 分诊 + 10 边缘模块 + 模拟演示 | 端侧 LLM 待实现 🔧
+> 状态：P0-P10b 完成 ✅ | MAT 分诊 + 13 边缘模块 + 模拟演示 | 端侧 LLM 待实现 🔧
 
 ---
 
@@ -113,7 +113,7 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | **实时告警** | 自动生成 + 优先级排序 + 时间戳 | ✅ |
 | **分诊仪表盘** | Canvas 2D 伤员地图 + 统计栏 + 卡片 + 告警列表 | ✅ |
 | 3D 骨架重建 | ONNX DensePose (可选按钮) | ✨ |
-| 10 个医疗 WASM 模块 | 睡眠呼吸暂停/心律失常/呼吸窘迫/跌倒/入侵等 | ✅ |
+| 13 个医疗 WASM 模块 | 睡眠呼吸暂停/心律失常/呼吸窘迫/跌倒/入侵/占位/身份匹配/武器检测等 | ✅ |
 | 模拟运行模式 | 正弦波合成 CSI，完整数据流通，无需硬件 | ✅ |
 | **端侧 LLM** | 生命体征→自然语言伤病报告 (方案设计中) | 🔧 |
 
@@ -130,7 +130,7 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | UDP 发送 | lwIP socket → 主节点 UDP:5005，含 ENOMEM 退避保护 | `stream_sender.c` |
 | 通道跳跃 | 定时器驱动 ch1/6/11 多频段切换 | `csi_collector.c` |
 | 边缘预处理 | 子载波选择 + 幅度归一化 | `edge_processing.c` |
-| WASM 热加载 | 10 个医疗模块 OTA，无需重烧固件 | `wasm_runtime.c` |
+| WASM 热加载 | 13 个医疗模块 OTA，无需重烧固件 | `wasm_runtime.c` |
 | 竞赛配置 | `sdkconfig.defaults.competition` 专用 | 固件根目录 |
 
 ### 第 2 层：CSI 帧解析（服务端入口）
@@ -183,20 +183,20 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | 伤员卡片 | ID、追踪时长、节点号、年龄、呼吸率、心率、分诊标签、恶化警告 | `triage.html` |
 | 告警列表 | 时间倒序、颜色编码、最近 20 条 | `triage.html` |
 | 群体评估 | 伤情等级 + 救援人员需求 | `triage.html` |
-| **边缘模块引擎** | 10 个医疗WASM模块原生编译，零额外依赖，RZ/V2H硬件FPU加速 | `edge_module_engine.rs` |
+| **边缘模块引擎** | 13 个医疗WASM模块原生编译，零额外依赖，RZ/V2H硬件FPU加速 | `edge_module_engine.rs` |
 | WebSocket | `/ws/sensing` 实时推送 `SensingUpdate` JSON | `main.rs` |
 | 3D 可视化 | Three.js 实时姿态渲染 (可选 ONNX DensePose) | `ui/index.html` |
 
 ### 边缘模块引擎性能优化
 
-竞赛演示期，10 个 WASM 边缘模块以精简原生 Rust 编译到 sensing-server，
+竞赛演示期，13 个 WASM 边缘模块以精简原生 Rust 编译到 sensing-server，
 无需 WASM 解释器开销，直接利用 RZ/V2H 硬件 FPU：
 
 | 优化 | 说明 | 提升 |
 |------|------|:--:|
 | 原生 FPU 计算 | 替代 WASM `libm` 软浮点库，使用硬件 `f32::sqrt()` | 5-10× |
 | 单编译单元 | 所有模块内联到单一 struct，编译器激进内联+LTO | ~2× |
-| 缓存友好 | 10 个模块共享连续内存布局，减少 cache miss | ~1.5× |
+| 缓存友好 | 13 个模块共享连续内存布局，减少 cache miss | ~1.5× |
 | 零 FFI 开销 | 无 `csi_*` 导入函数跨 WASM 边界调用 | 消除延迟 |
 
 **算法等价**：每个模块的核心逻辑（ring buffer、阈值检测、debounce、Lyapunov 指数）
@@ -226,7 +226,7 @@ CSI 采集          UDP:5005 →
                     → TriageUpdate { survivors, assessment, alerts }
 
                   EdgeModuleEngine::process_frame()
-                    → Vec<EdgeAlert> (10 个边缘模块并行)
+                    → Vec<EdgeAlert> (13 个边缘模块并行)
 
                   构造 SensingUpdate {
                     vital_signs,
@@ -264,7 +264,7 @@ CSI 采集          UDP:5005 →
 │       ├── wifi-densepose-mat/        ← 分诊系统 ⭐
 │       ├── wifi-densepose-sensing-server/ ← 主服务 (含 MAT 集成)
 │       ├── wifi-densepose-config/     ← 系统配置
-│       └── wifi-densepose-wasm-edge/  ← 边缘 WASM 模块 (10 医疗)
+│       └── wifi-densepose-wasm-edge/  ← 边缘 WASM 模块 (13 医疗)
 ├── ui/                                ← Web 3D 可视化 (210 files)
 ├── scripts/
 │   └── provision.py                   ← C5 烧录脚本
@@ -311,6 +311,8 @@ CSI 采集          UDP:5005 →
 | `docs/ESP32-C5 移植指南.md` | C5 移植完整指南 |
 | `docs/瑞萨 RZV2H 移植计划.md` | RZ/V2H 主控移植计划 |
 | `docs/端侧LLM方案设计.md` | 端侧 LLM 伤病报告方案设计 |
+| `docs/项目全览.md` | 全项目技术全览（本文档详细版） |
+| `docs/API_REFERENCE.md` | WebSocket 数据接口完整文档 |
 | `docs/目录审计报告.md` | 目录完整性审计 |
 | `docs/PROGRESS.md` | 构建进度追踪（实时更新） |
 
