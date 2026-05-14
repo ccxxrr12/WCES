@@ -1,0 +1,168 @@
+# WCES — 竞赛系统统一配置文件
+# 此文件覆盖固件(Kconfig/NVS)、服务端(CLI)、部署(deploy.sh)的所有配置
+# 用法: 修改此文件 → 运行 ./apply-config.sh 自动应用到三个子系统
+
+# ============================================================================
+# 固件 — ESP32-C5 CSI 感知节点
+# ============================================================================
+[firmware]
+
+# --- 节点身份 ---
+node_id = 1                     # 节点编号 (1/2/3), 三个节点唯一区别
+# 节点 2 改为 2, 节点 3 改为 3
+
+# --- WiFi 连接 ---
+wifi_ssid = "WCES"             # WiFi SSID (竞赛专用)
+wifi_password = ""             # WiFi 密码 (空 = 开放网络)
+wifi_auth = "OPEN"             # WPA2_PSK | OPEN | WPA3_SAE
+
+# --- CSI 采集 ---
+csi_channel = 6                # 主信道 (2.4G: 1-13, 5G: 36-177, 6G: 1-233)
+csi_band = "AUTO"              # AUTO | 2G_ONLY | 5G_ONLY (C5 双频)
+                                # ⚠️ 5G/6G 需要 ESP-IDF v5.5+
+
+# --- UDP 发送目标 (RZ/V2H 主控) ---
+target_ip = "192.168.1.1"      # sensing-server 地址
+target_port = 5005             # UDP 接收端口
+
+# --- 处理层级 ---
+[firmware.edge]
+tier = 2                       # 0=原始透传, 1=基础DSP, 2=完整管线
+vital_interval_ms = 1000       # 生命体征包发送间隔 (ms)
+top_k_count = 8                # Top-K 高方差子载波数
+presence_thresh = 0.0          # 存在检测阈值 (0=自动校准)
+fall_thresh = 400.0            # 跌倒检测阈值 (rad/s²)
+vital_window = 64              # BPM 相位历史窗口帧数
+power_duty = 100               # 电源占空比 (10-100%)
+
+# --- 信道跳跃 (ADR-029) ---
+[firmware.hop]
+enabled = true                  # 启用多频段信道跳跃
+channels = [1, 6, 11, 36, 40, 44]  # 跳跃信道列表 (2.4G + 5G)
+dwell_ms = 50                   # 每信道停留时间 (ms)
+
+# --- 时隙调度 (TDM) ---
+[firmware.tdm]
+node_count = 3                  # 总节点数 (用于时隙分配)
+slot_index = 1                  # 本节点时隙 (1-based, 按 node_id)
+
+# --- WASM 边缘模块 ---
+[firmware.wasm]
+max_modules = 4                 # 最大并发 WASM 模块 (1-8)
+verify_signature = true         # 要求 Ed25519 签名
+frame_budget_us = 10000         # 每帧执行预算 (µs)
+
+# ============================================================================
+# Rust 服务端 — sensing-server
+# ============================================================================
+[server]
+
+# --- 运行模式 ---
+source = "auto"                 # auto | esp32 | simulate
+                                # auto: 自动检测 ESP32 UDP, 无信号则模拟
+                                # esp32: 仅监听硬件 UDP
+                                # simulate: 纯模拟 (无需硬件)
+
+# --- 端口 ---
+http_port = 8080                # HTTP + 静态 UI
+ws_port = 8765                  # WebSocket 实时数据推送
+udp_port = 5005                 # UDP CSI 数据接收
+bind_addr = "0.0.0.0"          # 绑定地址
+
+# --- UI 路径 ---
+ui_path = "../docs/triage-ui"   # 分诊仪表盘目录 (相对于 rust-server/)
+
+# --- 日志 ---
+log_level = "info"              # trace | debug | info | warn | error
+log_file = "/tmp/wces-server.log"  # 日志文件路径
+
+# --- 模型 ---
+[server.model]
+load_on_startup = false         # 启动时加载 DensePose 模型 (费内存)
+model_path = "data/models/"     # .rvf 模型搜索路径
+pose_synthetic = true          # 模拟模式下生成合成骨架 (无需模型文件)
+
+# --- 端侧 LLM ---
+[server.llm]
+enabled = false                  # ⚠️ 待实现: 启用 LLM 伤病报告
+model_format = "GGUF"           # GGUF | ONNX
+model_path = "models/qwen2.5-0.5b-q4.gguf"
+max_tokens = 256
+temperature = 0.3
+fallback_to_template = true     # LLM 失败时回退到模板报告
+
+# --- 边缘模块 ---
+[server.edge_modules]
+# 19 个模块, 可按需禁用 (false = 跳过)
+vital_trend = true
+lrn_anomaly_attractor = true
+coherence = true
+med_respiratory_distress = true
+ind_confined_space = true
+sec_panic_motion = true
+med_sleep_apnea = true
+med_cardiac_arrhythmia = true
+med_seizure_detect = true
+intrusion = true
+occupancy = true
+sig_mincut_person_match = true
+sec_weapon_detect = true
+med_gait_analysis = true
+tmp_temporal_logic_guard = true
+ind_structural_vibration = true
+sec_loitering = true
+lrn_meta_adapt = true
+sig_sparse_recovery = true
+
+# ============================================================================
+# 部署 — deploy.sh 配置
+# ============================================================================
+[deploy]
+
+# --- 瑞萨 RZ/V2H 目标 ---
+rz_ip = "192.168.1.1"           # SSH 目标
+rz_user = "root"                # SSH 用户
+rz_project_root = "/opt/WCES"  # 项目根目录
+
+# --- 二进制路径 (RZ/V2H 上) ---
+sensing_bin = "./rust-server/target/aarch64-unknown-linux-gnu/release/sensing-server"
+triage_ui = "./docs/triage-ui/triage.html"
+ui_dir = "./ui"
+
+# ============================================================================
+# 竞赛 — 比赛专用配置
+# ============================================================================
+[competition]
+
+# --- 网络拓扑 ---
+router_ssid = "WCES"            # 现场路由器 SSID
+router_ip = "192.168.1.1"      # 路由器管理 IP
+subnet = "192.168.1.0/24"      # 局域网段
+
+# --- 节点固定 IP ---
+node1_ip = "192.168.1.10"      # ESP32-C5 #1
+node2_ip = "192.168.1.11"      # ESP32-C5 #2
+node3_ip = "192.168.1.12"      # ESP32-C5 #3
+
+# --- 演示模式 ---
+demo_cycle_seconds = 300        # 自动循环演示周期 (秒)
+auto_start_triage = true        # 启动后自动打开分诊仪表盘
+
+# --- 故障预案 ---
+fault_tolerance = true          # 启用故障降级 (2/3 节点继续工作)
+max_missed_frames = 30          # 超时帧数 → 标记 Unknown
+reconnect_timeout_sec = 10      # WiFi 重连超时 (秒)
+
+# --- 硬件 ---
+flash_size = "8MB"              # 固件分区表: 8MB
+chip = "esp32c5"                # 目标芯片
+idf_version = "5.5"             # 最低 IDF 版本 ⚠️ v5.4 有 CSI bug
+
+# ============================================================================
+# 烧录 — ESP32-C5 固件烧录
+# ============================================================================
+[flash]
+# 每个节点的串口 (Windows COM 或 Linux /dev/ttyUSB)
+ports = ["COM3", "COM4", "COM5"]  # 节点1, 节点2, 节点3
+baud = 921600                     # 烧录波特率
+erase_before_flash = false        # 烧录前擦除 (首次需要)

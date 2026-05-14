@@ -52,6 +52,28 @@ cd ..
 # http://192.168.1.1:8080/                  ← 3D 可视化
 ```
 
+### ⚡ 使用统一配置 (推荐)
+
+所有子系统配置集中在 `wces.config.toml` 一个文件中：
+
+```powershell
+# 1. 编辑配置 (WiFi SSID/密码/信道/节点ID/端口等)
+notepad wces.config.toml
+
+# 2. 应用配置到各节点 (自动生成 sdkconfig + 更新 deploy.sh)
+.\apply-config.ps1 -NodeId 1
+.\apply-config.ps1 -NodeId 2
+.\apply-config.ps1 -NodeId 3
+
+# 3. 编译 + 烧录
+cd firmware\esp32-c5-csi-node
+idf.py set-target esp32c5 && idf.py build && idf.py -p COM3 flash
+
+# 4. 启动服务端
+cd ..\..\rust-server
+cargo run -p wifi-densepose-sensing-server -- --source auto --ui-path ../docs/triage-ui --bind-addr 0.0.0.0 --http-port 8080
+```
+
 ### 无硬件模拟运行（开发/演示）
 
 ```bash
@@ -249,7 +271,9 @@ CSI 采集          UDP:5005 →
 ## 目录结构
 
 ```
-├── README.md                          ← 本文件
+├── wces.config.toml                  ← ⭐ 统一配置文件
+├── apply-config.ps1                  ← Windows 配置应用脚本
+├── apply-config.sh                   ← Linux 配置应用脚本
 ├── deploy.sh                          ← 一键部署脚本
 ├── firmware/
 │   └── esp32-c5-csi-node/            ← C5 CSI 固件 (完整, 含竞赛配置)
