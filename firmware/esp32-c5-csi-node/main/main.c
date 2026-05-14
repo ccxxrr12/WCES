@@ -122,7 +122,7 @@ static void wifi_init_sta(void)
     /* C5 dual-band configuration for proper channel selection and CSI on both bands.
      * Required for 5GHz AP connection and channel-hopping across bands.
      * Reference: esp-csi/examples/get-started/csi_recv/main/app_main.c */
-    ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY));
+    ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
     wifi_protocols_t protocols = {
         .ghz_2g = WIFI_PROTOCOL_11N,
         .ghz_5g = WIFI_PROTOCOL_11N,

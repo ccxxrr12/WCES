@@ -33,9 +33,9 @@ menu "CSI Node Configuration"
             Password for the WiFi network. Leave empty for open networks.
 
     config CSI_WIFI_CHANNEL
-        int "WiFi Channel (1-13)"
+        int "WiFi Channel (1-13 for 2.4G, 36-177 for 5G, 1-233 for 6G on C5)"
         default 6
-        range 1 13
+        range 1 233
         help
             WiFi channel to listen on for CSI data.
 

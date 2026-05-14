@@ -196,7 +196,7 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
                  info->rx_ctrl.rssi, info->rx_ctrl.channel);
     }
 
-    uint8_t frame_buf[CSI_MAX_FRAME_SIZE];
+    static uint8_t frame_buf[CSI_MAX_FRAME_SIZE];
     size_t frame_len = csi_serialize_frame(info, frame_buf, sizeof(frame_buf));
 
     if (frame_len > 0) {
