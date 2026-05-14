@@ -333,6 +333,7 @@ CSI 采集          UDP:5005 →
 | `docs/ML架构详解.md` | DensePose 模型架构 + 训练 + 推理 |
 | `docs/ESP32-C5 移植审计报告.md` | C5 移植 39 处修改审计 |
 | `docs/ESP32-C5 移植指南.md` | C5 移植完整指南 |
+| `docs/固件官方文档审计报告.md` | 固件 vs 官方 API 对照审计 |
 | `docs/瑞萨 RZV2H 移植计划.md` | RZ/V2H 主控移植计划 |
 | `docs/端侧LLM方案设计.md` | 端侧 LLM 伤病报告方案设计 |
 | `docs/项目全览.md` | 全项目技术全览（本文档详细版） |
