@@ -250,6 +250,7 @@ Current Vitals ───┘                                                     
 | `sensing-server/Cargo.toml` | 修改 | 添加 wifi-densepose-llm 依赖 |
 | `docs/triage-ui/triage.html` | 重大修改 | AI分析卡片 + 伤员登记表单 + 流式渲染 + WS新消息类型 |
 | `docs/端侧LLM方案设计.md` | 重写 | v1.0→v2.0，新增RAG/病史/联合分析/流式 |
+| `docs/端侧LLM技术文档.md` | 新建 | 接口/技术/功能/原理 完整技术文档 |
 | `wces.config.toml` | 修改 | LLM配置更新 |
 
 #### 编译与测试
