@@ -202,6 +202,64 @@ cargo check  → ✅ 编译通过
 
 **编译结果**: `cargo check` ✅ 0 errors
 
+### 2.10 端侧 LLM 智能分析引擎 (2026-05-15) ⭐ NEW
+
+实现完整的端侧 LLM 智能分析系统，从"报告生成器"升级为"智能分析引擎"。
+
+#### 架构概述
+
+```
+PatientRecordDB ──┐
+MedicalKB ────────┤
+SlidingWindow ────┼──→ PromptBuilder ──→ LLM(Qwen2.5-0.5B) / fallback ──→ AnalysisResult
+Current Vitals ───┘                                                     │
+                                                            WebSocket ──→ triage.html AI卡片
+```
+
+**核心特性**:
+- 🏥 **病历管理**: sled 嵌入式数据库存储伤员既往病史/主诉/用药
+- 🧬 **医学知识库**: 8种方舱常见伤病知识条目 (RAG检索增强)
+- 📊 **趋势分析**: 短(1min)/中(5min)/长(30min) 三窗口滑动统计
+- 🧠 **LLM推理**: Qwen2.5-0.5B INT4量化 (candle 0.8 GGUF)
+- 📡 **流式输出**: token逐字推送到 triage.html AI分析卡片
+- 🛡️ **安全设计**: START规则引擎保底，LLM只做增强分析，永不覆盖分诊决策
+- ⬇️ **三级降级**: LLM正常 → 模板回退 → 最小模式
+
+#### 新增 crate: wifi-densepose-llm
+
+| 文件 | 行数 | 功能 |
+|------|:--:|------|
+| `src/config.rs` | ~100 | LlmConfig (3种预设: default/competition/template-only) |
+| `src/types.rs` | ~30 | 公共类型 StreamToken / LlmGenerationResult |
+| `src/patient_record.rs` | ~180 | PatientRecord + sled PatientRecordDB (CRUD) |
+| `src/medical_knowledge.rs` | ~400 | MedicalKnowledgeBase + 4维匹配打分算法 |
+| `src/sliding_window.rs` | ~440 | SlidingWindow + WindowManager (趋势方向/波动/模式) |
+| `src/prompt_builder.rs` | ~220 | 病史+知识+趋势 → LLM Prompt 组装 |
+| `src/fallback.rs` | ~600 | FallbackAnalyzer L2模板回退 + 完整分析输出 |
+| `src/engine.rs` | ~480 | LlmAnalysisEngine 总协调器 (push_vitals/trigger) |
+| `src/streaming.rs` | ~290 | StreamingGenerator (candle GGUF Qwen2流式生成) |
+| `data/medical_knowledge.json` | — | 8种伤病知识条目 (JSON) |
+| `tests/integration.rs` | ~240 | 10个端到端集成测试 |
+| **合计** | **~3000** | |
+
+#### 修改文件
+
+| 文件 | 修改 | 说明 |
+|------|:--:|------|
+| `rust-server/Cargo.toml` | 修改 | workspace 添加 wifi-densepose-llm 成员 |
+| `sensing-server/Cargo.toml` | 修改 | 添加 wifi-densepose-llm 依赖 |
+| `docs/triage-ui/triage.html` | 重大修改 | AI分析卡片 + 伤员登记表单 + 流式渲染 + WS新消息类型 |
+| `docs/端侧LLM方案设计.md` | 重写 | v1.0→v2.0，新增RAG/病史/联合分析/流式 |
+| `wces.config.toml` | 修改 | LLM配置更新 |
+
+#### 编译与测试
+
+| 检查项 | 结果 |
+|--------|:--:|
+| `cargo check` (template-only) | ✅ 0 errors |
+| `cargo check --features llm` | ✅ 0 errors |
+| `cargo test` (24 tests) | ✅ 全部通过 |
+
 ---
 
 ## 进度总览
@@ -221,7 +279,7 @@ cargo check  → ✅ 编译通过
 | **P10a** | **WASM 边缘模块集成 (13个)** | ✅ **2026-05-13** |
 | **P10b** | **全项目审计修复 + 重命名WCES + 骨架模拟启用** | ✅ **2026-05-12** |
 | **P10c** | **第二轮边缘模块集成 (6个: 步态/LTL/振动/徘徊/元学习/稀疏恢复)** | ✅ **2026-05-14** |
-| P10 | 端侧 LLM 代码实现 | ❌ 待开发 |
+| **P10d** | **端侧 LLM 智能分析引擎 (wifi-densepose-llm crate)** | ✅ **2026-05-15** |
 | P11 | 竞赛申报材料 | ❌ 待准备 |
 | P12 | 硬件联调 | ❌ 需硬件 |
 
@@ -320,8 +378,8 @@ CSI 采集        UDP:5005 → sensing-server
 
 | 任务 | 优先级 | 依赖 |
 |------|:--:|------|
-| **端侧 LLM 代码实现** | 🔴 必须 | candle + Qwen2.5-0.5B GGUF |
-| **WASM 边缘模块集成** | ✅ 完成 2026-05-14 | 19个模块全部接入 (13+6) |
+| ~~端侧 LLM 代码实现~~ | ✅ 完成 2026-05-15 | wifi-densepose-llm crate + triage.html AI卡片 |
+| ~~WASM 边缘模块集成~~ | ✅ 完成 2026-05-14 | 19个模块全部接入 (13+6) |
 | C5 固件编译 | 🔴 必须 | ESP-IDF v5.5+ |
 | Rust aarch64 交叉编译 | 🔴 必须 | RZ/V2H SDK |
 | 3 节点 烧录+联调 | 🔴 必须 | 硬件 |

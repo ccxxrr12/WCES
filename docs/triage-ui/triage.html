@@ -854,6 +854,249 @@
             background: var(--primary-blue);
             transform: scale(1.05);
         }
+        /* Patient Form Modal */
+        .patient-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        .patient-modal-overlay.active { display: flex; }
+
+        .patient-modal {
+            background: var(--bg-secondary);
+            border-radius: 20px;
+            padding: 32px;
+            width: 480px;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 0.5px solid var(--separator);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .patient-modal h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .patient-modal .modal-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+        .patient-modal .form-group {
+            margin-bottom: 16px;
+        }
+        .patient-modal label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+        .patient-modal input, .patient-modal select, .patient-modal textarea {
+            width: 100%;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--separator);
+            border-radius: 10px;
+            padding: 10px 14px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        .patient-modal input:focus, .patient-modal select:focus, .patient-modal textarea:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+        }
+        .patient-modal textarea { resize: vertical; min-height: 60px; }
+        .patient-modal .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .patient-modal .btn-row {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        .patient-modal .btn {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .patient-modal .btn-primary {
+            background: var(--primary-blue);
+            color: white;
+        }
+        .patient-modal .btn-primary:hover { opacity: 0.9; }
+        .patient-modal .btn-ghost {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .patient-modal .btn-ghost:hover { background: var(--separator); }
+
+        /* LLM Analysis Card */
+        .llm-card {
+            background: var(--bg-tertiary);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border: 0.5px solid var(--separator);
+            transition: all 0.3s;
+        }
+        .llm-card.streaming {
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 20px rgba(0, 122, 255, 0.15);
+        }
+        .llm-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        .llm-card-header .patient-tag {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--primary-blue);
+            background: rgba(0, 122, 255, 0.12);
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+        .llm-card-header .llm-badge {
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        .llm-badge.llm { background: rgba(94, 92, 230, 0.15); color: #5E5CE6; }
+        .llm-badge.fallback { background: rgba(142, 142, 147, 0.15); color: var(--gray); }
+        .llm-badge.generating { background: rgba(0, 122, 255, 0.15); color: var(--primary-blue); animation: pulse 1.5s infinite; }
+
+        .llm-stream-text {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-primary);
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .llm-stream-text .typing-cursor::after {
+            content: '▊';
+            animation: blink 1s step-end infinite;
+            color: var(--primary-blue);
+            margin-left: 2px;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        .llm-risk-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .llm-risk-badge.critical { background: rgba(255, 59, 48, 0.15); color: var(--danger-red); }
+        .llm-risk-badge.high { background: rgba(255, 149, 0, 0.15); color: var(--warning-orange); }
+        .llm-risk-badge.moderate { background: rgba(0, 122, 255, 0.15); color: var(--primary-blue); }
+        .llm-risk-badge.low { background: rgba(52, 199, 89, 0.15); color: var(--success-green); }
+
+        .llm-section-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 12px 0 6px;
+        }
+        .llm-rec-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 0.5px solid var(--separator);
+        }
+        .llm-rec-item:last-child { border-bottom: none; }
+        .llm-rec-num {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--primary-blue);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .llm-rec-text { font-size: 13px; line-height: 1.5; }
+
+        .llm-triage-opinion {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            margin: 8px 0;
+        }
+        .llm-triage-opinion.agrees { background: rgba(52, 199, 89, 0.1); border: 1px solid rgba(52, 199, 89, 0.2); }
+        .llm-triage-opinion.disagrees { background: rgba(255, 149, 0, 0.1); border: 1px solid rgba(255, 149, 0, 0.2); }
+
+        .llm-analyze-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, var(--primary-blue) 0%, #5856D6 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .llm-analyze-btn:hover { transform: scale(1.02); }
+        .llm-analyze-btn:active { transform: scale(0.98); }
+        .llm-analyze-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .patient-list-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: var(--bg-tertiary);
+            border-radius: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .patient-list-item:hover { background: var(--separator); }
+        .patient-list-item.active { border: 1px solid var(--primary-blue); }
+
     </style>
 </head>
 <body>
@@ -1044,6 +1287,92 @@
                         <div class="empty-text">边缘模块就绪</div>
                     </div>
                 </div>
+            </div>
+
+            <!-- LLM AI Analysis Section -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span class="section-title">🧠 AI 辅助分析</span>
+                    <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="showPatientModal()">+ 登记伤员</button>
+                </div>
+                <div id="llmAnalysisContainer">
+                    <div class="empty-state">
+                        <div class="empty-icon">🧠</div>
+                        <div class="empty-text">点击伤员卡片或登记伤员后进行AI分析</div>
+                    </div>
+                </div>
+                <div style="margin-top:12px;">
+                    <button class="llm-analyze-btn" id="llmAnalyzeBtn" disabled onclick="requestLlmAnalysis()">
+                        🤖 生成AI分析报告
+                    </button>
+                </div>
+            </div>
+
+            <!-- Registered Patients Quick List -->
+            <div class="sidebar-section" id="patientListSection" style="display:none;">
+                <div class="section-header">
+                    <span class="section-title">📋 已登记伤员</span>
+                </div>
+                <div id="patientQuickList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Patient Registration Modal -->
+    <div class="patient-modal-overlay" id="patientModalOverlay">
+        <div class="patient-modal">
+            <h3>🏥 伤员信息登记</h3>
+            <p class="modal-subtitle">登记伤员基本信息与既往病史，AI将结合这些信息进行智能分析</p>
+            <div class="form-group">
+                <label>伤员ID</label>
+                <input type="text" id="regPatientId" placeholder="如 PAT-0001" value="">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>年龄</label>
+                    <input type="number" id="regAge" placeholder="岁" min="0" max="120">
+                </div>
+                <div class="form-group">
+                    <label>性别</label>
+                    <select id="regGender">
+                        <option value="">未知</option>
+                        <option value="male">男</option>
+                        <option value="female">女</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>关联节点ID (ESP32)</label>
+                <select id="regNodeId">
+                    <option value="">未知</option>
+                    <option value="1">节点 1</option>
+                    <option value="2">节点 2</option>
+                    <option value="3">节点 3</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>既往病史 (逗号分隔)</label>
+                <input type="text" id="regPreExisting" placeholder="如: COPD, 高血压, 2型糖尿病">
+            </div>
+            <div class="form-group">
+                <label>当前主诉</label>
+                <input type="text" id="regComplaint" placeholder="如: 呼吸困难3小时">
+            </div>
+            <div class="form-group">
+                <label>长期用药 (逗号分隔)</label>
+                <input type="text" id="regMedications" placeholder="如: 沙美特罗替卡松 50/250μg bid">
+            </div>
+            <div class="form-group">
+                <label>过敏史 (逗号分隔)</label>
+                <input type="text" id="regAllergies" placeholder="如: 青霉素">
+            </div>
+            <div class="form-group">
+                <label>备注</label>
+                <textarea id="regNotes" placeholder="其他需要记录的信息..."></textarea>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-ghost" onclick="closePatientModal()">取消</button>
+                <button class="btn btn-primary" onclick="registerPatient()">💾 登记伤员</button>
             </div>
         </div>
     </div>
@@ -1737,6 +2066,7 @@
             if (data.triage_update) {
                 latestTriage = data.triage_update;
                 renderFromServer();
+                enableAnalyzeButton();
             }
         }
 
@@ -1754,6 +2084,12 @@
                     const data = JSON.parse(e.data);
                     if (data.type === 'sensing_update') {
                         handleUpdate(data);
+                    } else if (data.type === 'llm_stream') {
+                        handleLlmStream(data);
+                    } else if (data.type === 'llm_analysis_complete') {
+                        handleLlmComplete(data);
+                    } else if (data.type === 'llm_fallback') {
+                        handleLlmFallback(data);
                     }
                 } catch (err) {
                     console.error('Parse error:', err);
@@ -1769,6 +2105,350 @@
             ws.onerror = () => {
                 ws.close();
             };
+        }
+
+        // ==================== LLM Analysis ====================
+        let selectedPatientId = null;
+        let registeredPatients = {}; // patientId → { age, gender, pre_existing, chief_complaint, ... }
+        let llmStreamBuffer = {}; // patientId → { text, isStreaming, badge }
+
+        function enableAnalyzeButton() {
+            const btn = document.getElementById('llmAnalyzeBtn');
+            if (!btn) return;
+            if (latestTriage && latestTriage.survivors && latestTriage.survivors.length > 0) {
+                if (!selectedPatientId) {
+                    // Auto-select first survivor
+                    selectPatientForAnalysis(latestTriage.survivors[0].id);
+                }
+                btn.disabled = false;
+                btn.textContent = selectedPatientId ? `🤖 分析 ${selectedPatientId}` : '🤖 生成AI分析报告';
+            }
+        }
+
+        function selectPatientForAnalysis(patientId) {
+            selectedPatientId = patientId;
+            document.querySelectorAll('.survivor-card').forEach(card => card.classList.remove('active'));
+            // Highlight selected
+            const cards = document.querySelectorAll('.survivor-card');
+            const survivors = latestTriage?.survivors || [];
+            const idx = survivors.findIndex(s => s.id === patientId);
+            if (idx >= 0 && cards[idx]) cards[idx].classList.add('active');
+            enableAnalyzeButton();
+        }
+
+        function requestLlmAnalysis() {
+            if (!selectedPatientId || !latestTriage) return;
+            
+            const survivor = (latestTriage.survivors || []).find(s => s.id === selectedPatientId);
+            if (!survivor) return;
+
+            const btn = document.getElementById('llmAnalyzeBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
+
+            // Show streaming card
+            llmStreamBuffer[selectedPatientId] = { text: '', isStreaming: true };
+            renderLlmStreamCard(selectedPatientId, '');
+
+            // Send analysis request via WebSocket
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'llm_analyze_request',
+                    patient_id: selectedPatientId,
+                    node_id: survivor.node_id
+                }));
+            } else {
+                // Offline mode: generate local analysis from patient data
+                generateLocalAnalysis(selectedPatientId, survivor);
+            }
+        }
+
+        function handleLlmStream(data) {
+            const pid = data.survivor_id || data.patient_id;
+            if (!pid) return;
+            if (!llmStreamBuffer[pid]) llmStreamBuffer[pid] = { text: '', isStreaming: true };
+            
+            if (data.is_complete) {
+                llmStreamBuffer[pid].isStreaming = false;
+                return;
+            }
+            llmStreamBuffer[pid].text += data.text || '';
+            renderLlmStreamCard(pid, llmStreamBuffer[pid].text, true);
+        }
+
+        function handleLlmComplete(data) {
+            const pid = data.survivor_id || data.patient_id;
+            if (!pid) return;
+            llmStreamBuffer[pid] = { text: '', isStreaming: false };
+            
+            if (data.analysis_json) {
+                renderLlmAnalysisCard(pid, data.analysis_json, data.generated_by || 'llm');
+            }
+            
+            const btn = document.getElementById('llmAnalyzeBtn');
+            if (btn) { btn.disabled = false; btn.textContent = '🤖 生成AI分析报告'; }
+        }
+
+        function handleLlmFallback(data) {
+            const pid = data.patient_id;
+            if (!pid) return;
+            renderLlmAnalysisCard(pid, data.analysis_json || data, data.generated_by || 'fallback');
+            
+            const btn = document.getElementById('llmAnalyzeBtn');
+            if (btn) { btn.disabled = false; btn.textContent = '🤖 生成AI分析报告'; }
+        }
+
+        function renderLlmStreamCard(patientId, text, isStreaming) {
+            const container = document.getElementById('llmAnalysisContainer');
+            let card = document.getElementById('llm-card-' + patientId);
+            
+            if (!card) {
+                card = document.createElement('div');
+                card.id = 'llm-card-' + patientId;
+                card.className = 'llm-card streaming';
+                container.innerHTML = '';
+                container.appendChild(card);
+            }
+
+            card.innerHTML = `
+                <div class="llm-card-header">
+                    <span class="patient-tag">${patientId}</span>
+                    <span class="llm-badge generating">⚡ 生成中...</span>
+                </div>
+                <div class="llm-stream-text${isStreaming ? ' typing-cursor' : ''}">${escapeHtml(text)}</div>
+            `;
+        }
+
+        function renderLlmAnalysisCard(patientId, analysis, generatedBy) {
+            const container = document.getElementById('llmAnalysisContainer');
+            const a = analysis;
+            const isLlm = generatedBy === 'llm';
+            const badgeClass = isLlm ? 'llm' : 'fallback';
+            const badgeText = isLlm ? '🤖 LLM分析' : '📋 模板分析';
+
+            const riskLevel = a.risk_assessment?.overall_level || 'moderate';
+            const riskEmoji = { critical: '🔴', high: '🟠', moderate: '🟡', low: '🟢' }[riskLevel] || '⚪';
+
+            let html = `<div class="llm-card" id="llm-card-${patientId}">
+                <div class="llm-card-header">
+                    <span class="patient-tag">${patientId}</span>
+                    <span class="llm-badge ${badgeClass}">${badgeText}</span>
+                </div>`;
+
+            // Risk assessment
+            html += `<div class="llm-risk-badge ${riskLevel}">${riskEmoji} 综合风险评估: ${riskLevel.toUpperCase()}</div>`;
+            if (a.risk_assessment?.primary_concern) {
+                html += `<div style="font-size:14px;font-weight:500;margin-bottom:4px;">⚠️ ${escapeHtml(a.risk_assessment.primary_concern)}</div>`;
+            }
+            if (a.risk_assessment?.deteriorating) {
+                html += `<div style="font-size:12px;color:var(--danger-red);margin-bottom:8px;">📈 ${escapeHtml(a.risk_assessment.deterioration_evidence || '存在恶化趋势')}</div>`;
+            }
+
+            // Condition match
+            if (a.condition_match?.most_likely && a.condition_match.most_likely !== '无明确模式匹配') {
+                html += `<div class="llm-section-label">🔬 体征模式匹配</div>`;
+                html += `<div style="font-size:13px;margin-bottom:4px;">
+                    <strong>${escapeHtml(a.condition_match.most_likely)}</strong>
+                    <span style="color:var(--text-secondary);font-size:11px;"> (置信度: ${a.condition_match.confidence || 'medium'})</span>
+                </div>`;
+            }
+
+            // Triage opinion
+            if (a.triage_opinion) {
+                const agrees = a.triage_opinion.agrees_with_start !== false;
+                html += `<div class="llm-triage-opinion ${agrees ? 'agrees' : 'disagrees'}">
+                    ${agrees ? '✅' : '⚠️'} ${escapeHtml(a.triage_opinion.reason || '')}
+                </div>`;
+            }
+
+            // History relevance
+            const hist = a.history_relevance;
+            if (hist && hist.relevant_conditions && hist.relevant_conditions.length > 0) {
+                html += `<div class="llm-section-label">📋 病史关联</div>`;
+                html += `<div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(hist.impact_on_assessment || '')}</div>`;
+            }
+
+            // Recommendations
+            if (a.recommendations && a.recommendations.length > 0) {
+                html += `<div class="llm-section-label">💊 处置建议</div>`;
+                a.recommendations.slice(0, 5).forEach((rec, i) => {
+                    html += `<div class="llm-rec-item">
+                        <div class="llm-rec-num">${i+1}</div>
+                        <div class="llm-rec-text">${escapeHtml(rec)}</div>
+                    </div>`;
+                });
+            }
+
+            // Monitoring
+            if (a.monitoring_priority && a.monitoring_priority.length > 0) {
+                html += `<div class="llm-section-label">👁️ 优先监测</div>`;
+                html += `<div style="font-size:12px;color:var(--text-secondary);">`;
+                html += a.monitoring_priority.map(m => `• ${escapeHtml(m)}`).join('<br>');
+                html += `</div>`;
+            }
+
+            html += `<div style="margin-top:12px;font-size:10px;color:var(--text-secondary);text-align:right;">
+                ${a.generated_at ? new Date(a.generated_at).toLocaleTimeString('zh-CN') : ''}
+                ${a.analysis_time_ms ? ' · ' + a.analysis_time_ms + 'ms' : ''}
+            </div>`;
+            html += '</div>';
+
+            container.innerHTML = html;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function generateLocalAnalysis(patientId, survivor) {
+            // Offline fallback: build simple structured analysis from available data
+            const patientInfo = registeredPatients[patientId] || {};
+            const rr = survivor.breathing_rate || null;
+            const hr = survivor.heart_rate || null;
+            
+            const riskLevel = survivor.triage_color === 'red' ? 'critical' :
+                             survivor.triage_color === 'yellow' ? 'high' :
+                             survivor.triage_color === 'green' ? 'low' : 'moderate';
+            
+            const deteriorating = survivor.is_deteriorating || false;
+            const triageName = { red: 'Immediate', yellow: 'Delayed', green: 'Minor', black: 'Deceased' }[survivor.triage_color] || '';
+
+            const analysis = {
+                patient_id: patientId,
+                generated_at: new Date().toISOString(),
+                generated_by: 'local_fallback',
+                analysis_time_ms: 0,
+                risk_assessment: {
+                    overall_level: riskLevel,
+                    primary_concern: deteriorating ? '检测到恶化趋势，需立即关注' : '当前体征在分诊等级对应范围内',
+                    deteriorating: deteriorating,
+                    deterioration_evidence: deteriorating ? '伤员标记为恶化状态' : '无明显恶化证据'
+                },
+                condition_match: {
+                    most_likely: '基于分诊等级评估',
+                    confidence: 'medium',
+                    differential: ['需连接服务端获取详细分析']
+                },
+                triage_opinion: {
+                    agrees_with_start: true,
+                    suggested_level: triageName,
+                    reason: '认可START分诊判断 (离线模式)'
+                },
+                trend_analysis: {
+                    respiratory: rr ? `呼吸率 ${rr.toFixed(1)} 次/分` : '无呼吸数据',
+                    cardiac: hr ? `心率 ${hr.toFixed(0)} BPM` : '无心率数据',
+                    combined: '离线模式，趋势数据需连接服务端'
+                },
+                history_relevance: {
+                    relevant_conditions: patientInfo.pre_existing || [],
+                    impact_on_assessment: patientInfo.pre_existing ? `既往病史: ${Array.isArray(patientInfo.pre_existing) ? patientInfo.pre_existing.join('、') : patientInfo.pre_existing}` : '无既往病史记录'
+                },
+                recommendations: [
+                    '连接服务端获取完整AI分析',
+                    deteriorating ? '⚠️ 关注恶化趋势，准备干预' : '定期生命体征监测',
+                    riskLevel === 'critical' ? '建议立即转送红色区域' : '按分诊等级处理'
+                ],
+                monitoring_priority: ['呼吸频率', '心率', '运动状态']
+            };
+            
+            renderLlmAnalysisCard(patientId, analysis, 'fallback');
+            const btn = document.getElementById('llmAnalyzeBtn');
+            if (btn) { btn.disabled = false; btn.textContent = '🤖 生成AI分析报告'; }
+        }
+
+        // ==================== Patient Registration ====================
+        function showPatientModal() {
+            document.getElementById('patientModalOverlay').classList.add('active');
+            // Auto-fill ID if survivor selected
+            if (selectedPatientId) {
+                document.getElementById('regPatientId').value = selectedPatientId;
+            }
+        }
+        
+        function closePatientModal() {
+            document.getElementById('patientModalOverlay').classList.remove('active');
+        }
+        
+        function registerPatient() {
+            const patientId = document.getElementById('regPatientId').value.trim();
+            if (!patientId) { alert('请输入伤员ID'); return; }
+            
+            const age = document.getElementById('regAge').value;
+            const gender = document.getElementById('regGender').value;
+            const nodeId = document.getElementById('regNodeId').value;
+            const preExisting = document.getElementById('regPreExisting').value
+                .split(',').map(s => s.trim()).filter(Boolean);
+            const complaint = document.getElementById('regComplaint').value.trim();
+            const medications = document.getElementById('regMedications').value
+                .split(',').map(s => s.trim()).filter(Boolean);
+            const allergies = document.getElementById('regAllergies').value
+                .split(',').map(s => s.trim()).filter(Boolean);
+            const notes = document.getElementById('regNotes').value.trim();
+            
+            registeredPatients[patientId] = {
+                patient_id: patientId,
+                age: age ? parseInt(age) : null,
+                gender: gender || null,
+                node_id: nodeId ? parseInt(nodeId) : null,
+                pre_existing: preExisting,
+                chief_complaint: complaint || null,
+                medications: medications,
+                allergies: allergies,
+                notes: notes || null
+            };
+            
+            // Send to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'patient_register',
+                    ...registeredPatients[patientId]
+                }));
+            }
+            
+            // Save locally
+            try {
+                localStorage.setItem('wces_patients', JSON.stringify(registeredPatients));
+            } catch(e) {}
+            
+            selectedPatientId = patientId;
+            refreshPatientList();
+            closePatientModal();
+            enableAnalyzeButton();
+        }
+        
+        function refreshPatientList() {
+            const section = document.getElementById('patientListSection');
+            const list = document.getElementById('patientQuickList');
+            const ids = Object.keys(registeredPatients);
+            
+            if (ids.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+            
+            section.style.display = 'block';
+            list.innerHTML = ids.map(id => {
+                const p = registeredPatients[id];
+                const pre = (p.pre_existing || []).slice(0, 2).join(', ') || '无病史';
+                return `<div class="patient-list-item${id === selectedPatientId ? ' active' : ''}" onclick="selectPatientForAnalysis('${id}')">
+                    <div>
+                        <div style="font-weight:500;font-size:13px;">${id}</div>
+                        <div style="font-size:11px;color:var(--text-secondary);">${p.age ? p.age + '岁' : ''} ${pre}</div>
+                    </div>
+                    <button class="btn btn-ghost" style="font-size:10px;padding:4px 8px;" onclick="event.stopPropagation();deletePatient('${id}')">✕</button>
+                </div>`;
+            }).join('');
+        }
+        
+        function deletePatient(patientId) {
+            delete registeredPatients[patientId];
+            try { localStorage.setItem('wces_patients', JSON.stringify(registeredPatients)); } catch(e) {}
+            if (selectedPatientId === patientId) selectedPatientId = null;
+            refreshPatientList();
+            enableAnalyzeButton();
         }
 
         // ==================== Controls ====================
@@ -1794,6 +2474,13 @@
         // ==================== Init ====================
         console.log('[Init] THREE:', typeof THREE !== 'undefined' ? 'v'+THREE.REVISION : 'MISSING',
             '| OrbitControls:', typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined');
+        
+        // Restore registered patients from localStorage
+        try {
+            const saved = localStorage.getItem('wces_patients');
+            if (saved) { registeredPatients = JSON.parse(saved); refreshPatientList(); }
+        } catch(e) {}
+        
         updateTime();
         setInterval(updateTime, 1000);
         drawMap();

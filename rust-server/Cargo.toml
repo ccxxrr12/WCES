@@ -9,6 +9,7 @@ members = [
     "crates/wifi-densepose-mat",
     "crates/wifi-densepose-sensing-server",
     "crates/wifi-densepose-vitals",
+    "crates/wifi-densepose-llm",
 ]
 # ADR-040: WASM edge crate targets wasm32-unknown-unknown (no_std),
 # excluded from workspace to avoid breaking `cargo test --workspace`.

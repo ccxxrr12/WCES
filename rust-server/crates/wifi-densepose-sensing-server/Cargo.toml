@@ -45,5 +45,8 @@ wifi-densepose-mat = { version = "0.3.0", path = "../wifi-densepose-mat" }
 wifi-densepose-signal = { version = "0.3.0", path = "../wifi-densepose-signal" }
 wifi-densepose-vitals = { version = "0.3.0", path = "../wifi-densepose-vitals" }
 
+# LLM intelligent analysis engine (competition P10)
+wifi-densepose-llm = { version = "0.3.0", path = "../wifi-densepose-llm" }
+
 [dev-dependencies]
 tempfile = "3.10"

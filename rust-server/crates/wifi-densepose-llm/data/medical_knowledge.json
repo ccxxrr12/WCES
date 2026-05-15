@@ -1,0 +1,230 @@
+[
+  {
+    "id": "respiratory_failure_acute",
+    "name": "急性呼吸衰竭",
+    "key_indicators": {
+      "breathing_rate": {
+        "condition": ">30 或 <10",
+        "trend": "持续恶化"
+      },
+      "heart_rate": {
+        "condition": ">120 或 <50",
+        "trend": "随缺氧加重"
+      },
+      "signal_quality": "可能下降 (体动增加)",
+      "motion_pattern": "呼吸急促 → 呼吸浅慢 → 停止",
+      "edge_alerts": ["med_respiratory_distress", "med_sleep_apnea"]
+    },
+    "differential": ["COPD急性加重", "肺栓塞", "心源性肺水肿"],
+    "risk_factors": ["COPD", "高龄", "胸外伤", "吸烟"],
+    "urgency": "critical",
+    "triage_recommendation": "Immediate (红)",
+    "actions": [
+      "立即气道评估，检查有无气道阻塞",
+      "给予高流量氧疗 (10-15L/min 储氧面罩)",
+      "准备球囊面罩辅助通气",
+      "优先转运至红色区域，持续监测SpO2",
+      "如呼吸停止，立即开始BVM通气"
+    ],
+    "monitoring_focus": ["呼吸频率变化趋势 (每5分钟)", "心率变异性", "运动评分 (警惕由躁动→静止的转变)"]
+  },
+  {
+    "id": "sepsis_early",
+    "name": "脓毒症 (早期)",
+    "key_indicators": {
+      "breathing_rate": {
+        "condition": ">22",
+        "trend": "逐渐加快"
+      },
+      "heart_rate": {
+        "condition": ">90",
+        "trend": "持续升高"
+      },
+      "signal_quality": "可能波动 (寒战引起体动)",
+      "motion_pattern": "可能出现寒战样高频微动",
+      "edge_alerts": ["med_cardiac_arrhythmia"]
+    },
+    "differential": ["严重感染", "低血容量休克", "过敏反应"],
+    "risk_factors": ["开放性伤口", "免疫力低下", "导管", "高龄"],
+    "urgency": "high",
+    "triage_recommendation": "Immediate (红) — 如合并低血压或意识改变",
+    "actions": [
+      "立即评估感染源 (检查伤口、导管)",
+      "建立静脉通路，开始液体复苏",
+      "密切监测心率趋势",
+      "考虑升级为红色优先级"
+    ],
+    "monitoring_focus": ["心率上升速率", "呼吸频率与心率的比值", "运动评分变化 (意识状态间接反映)"]
+  },
+  {
+    "id": "arrhythmia_acute",
+    "name": "急性心律失常",
+    "key_indicators": {
+      "heart_rate": {
+        "condition": ">130 或 <45",
+        "trend": "突然变化"
+      },
+      "breathing_rate": {
+        "condition": "可能正常或代偿性加快",
+        "trend": "可能代偿性改变"
+      },
+      "signal_quality": "可能下降 (心率不规整影响CSI信号)",
+      "motion_pattern": "可能伴随意识丧失后的静止",
+      "edge_alerts": ["med_cardiac_arrhythmia"]
+    },
+    "differential": ["心肌梗死", "电解质紊乱", "药物毒性"],
+    "risk_factors": ["心脏病", "高血压", "糖尿病", "高龄"],
+    "urgency": "critical",
+    "triage_recommendation": "Immediate (红)",
+    "actions": [
+      "立即评估意识状态和脉搏",
+      "如无脉搏，启动CPR",
+      "如意识清楚，给予吸氧，尽快心电图评估",
+      "优先转运红色区域"
+    ],
+    "monitoring_focus": ["心率突然变化幅度", "HRV (心率变异性) 是否异常", "是否伴随运动评分的突然下降"]
+  },
+  {
+    "id": "copd_exacerbation",
+    "name": "COPD急性加重",
+    "key_indicators": {
+      "breathing_rate": {
+        "condition": ">25",
+        "trend": "逐渐恶化"
+      },
+      "heart_rate": {
+        "condition": ">100",
+        "trend": "代偿性升高"
+      },
+      "signal_quality": "可能下降 (呼吸模式紊乱)",
+      "motion_pattern": "呼吸费力 → 辅助呼吸肌参与 → 端坐呼吸姿势变化",
+      "edge_alerts": ["med_respiratory_distress"]
+    },
+    "differential": ["急性呼吸衰竭", "肺炎", "气胸"],
+    "risk_factors": ["COPD", "感染", "吸烟", "空气污染"],
+    "urgency": "high",
+    "triage_recommendation": "Immediate (红) — 如RR>30或出现意识改变",
+    "actions": [
+      "对比患者基线呼吸率 (COPD患者静息RR常已偏高)",
+      "给予控制性氧疗 (目标SpO2 88-92%，避免高氧)",
+      "使用支气管扩张剂",
+      "密切监测呼吸趋势，警惕CO2潴留"
+    ],
+    "monitoring_focus": ["呼吸率与基线的偏差", "呼吸模式是否变浅变快", "运动评分趋势"]
+  },
+  {
+    "id": "seizure",
+    "name": "癫痫发作",
+    "key_indicators": {
+      "breathing_rate": {
+        "condition": "发作期间可能暂停或极不规则",
+        "trend": "发作期不规则"
+      },
+      "heart_rate": {
+        "condition": "发作期间显著升高",
+        "trend": "发作期升高"
+      },
+      "signal_quality": "发作期间剧烈下降 (大幅运动干扰CSI)",
+      "motion_pattern": "突然出现规律性高幅度运动，持续30-120秒后突然停止",
+      "edge_alerts": ["med_seizure_detect"]
+    },
+    "differential": ["心源性晕厥", "低血糖", "假性发作"],
+    "risk_factors": ["癫痫", "脑外伤", "停药", "睡眠剥夺"],
+    "urgency": "high",
+    "triage_recommendation": "Immediate (红) — 如发作持续>5分钟或连续发作",
+    "actions": [
+      "保护伤员，防止二次伤害",
+      "不要强行约束",
+      "发作停止后评估意识和呼吸",
+      "如发作>5分钟 (癫痫持续状态)，紧急医疗干预",
+      "记录发作持续时间和特征"
+    ],
+    "monitoring_focus": ["运动评分突增突降模式", "发作后呼吸恢复速度", "发作后心率的恢复趋势", "连续发作间隔"]
+  },
+  {
+    "id": "cardiac_event_acute",
+    "name": "急性心脏事件",
+    "key_indicators": {
+      "heart_rate": {
+        "condition": ">120 或 <50",
+        "trend": "突发异常"
+      },
+      "breathing_rate": {
+        "condition": "可能突然改变",
+        "trend": "不定"
+      },
+      "signal_quality": "可能下降",
+      "motion_pattern": "可能伴随突然静止 (意识丧失)",
+      "edge_alerts": ["med_cardiac_arrhythmia", "sec_panic_motion"]
+    },
+    "differential": ["急性心肌梗死", "主动脉夹层", "肺栓塞"],
+    "risk_factors": ["心脏病", "高血压", "糖尿病", "高龄", "高血脂", "吸烟"],
+    "urgency": "critical",
+    "triage_recommendation": "Immediate (红)",
+    "actions": [
+      "立即停止任何活动，保持平卧",
+      "给予吸氧",
+      "监测生命体征，准备除颤设备",
+      "立即呼叫上级医师",
+      "优先转运至红色区域"
+    ],
+    "monitoring_focus": ["心率突然变化", "运动评分是否突降", "是否伴随便秘/呼吸困难"]
+  },
+  {
+    "id": "hypovolemic_shock",
+    "name": "低血容量性休克",
+    "key_indicators": {
+      "heart_rate": {
+        "condition": ">100",
+        "trend": "持续性代偿升高"
+      },
+      "breathing_rate": {
+        "condition": ">20",
+        "trend": "代偿性加快"
+      },
+      "signal_quality": "可能下降",
+      "motion_pattern": "逐渐减少 (意识下降 → 活动减少)",
+      "edge_alerts": []
+    },
+    "differential": ["出血性休克", "脱水性休克", "烧伤休克"],
+    "risk_factors": ["创伤", "出血", "烧伤", "严重腹泻呕吐"],
+    "urgency": "critical",
+    "triage_recommendation": "Immediate (红)",
+    "actions": [
+      "立即评估出血来源并止血",
+      "建立大口径静脉通路，快速补液",
+      "抬高下肢 (如有条件)",
+      "紧急转运至红色区域"
+    ],
+    "monitoring_focus": ["心率上升速率和持续性", "运动评分趋势", "呼吸频率变化"]
+  },
+  {
+    "id": "panic_anxiety_acute",
+    "name": "急性焦虑/恐慌发作",
+    "key_indicators": {
+      "breathing_rate": {
+        "condition": ">24",
+        "trend": "突然升高后波动"
+      },
+      "heart_rate": {
+        "condition": ">100",
+        "trend": "突然升高后波动"
+      },
+      "signal_quality": "可能剧烈波动 (过度换气+体动)",
+      "motion_pattern": "不规律运动，无明确生理模式",
+      "edge_alerts": ["sec_panic_motion"]
+    },
+    "differential": ["急性呼吸衰竭", "肺栓塞", "心律失常"],
+    "risk_factors": ["恐慌症病史", "PTSD", "灾难经历", "焦虑症"],
+    "urgency": "moderate",
+    "triage_recommendation": "Delayed (黄) — 排除器质性疾病后退级",
+    "actions": [
+      "安抚伤员，提供安静环境",
+      "引导缓慢深呼吸 (4-7-8呼吸法)",
+      "排除器质性疾病 (心脏/呼吸)",
+      "必要时给予镇静药物",
+      "持续监测，过度换气可自行缓解"
+    ],
+    "monitoring_focus": ["呼吸和心率是否逐渐自行回落", "运动模式是否转为规律", "信号质量恢复情况"]
+  }
+]

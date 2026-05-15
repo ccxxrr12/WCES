@@ -84,12 +84,26 @@ pose_synthetic = true          # 模拟模式下生成合成骨架 (无需模型
 
 # --- 端侧 LLM ---
 [server.llm]
-enabled = false                  # ⚠️ 待实现: 启用 LLM 伤病报告
-model_format = "GGUF"           # GGUF | ONNX
-model_path = "models/qwen2.5-0.5b-q4.gguf"
+enabled = true                   # ✅ 已实现: LLM 智能分析引擎 (P10d)
+feature = "llm"                  # llm = 完整LLM, template-only = 仅模板
+model_format = "GGUF"            # GGUF
+model_path = "data/models/qwen2.5-0.5b-q4.gguf"
+tokenizer_path = "data/models/qwen2_tokenizer.json"
 max_tokens = 256
 temperature = 0.3
-fallback_to_template = true     # LLM 失败时回退到模板报告
+periodic_analysis_secs = 30      # 周期分析间隔 (0=仅事件触发)
+analysis_timeout_secs = 120      # 单次推理超时
+patient_cooldown_secs = 30       # 同一伤员分析冷却
+fallback_to_template = true      # LLM 失败时回退到模板分析
+
+# 窗口配置
+short_window_secs = 60           # 短期趋势窗口 (1分钟)
+medium_window_secs = 300         # 中期趋势窗口 (5分钟)
+long_window_secs = 1800          # 长期基线窗口 (30分钟)
+
+# 知识库
+patient_db_path = "data/patients"        # 病历数据库 (sled)
+medical_kb_path = "data/medical_knowledge.json"  # 医学知识库
 
 # --- 边缘模块 ---
 [server.edge_modules]
