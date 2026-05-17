@@ -323,10 +323,10 @@ impl LlmAnalysisEngine {
             Ok(Some(p)) => p,
             Ok(None) => {
                 let record = PatientRecord::new(patient_id);
-                drop(inner);
-                // Can't easily put through a different lock, just use what we have
-                // Re-acquire for simplicity
-                return None;
+                if let Err(e) = inner.patient_db.put(&record) {
+                    tracing::warn!("Failed to auto-register patient {}: {}", patient_id, e);
+                }
+                record
             }
             Err(e) => {
                 tracing::error!("Failed to get patient record: {}", e);
@@ -439,7 +439,7 @@ impl LlmAnalysisEngine {
 }
 
 /// Engine status snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct EngineStatus {
     pub patients_registered: usize,
     pub knowledge_entries: usize,

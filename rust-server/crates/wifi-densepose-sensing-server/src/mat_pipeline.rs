@@ -330,8 +330,8 @@ impl TriageEngine {
             };
             s.triage = calculate_triage(&smooth_input);
 
-            // 恶化检测 (分诊等级提升 ≥2 级)
-            if s.triage.priority() + 2 <= s.prev_triage.priority() {
+            // 恶化检测 (分诊等级向更紧急方向变化，排除从Unknown的变化)
+            if s.triage.priority() < s.prev_triage.priority() && s.prev_triage != TriageLevel::Unknown {
                 s.deterioration_count += 1;
                 if s.deterioration_count >= self.config.deterioration_window {
                     s.deterioration_count = 0;
@@ -464,13 +464,13 @@ mod tests {
 
     #[test]
     fn test_start_immediate_high_rr() {
-        let v = VitalSignsInput { breathing_rate_bpm: Some(35.0), ..Default::default() };
+        let v = VitalSignsInput { breathing_rate_bpm: Some(35.0), signal_quality: 0.8, ..Default::default() };
         assert_eq!(calculate_triage(&v), TriageLevel::Immediate);
     }
 
     #[test]
     fn test_start_immediate_low_hr() {
-        let v = VitalSignsInput { breathing_rate_bpm: Some(15.0), heart_rate_bpm: Some(35.0), ..Default::default() };
+        let v = VitalSignsInput { breathing_rate_bpm: Some(15.0), heart_rate_bpm: Some(35.0), signal_quality: 0.8, ..Default::default() };
         assert_eq!(calculate_triage(&v), TriageLevel::Immediate);
     }
 

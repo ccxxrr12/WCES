@@ -361,7 +361,7 @@ impl EdgeModuleEngine {
         }
     }
 
-    /// Process one CSI frame through all 10 modules.
+    /// Process one CSI frame through all 19 modules.
     /// Returns aggregated alerts.
     #[allow(clippy::too_many_arguments)]
     pub fn process_frame(
@@ -515,7 +515,7 @@ impl EdgeModuleEngine {
         // ── Module 3: coherence ────────────────────────────────────────
         if n > 0 {
             if !self.coh_initialized {
-                for i in 0..n.min(32) { self.coh_prev_phases[i] = phases[i]; }
+                for i in 0..32 { self.coh_prev_phases[i] = if i < n { phases[i] } else { 0.0 }; }
                 self.coh_initialized = true;
             } else {
                 let (mut sum_re, mut sum_im) = (0.0f32, 0.0f32);

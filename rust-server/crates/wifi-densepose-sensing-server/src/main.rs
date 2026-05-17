@@ -52,6 +52,10 @@ use vital_signs::{VitalSignDetector, VitalSigns};
 use mat_pipeline::{TriageEngine, TriageConfig, VitalSignsInput};
 use edge_module_engine::{EdgeModuleEngine, EdgeAlert};
 
+// LLM analysis engine (competition P10d)
+use wifi_densepose_llm::{LlmAnalysisEngine, LlmConfig, PatientRecord};
+use wifi_densepose_llm::types::StreamToken;
+
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
 #[derive(Parser, Debug)]
@@ -355,6 +359,10 @@ struct AppStateInner {
     // ── Adaptive classifier (environment-tuned) ──────────────────────────
     /// Trained adaptive model (loaded from data/adaptive_model.json or trained at runtime).
     adaptive_model: Option<adaptive_classifier::AdaptiveModel>,
+    // ── LLM Analysis Engine (P10d) ──────────────────────────────────────────
+    /// LLM analysis engine for AI-powered medical analysis.
+    /// None if LLM initialization failed or template-only mode is forced.
+    llm_engine: Option<std::sync::Arc<LlmAnalysisEngine>>,
 }
 
 /// If no ESP32 frame arrives within this duration, source reverts to offline.
@@ -1199,7 +1207,105 @@ async fn handle_ws_client(mut socket: WebSocket, state: SharedState) {
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Close(_))) | None => break,
-                    _ => {} // ignore client messages
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                            match msg.get("type").and_then(|v| v.as_str()) {
+                                Some("ping") => {
+                                    let pong = serde_json::json!({"type":"pong"});
+                                    let _ = socket.send(Message::Text(pong.to_string().into())).await;
+                                }
+                                Some("patient_register") => {
+                                    if let Some(ref engine) = {
+                                        let s = state.read().await;
+                                        s.llm_engine.clone()
+                                    } {
+                                        let pid = msg["patient_id"].as_str().unwrap_or("UNKNOWN");
+                                        let age = msg["age"].as_u64().map(|a| a as u8);
+                                        let gender = msg["gender"].as_str().unwrap_or("unknown");
+                                        let name = msg["name"].as_str().map(|n| n.to_string());
+                                        let node_id = msg["node_id"].as_u64().map(|n| n as u8);
+                                        let pre_existing: Vec<String> = msg["pre_existing"]
+                                            .as_array()
+                                            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                            .unwrap_or_default();
+
+                                        let mut record = PatientRecord::new(pid.to_string());
+                                        record.age = age;
+                                        record.gender = match gender {
+                                            "male" => Some(wifi_densepose_llm::Gender::Male),
+                                            "female" => Some(wifi_densepose_llm::Gender::Female),
+                                            _ => Some(wifi_densepose_llm::Gender::Other),
+                                        };
+                                        record.name = name;
+                                        record.node_id = node_id;
+                                        record.pre_existing = pre_existing;
+
+                                        if let Err(e) = engine.register_patient(record).await {
+                                            warn!("Failed to register patient: {}", e);
+                                        } else {
+                                            let ack = serde_json::json!({"type": "patient_registered", "patient_id": pid});
+                                            let _ = socket.send(Message::Text(ack.to_string().into())).await;
+                                        }
+                                    }
+                                }
+                                Some("llm_analyze_request") => {
+                                    let patient_id = msg["patient_id"].as_str().unwrap_or("UNKNOWN");
+                                    let engine = {
+                                        let s = state.read().await;
+                                        s.llm_engine.clone()
+                                    };
+                                    if let Some(ref engine) = engine {
+                                        let (br, hr, motion, quality, triage_label, alerts) = {
+                                            let s = state.read().await;
+                                            let triage = s.latest_update.as_ref()
+                                                .and_then(|u| u.triage_update.as_ref())
+                                                .and_then(|t| t.survivors.iter()
+                                                    .find(|surv| surv.id == patient_id)
+                                                    .map(|surv| surv.triage.clone()))
+                                                .unwrap_or_else(|| "Unknown".to_string());
+                                            let a: Vec<String> = s.latest_update.as_ref()
+                                                .and_then(|u| u.wasm_alerts.as_ref())
+                                                .map(|alerts: &Vec<EdgeAlert>| alerts.iter().map(|a| a.event_name.clone()).collect())
+                                                .unwrap_or_default();
+                                            (s.latest_vitals.breathing_rate_bpm,
+                                             s.latest_vitals.heart_rate_bpm,
+                                             s.smoothed_motion,
+                                             s.latest_vitals.signal_quality,
+                                             triage,
+                                             a)
+                                        };
+
+                                        let eng = engine.clone();
+                                        let pid = patient_id.to_string();
+                                        let tx = {
+                                            let s = state.read().await;
+                                            s.tx.clone()
+                                        };
+                                        tokio::spawn(async move {
+                                            if let Some(mut rx) = eng.trigger_analysis_streaming(
+                                                &pid, br, hr, motion, quality,
+                                                &triage_label, &alerts,
+                                            ).await {
+                                                while let Ok(token) = rx.recv().await {
+                                                    let json = serde_json::json!({
+                                                        "type": if token.is_complete { "llm_analysis_complete" } else { "llm_stream" },
+                                                        "patient_id": token.survivor_id,
+                                                        "text": token.text,
+                                                        "token_index": token.token_index,
+                                                    });
+                                                    if let Ok(json_str) = serde_json::to_string(&json) {
+                                                        let _ = tx.send(json_str);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                                _ => {} // ignore unknown messages
+                            }
+                        }
+                    }
+                    _ => {} // ignore non-text messages
                 }
             }
         }
@@ -2268,6 +2374,123 @@ async fn adaptive_unload(State(state): State<SharedState>) -> Json<serde_json::V
     Json(serde_json::json!({ "success": true, "message": "Adaptive model unloaded." }))
 }
 
+// ── LLM Analysis endpoints ──────────────────────────────────────────────────
+
+/// GET /api/v1/patients — list all registered patients
+async fn llm_patients_list(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    match &s.llm_engine {
+        Some(engine) => {
+            match engine.list_patients().await {
+                Ok(patients) => Json(serde_json::json!({
+                    "status": "ok",
+                    "patients": patients,
+                    "count": patients.len(),
+                })),
+                Err(e) => Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
+            }
+        }
+        None => Json(serde_json::json!({ "status": "error", "message": "LLM engine not available" })),
+    }
+}
+
+/// POST /api/v1/patients — register a patient
+async fn llm_patient_register(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let engine = {
+        let s = state.read().await;
+        s.llm_engine.clone()
+    };
+    match engine {
+        Some(engine) => {
+            let pid = body["patient_id"].as_str().unwrap_or("UNKNOWN");
+            let mut record = PatientRecord::new(pid);
+            if let Some(age) = body["age"].as_u64() { record.age = Some(age as u8); }
+            if let Some(name) = body["name"].as_str() { record.name = Some(name.to_string()); }
+            if let Some(node_id) = body["node_id"].as_u64() { record.node_id = Some(node_id as u8); }
+            if let Some(gender_str) = body["gender"].as_str() {
+                record.gender = Some(match gender_str {
+                    "male" => wifi_densepose_llm::Gender::Male,
+                    "female" => wifi_densepose_llm::Gender::Female,
+                    _ => wifi_densepose_llm::Gender::Other,
+                });
+            }
+            if let Some(arr) = body["pre_existing"].as_array() {
+                record.pre_existing = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            }
+            match engine.register_patient(record).await {
+                Ok(()) => Json(serde_json::json!({ "status": "ok", "patient_id": pid })),
+                Err(e) => Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
+            }
+        }
+        None => Json(serde_json::json!({ "status": "error", "message": "LLM engine not available" })),
+    }
+}
+
+/// POST /api/v1/llm/analyze — trigger LLM analysis for a patient
+async fn llm_analyze(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let patient_id = body["patient_id"].as_str().unwrap_or("UNKNOWN").to_string();
+    let (engine, br, hr, motion, quality, triage_label, alerts) = {
+        let s = state.read().await;
+        let triage = s.latest_update.as_ref()
+            .and_then(|u| u.triage_update.as_ref())
+            .and_then(|t| t.survivors.iter()
+                .find(|surv| surv.id == patient_id)
+                .map(|surv| surv.triage.clone()))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let a: Vec<String> = s.latest_update.as_ref()
+            .and_then(|u| u.wasm_alerts.as_ref())
+            .map(|alerts| alerts.iter().map(|al: &EdgeAlert| al.event_name.clone()).collect())
+            .unwrap_or_default();
+        (s.llm_engine.clone(),
+         s.latest_vitals.breathing_rate_bpm,
+         s.latest_vitals.heart_rate_bpm,
+         s.smoothed_motion,
+         s.latest_vitals.signal_quality,
+         triage,
+         a)
+    };
+    match engine {
+        Some(engine) => {
+            // Trigger sync analysis (non-streaming REST endpoint)
+            match engine.trigger_analysis(
+                &patient_id, br, hr, motion, quality,
+                &triage_label, &alerts,
+            ).await {
+                Some(result) => Json(serde_json::json!({
+                    "status": "ok",
+                    "analysis": result,
+                })),
+                None => Json(serde_json::json!({
+                    "status": "error",
+                    "message": "Analysis could not be generated (insufficient data or cooldown active)",
+                })),
+            }
+        }
+        None => Json(serde_json::json!({ "status": "error", "message": "LLM engine not available" })),
+    }
+}
+
+/// GET /api/v1/llm/status — LLM engine status
+async fn llm_status(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    match &s.llm_engine {
+        Some(engine) => {
+            let status = engine.status().await;
+            Json(serde_json::json!({
+                "status": "ok",
+                "llm": status,
+            }))
+        }
+        None => Json(serde_json::json!({ "status": "ok", "llm": "disabled" })),
+    }
+}
+
 /// Generate a simple timestamp string (epoch seconds) for recording IDs.
 fn chrono_timestamp() -> u64 {
     std::time::SystemTime::now()
@@ -2510,7 +2733,7 @@ async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         s.frame_history.pop_front();
                     }
 
-                    let sample_rate_hz = 1000.0 / 500.0_f64; // default tick; ESP32 frames arrive as fast as they come
+                    let sample_rate_hz = 50.0; // ESP32 CSI frames arrive at ~20-100 Hz via lwIP
                     let (features, mut classification, breathing_rate_hz, sub_variances, raw_motion) =
                         extract_features_from_frame(&frame, &s.frame_history, sample_rate_hz);
                     smooth_and_classify(&mut s, &mut classification, raw_motion);
@@ -2542,6 +2765,18 @@ async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                     );
                     let vitals = smooth_vitals(&mut s, &raw_vitals);
                     s.latest_vitals = vitals.clone();
+
+                    // LLM analysis: push vitals into sliding windows for trend analysis
+                    if let Some(ref engine) = s.llm_engine {
+                        let eng = engine.clone();
+                        let node_id = frame.node_id;
+                        let br = vitals.breathing_rate_bpm.unwrap_or(0.0);
+                        let hr = vitals.heart_rate_bpm.unwrap_or(0.0);
+                        let sq = vitals.signal_quality;
+                        tokio::spawn(async move {
+                            eng.push_vitals(node_id, br, hr, raw_motion as f64, sq).await;
+                        });
+                    }
 
                     // DensePose 骨架推理 (模拟模式始终生成合成骨架)
                     let densepose_keypoints = if s.model_loaded || s.source == "simulated" {
@@ -2585,6 +2820,7 @@ async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         0
                     };
 
+                    let cls_confidence = classification.confidence;
                     let mut update = SensingUpdate {
                         msg_type: "sensing_update".to_string(),
                         timestamp: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
@@ -2601,7 +2837,7 @@ async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         classification,
                         signal_field: generate_signal_field(
                             features.mean_rssi, motion_score, breathing_rate_hz,
-                            features.variance.min(1.0), &sub_variances,
+                            cls_confidence, &sub_variances,
                         ),
                         vital_signs: Some(vitals),
                         triage_update,
@@ -2681,6 +2917,18 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
         let vitals = smooth_vitals(&mut s, &raw_vitals);
         s.latest_vitals = vitals.clone();
 
+        // LLM analysis: push vitals into sliding windows for trend analysis
+        if let Some(ref engine) = s.llm_engine {
+            let eng = engine.clone();
+            let node_id = 1u8;
+            let br = vitals.breathing_rate_bpm.unwrap_or(0.0);
+            let hr = vitals.heart_rate_bpm.unwrap_or(0.0);
+            let sq = vitals.signal_quality;
+            tokio::spawn(async move {
+                eng.push_vitals(node_id, br, hr, raw_motion as f64, sq).await;
+            });
+        }
+
         // DensePose 骨架推理 (模拟模式始终生成合成骨架)
         let densepose_keypoints = if s.model_loaded || s.source == "simulated" {
             generate_synthetic_pose(tick, &frame.amplitudes, motion_score)
@@ -2726,6 +2974,7 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             0
         };
 
+        let cls_confidence = classification.confidence;
         let mut update = SensingUpdate {
             msg_type: "sensing_update".to_string(),
             timestamp: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
@@ -2742,7 +2991,7 @@ async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             classification,
             signal_field: generate_signal_field(
                 features.mean_rssi, motion_score, breathing_rate_hz,
-                features.variance.min(1.0), &sub_variances,
+                cls_confidence, &sub_variances,
             ),
             vital_signs: Some(vitals),
             triage_update,
@@ -3331,9 +3580,32 @@ async fn main() {
         }
     }
 
-    // Ensure data directories exist for models and recordings
+    // Ensure data directories exist for models, recordings, and LLM data
     let _ = std::fs::create_dir_all("data/models");
     let _ = std::fs::create_dir_all("data/recordings");
+    let _ = std::fs::create_dir_all("data/patients");
+
+    // Initialize LLM analysis engine (template-only mode — no model needed)
+    let llm_engine = {
+        let kb_path = if std::path::Path::new("crates/wifi-densepose-llm/data/medical_knowledge.json").exists() {
+            "crates/wifi-densepose-llm/data/medical_knowledge.json"
+        } else if std::path::Path::new("data/medical_knowledge.json").exists() {
+            "data/medical_knowledge.json"
+        } else {
+            warn!("Medical knowledge base not found, LLM engine disabled");
+            "data/medical_knowledge.json" // LlmAnalysisEngine will handle the error
+        };
+        match LlmAnalysisEngine::new_with_paths("data/patients", kb_path).await {
+            Ok(engine) => {
+                info!("LLM Analysis Engine initialized (template-only mode)");
+                Some(std::sync::Arc::new(engine))
+            }
+            Err(e) => {
+                warn!("LLM Analysis Engine unavailable: {}", e);
+                None
+            }
+        }
+    };
 
     // Discover model and recording files on startup
     let initial_models = scan_model_files();
@@ -3393,6 +3665,7 @@ async fn main() {
                   m.trained_frames, m.training_accuracy * 100.0);
             m
         }),
+        llm_engine: llm_engine.clone(),
     }));
 
     // Start background tasks based on source
@@ -3404,6 +3677,49 @@ async fn main() {
         _ => {
             tokio::spawn(simulated_data_task(state.clone(), args.tick_ms));
         }
+    }
+
+    // Spawn periodic LLM analysis task (feeds vitals to LLM engine, triggers periodic analysis)
+    {
+        let llm_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            // First tick waits 30s, let data accumulate first
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let engine = {
+                    let s = llm_state.read().await;
+                    s.llm_engine.clone()
+                };
+                if let Some(engine) = engine {
+                    // Get current vitals and triage for periodic analysis
+                    let (vitals, smoothed_motion, latest_update) = {
+                        let s = llm_state.read().await;
+                        (s.latest_vitals.clone(), s.smoothed_motion, s.latest_update.clone())
+                    };
+                    let triage_label = latest_update.as_ref()
+                        .and_then(|u| u.triage_update.as_ref())
+                        .map(|t| t.survivors.first().map(|s| s.triage.clone()).unwrap_or_else(|| "Unknown".to_string()))
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    let alerts: Vec<String> = latest_update.as_ref()
+                        .and_then(|u| u.wasm_alerts.as_ref())
+                        .map(|a| a.iter().map(|al: &EdgeAlert| al.event_name.clone()).collect())
+                        .unwrap_or_default();
+
+                    // Trigger analysis for AUTO-N1 (auto-detected node 1 patient)
+                    let _ = engine.trigger_analysis(
+                        "AUTO-N1",
+                        vitals.breathing_rate_bpm,
+                        vitals.heart_rate_bpm,
+                        smoothed_motion,
+                        vitals.signal_quality,
+                        &triage_label,
+                        &alerts,
+                    ).await;
+                }
+            }
+        });
     }
 
     // ADR-050: Parse bind address once, use for all listeners
@@ -3484,6 +3800,11 @@ async fn main() {
         .route("/api/v1/adaptive/train", post(adaptive_train))
         .route("/api/v1/adaptive/status", get(adaptive_status))
         .route("/api/v1/adaptive/unload", post(adaptive_unload))
+        // LLM analysis endpoints (P10d)
+        .route("/api/v1/patients", get(llm_patients_list))
+        .route("/api/v1/patients", post(llm_patient_register))
+        .route("/api/v1/llm/analyze", post(llm_analyze))
+        .route("/api/v1/llm/status", get(llm_status))
         // Static UI files
         .nest_service("/ui", ServeDir::new(&ui_path))
         .layer(SetResponseHeaderLayer::overriding(

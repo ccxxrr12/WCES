@@ -415,3 +415,63 @@ CSI 采集        UDP:5005 → sensing-server
 
 **审计结论: 发现1个阻断性Bug (ADR-018解析器) 已修复。其余竞赛关键代码路径全部审计通过。**
 
+### 2.11 全代码审计 + 全部修复 (2026-05-17) ⭐
+
+对 WCES 全部 4 层（固件/Rust/LLM/UI）进行全面代码审计，发现并修复 15 个问题。
+
+#### 阻断性问题修复 (4个)
+
+| # | 发现 | 修复 | 文件 |
+|---|------|------|------|
+| 1 | **LLM 引擎未集成** — 3000行代码写完，main.rs 中0行调用 | 完整集成: 导入+AppStateInner字段+初始化+push_vitals调用+定期任务 | `main.rs` |
+| 2 | **前端 LLM 消息被静默丢弃** — triage.html 发 `patient_register`/`llm_analyze_request`，后端 `_ => {}` | WebSocket 消息处理: 伤员登记→ LlmAnalysisEngine, 分析请求→流式推理→broadcast | `main.rs` |
+| 3 | **UDP 路径 FFT 采样率 2Hz** — 心跳 Nyquist 限制 1Hz，完全无法检测 | 改为 50Hz (ESP32 lwIP 实际速率) | `main.rs:2513` |
+| 4 | **coherence 相位数组部分初始化** — 首帧子载波数 ≠ 后续帧时虚假告警 | 全部32元素初始化(填充0占位) | `edge_module_engine.rs:517` |
+
+#### 重要问题修复 (5个)
+
+| # | 发现 | 修复 | 文件 |
+|---|------|------|------|
+| 5 | **LLM 引擎未注册伤员跳过分析** — `PatientRecord::new()` 后直接 `return None` | 自动插入 sled DB 并继续分析 | `llm/engine.rs:322` |
+| 6 | **workspace candle 版本冲突** — workspace 0.4 vs LLM 0.8 | 统一升至 `candle-core/nn = "0.8"` | `Cargo.toml:52` |
+| 7 | **generate_signal_field 方差代替信号质量** — 参数语义错误 | 改为 `classification.confidence` (0-1范围) | `main.rs` (2处) |
+| 8 | **恶化检测只捕获 ≥2 级跳变** — Delayed→Immediate 漏检 | 改为 `<` 比较 (排除 Unknown) | `mat_pipeline.rs:334` |
+| 9 | **LLM HTTP API 路由缺失** — 文档定义了但未实现 | 新增4个路由 + 完整处理器 | `main.rs` |
+
+#### 小问题修复 (6个)
+
+| # | 发现 | 修复 | 文件 |
+|---|------|------|------|
+| 10 | process_frame 注释: "10 modules" | 改为 "19 modules" | `edge_module_engine.rs` |
+| 11 | test_start_immediate 使用 Default (signal_quality=0) | 设置 `signal_quality: 0.8` | `mat_pipeline.rs` |
+| 12 | EngineStatus 缺少 Serialize derive | 添加 `#[derive(Serialize)]` | `llm/engine.rs` |
+| 13 | LLM 知识库路径 fallback | 双路径检测 (workspace/root) | `main.rs` |
+| 14 | 配置文件 `[server.llm]` 无人读取 | llm 集成后自动生效 (LlmConfig) | `main.rs` |
+| 15 | candle 文档版本号修正 | 0.4→0.8 | `端侧LLM方案设计.md` |
+
+#### LLM 集成详情
+
+**新增到 main.rs 的 LLM 功能:**
+
+```
+AppStateInner               LlmAnalysisEngine 初始化          数据管道
+├─ llm_engine field          ├─ new_with_paths()                ├─ udp_receiver_task: push_vitals()
+└─ Arc<LlmAnalysisEngine>    ├─ 双路径KB检测                    ├─ simulated_data_task: push_vitals()
+                             ├─ patients DB                    └─ 定期任务: trigger_analysis()
+WebSocket 消息处理           └─ medical_knowledge.json
+├─ patient_register                                                HTTP API 路由
+├─ llm_analyze_request                                            ├─ GET  /api/v1/patients
+└─ 流式token → broadcast.tx                                       ├─ POST /api/v1/patients
+                                                                  ├─ POST /api/v1/llm/analyze
+                                                                  └─ GET  /api/v1/llm/status
+```
+
+#### 编译与测试
+
+| 检查项 | 修复前 | 修复后 |
+|--------|:--:|:--:|
+| `cargo check` | ✅ 0 errors | ✅ 0 errors |
+| `cargo test --workspace` | 24 tests | **1004 tests** ✅ 0 failures |
+
+**修改文件**: 5 个文件，约 +200 行 Rust
+

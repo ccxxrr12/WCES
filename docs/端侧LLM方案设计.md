@@ -2,7 +2,7 @@
 
 > 项目：WCES — 基于WiFi CSI感知与端侧LLM的方舱生命体征感知与监护系统
 > 硬件：瑞萨 RZ/V2H (Cortex-A55 ×4, 8GB RAM, DRP-AI 可选)
-> 文档版本: v2.0 | 2026-05-15
+> 文档版本: v2.1 | 2026-05-17
 
 ---
 
@@ -900,8 +900,8 @@ description = "Edge LLM intelligent analysis engine for WCES field hospital tria
 
 [dependencies]
 # 推理框架
-candle-core = "0.4"
-candle-nn = "0.4"
+candle-core = "0.8"
+candle-nn = "0.8"
 candle-transformers = "0.8"
 
 # Tokenizer
@@ -988,5 +988,5 @@ crates/wifi-densepose-llm/
 
 ---
 
-*文档版本: v2.0 | 2026-05-15*
+*文档版本: v2.1 | 2026-05-17*
 *变更: 从"报告生成器"升级为"智能分析引擎"，增加 RAG、病史、多数据联合分析、流式输出*

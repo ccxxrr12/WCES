@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/V2H + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10c 完成 ✅ | MAT 分诊 + 19 边缘模块 + 模拟演示 | 端侧 LLM 待实现 🔧
+> 状态：P0-P10c 完成 ✅ | MAT 分诊 + 19 边缘模块 + 模拟演示 | 端侧 LLM 已集成 ✅
 
 ---
 
@@ -137,7 +137,7 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | 3D 骨架重建 | ONNX DensePose (可选按钮) | ✨ |
 | 19 个医疗 WASM 模块 | 步态/心律失常/呼吸窘迫/癫痫/徘徊/振动/LTL守卫/元学习/稀疏恢复等 | ✅ |
 | 模拟运行模式 | 正弦波合成 CSI，完整数据流通，无需硬件 | ✅ |
-| **端侧 LLM** | 生命体征→自然语言伤病报告 (方案设计中) | 🔧 |
+| **端侧 LLM** | 生命体征→自然语言伤病报告 (Qwen2.5-0.5B / Candle) | ✅ |
 
 ---
 
@@ -284,6 +284,7 @@ CSI 采集          UDP:5005 →
 │       ├── wifi-densepose-signal/     ← CSI 信号处理
 │       ├── wifi-densepose-vitals/     ← 生命体征提取
 │       ├── wifi-densepose-hardware/   ← CSI 帧解析
+│       ├── wifi-densepose-llm/        ← 端侧 LLM 分析引擎 ⭐
 │       ├── wifi-densepose-nn/         ← ONNX 推理 (可选)
 │       ├── wifi-densepose-mat/        ← 分诊系统 ⭐
 │       ├── wifi-densepose-sensing-server/ ← 主服务 (含 MAT 集成)
@@ -313,7 +314,7 @@ CSI 采集          UDP:5005 →
 ## 技术亮点
 
 - **WiFi 6 CSI**: ESP32-C5 484 子载波，4× 传统 S3 方案精度
-- **端侧 LLM**（方案设计中）: 生命体征→自然语言伤病报告 (Qwen2.5-0.5B / Candle)
+- **端侧 LLM**（已集成）: 生命体征→自然语言伤病报告 (Qwen2.5-0.5B / Candle)，支持流式输出
 - **Rust 高性能**: 54,000 帧/秒信号处理管道，比 Python 快 810 倍
 - **START 分诊**: 标准战场分诊协议，自动伤员优先级评估
 - **端到端打通**: CSI 采集→信号处理→生命体征→分诊→追踪→可视化，完整管道

@@ -423,27 +423,6 @@ dependencies = [
 
 [[package]]
 name = "candle-core"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f1b20174c1707e20f4cb364a355b449803c03e9b0c9193324623cf9787a4e00"
-dependencies = [
- "byteorder",
- "gemm 0.17.1",
- "half",
- "memmap2",
- "num-traits",
- "num_cpus",
- "rand 0.8.6",
- "rand_distr 0.4.3",
- "rayon",
- "safetensors 0.4.5",
- "thiserror 1.0.69",
- "yoke",
- "zip 0.6.6",
-]
-
-[[package]]
-name = "candle-core"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1"
@@ -466,26 +445,11 @@ dependencies = [
 
 [[package]]
 name = "candle-nn"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66a27533c8edfc915a6459f9850641ef523a829fa1a181c670766c1f752d873a"
-dependencies = [
- "candle-core 0.4.1",
- "half",
- "num-traits",
- "rayon",
- "safetensors 0.4.5",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "candle-nn"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1160c3b63f47d40d91110a3e1e1e566ae38edddbbf492a60b40ffc3bc1ff38"
 dependencies = [
- "candle-core 0.8.4",
+ "candle-core",
  "half",
  "num-traits",
  "rayon",
@@ -501,8 +465,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94a0900d49f8605e0e7e6693a1f560e6271279de98e5fa369e7abf3aac245020"
 dependencies = [
  "byteorder",
- "candle-core 0.8.4",
- "candle-nn 0.8.4",
+ "candle-core",
+ "candle-nn",
  "fancy-regex",
  "num-traits",
  "rand 0.9.4",
@@ -4873,8 +4837,8 @@ name = "wifi-densepose-llm"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "candle-core 0.8.4",
- "candle-nn 0.8.4",
+ "candle-core",
+ "candle-nn",
  "candle-transformers",
  "chrono",
  "serde",
@@ -4921,8 +4885,8 @@ name = "wifi-densepose-nn"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "candle-core 0.4.1",
- "candle-nn 0.4.1",
+ "candle-core",
+ "candle-nn",
  "criterion",
  "memmap2",
  "ndarray 0.15.6",

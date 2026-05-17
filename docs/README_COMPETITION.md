@@ -83,6 +83,7 @@ ESP32-C5 ×3          RZ/V2H               7" 触屏 / Web
 │   ├── wifi-densepose-signal/    # CSI 信号处理
 │   ├── wifi-densepose-vitals/    # 生命体征
 │   ├── wifi-densepose-hardware/  # CSI 帧解析
+│   ├── wifi-densepose-llm/       # 端侧 LLM 分析引擎 ⭐
 │   ├── wifi-densepose-nn/        # ONNX 推理 (可选)
 │   ├── wifi-densepose-mat/       # 分诊系统 ⭐
 │   └── wifi-densepose-sensing-server/  # 主服务 (含MAT集成)
@@ -121,6 +122,7 @@ ESP32-C5 ×3          RZ/V2H               7" 触屏 / Web
 | **群体伤情评估** | 严重程度 + 资源需求计算 | ✅ |
 | **告警系统** | 自动生成 + 优先级排序 | ✅ |
 | 3D 骨架重建 | ONNX DensePose (可选) | ✨ |
+| **端侧 LLM 伤病分析** | 生命体征→自然语言伤病报告 (Qwen2.5-0.5B / Candle) | ✅ |
 | WASM 边缘医疗模块 | 19 个医疗检测模块 | ✅ |
 
 ---

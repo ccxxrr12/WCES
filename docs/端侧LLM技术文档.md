@@ -2,7 +2,7 @@
 
 > 项目：WCES — 基于WiFi CSI感知与端侧LLM的方舱生命体征感知与监护系统
 > 模块：P10d — wifi-densepose-llm
-> 文档版本：v1.0 | 2026-05-15
+> 文档版本：v1.1 | 2026-05-17
 
 ---
 
@@ -28,7 +28,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  L1 规则引擎层 (硬安全边界)                                   │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │ START分诊 + 13个边缘模块告警                            │  │
+│  │ START分诊 + 19个边缘模块告警                            │  │
 │  │ · 延迟 < 50ms                                          │  │
 │  │ · 绝不依赖 LLM                                          │  │
 │  │ · LLM 输出不可覆盖此层决策                              │  │
@@ -351,16 +351,14 @@ VitalTrendSummary {
 }
 ```
 
-### 5.3 HTTP API（待集成到 sensing-server）
+### 5.3 HTTP API（已集成到 sensing-server ✅）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/patients` | 列出所有伤员 |
 | POST | `/api/v1/patients` | 创建/更新伤员记录 |
-| GET | `/api/v1/patients/:id` | 获取伤员详情 |
-| DELETE | `/api/v1/patients/:id` | 删除伤员记录 |
-| POST | `/api/v1/llm/analyze` | 手动触发 LLM 分析 |
-| GET | `/api/v1/llm/analysis/:id` | 获取最近分析结果 |
+| POST | `/api/v1/llm/analyze` | 手动触发 LLM 同步分析 |
+| GET | `/api/v1/llm/status` | LLM 引擎状态 (患者数/知识条目/LLM加载) |
 
 ---
 
