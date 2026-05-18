@@ -357,7 +357,7 @@ VitalTrendSummary {
 |------|------|------|
 | GET | `/api/v1/patients` | 列出所有伤员 |
 | POST | `/api/v1/patients` | 创建/更新伤员记录 |
-| POST | `/api/v1/llm/analyze` | 手动触发 LLM 同步分析 |
+| POST | `/api/v1/llm/analyze` | 手动触发 LLM 流式分析 (WebSocket upgreade) |
 | GET | `/api/v1/llm/status` | LLM 引擎状态 (患者数/知识条目/LLM加载) |
 
 ---
@@ -374,7 +374,7 @@ sensing-server (RZ/V2H)
   │
   ├─→ VitalSignDetector → 呼吸率/心率
   ├─→ TriageEngine → START分诊 (红/黄/绿/黑)
-  ├─→ EdgeModuleEngine → 13个模块告警
+  ├─→ EdgeModuleEngine → 19个模块告警
   │
   │   ┌─── 每帧推送 (所有数据) ────────────────────────┐
   │   ▼                                                ▼

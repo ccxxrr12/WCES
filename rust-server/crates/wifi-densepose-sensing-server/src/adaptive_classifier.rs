@@ -12,7 +12,6 @@
 //! the classification thresholds adapt to the specific room and ESP32 placement.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 // ── Feature vector ───────────────────────────────────────────────────────────

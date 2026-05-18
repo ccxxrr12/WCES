@@ -157,9 +157,15 @@ impl TimeWindow {
         self.prune();
     }
 
-    /// Remove samples older than `window_duration`.
+    /// Remove samples older than `window_duration` (relative to newest sample).
     fn prune(&mut self) {
-        let cutoff = Instant::now() - self.window_duration;
+        let newest_ts = match self.samples.back() {
+            Some(s) => s.timestamp,
+            None => return,
+        };
+        let Some(cutoff) = newest_ts.checked_sub(self.window_duration) else {
+            return; // window_duration > elapsed time, keep all samples
+        };
         while let Some(front) = self.samples.front() {
             if front.timestamp < cutoff {
                 self.samples.pop_front();

@@ -247,14 +247,21 @@ impl LlmAnalysisEngine {
 
         #[cfg(feature = "llm")]
         {
-            let inner = self.inner.lock().await;
-            if let Some(ref runtime) = inner.llm_runtime {
+            let (llm_runtime, max_new_tokens, temperature) = {
+                let inner = self.inner.lock().await;
+                (
+                    inner.llm_runtime.clone(),
+                    inner.config.max_new_tokens,
+                    inner.config.temperature,
+                )
+            }; // MutexGuard dropped before .await — prevents deadlock
+            if let Some(runtime) = llm_runtime {
                 let (rx, _handle) = runtime
                     .spawn_generation(
                         prompt.unwrap_or_default(),
                         patient_id.to_string(),
-                        inner.config.max_new_tokens,
-                        inner.config.temperature,
+                        max_new_tokens,
+                        temperature,
                     )
                     .await;
                 return Some(rx);

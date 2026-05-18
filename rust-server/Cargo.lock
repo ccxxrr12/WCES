@@ -4907,6 +4907,7 @@ dependencies = [
 name = "wifi-densepose-sensing-server"
 version = "0.3.0"
 dependencies = [
+ "anyhow",
  "axum",
  "chrono",
  "clap",

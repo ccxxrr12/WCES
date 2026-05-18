@@ -281,10 +281,11 @@ Current Vitals ───┘                                                     
 | **P10b** | **全项目审计修复 + 重命名WCES + 骨架模拟启用** | ✅ **2026-05-12** |
 | **P10c** | **第二轮边缘模块集成 (6个: 步态/LTL/振动/徘徊/元学习/稀疏恢复)** | ✅ **2026-05-14** |
 | **P10d** | **端侧 LLM 智能分析引擎 (wifi-densepose-llm crate)** | ✅ **2026-05-15** |
+| **P10e** | **代码架构重构 (main.rs 3868→976 + 锁安全修复)** | ✅ **2026-05-18** |
 | P11 | 竞赛申报材料 | ❌ 待准备 |
 | P12 | 硬件联调 | ❌ 需硬件 |
 
-## 新建/修改文件 (阶段1: 11个 + 阶段2: 17个)
+## 新建/修改文件 (阶段1: 11个 + 阶段2: 17个 + 阶段2.12重构: 20个)
 
 ### 阶段1 (2026-05-06)
 
@@ -323,9 +324,11 @@ ESP32-C5 ×3                  RZ/V2H                             Browser
 ─────────────    ────────────────────────────    ─────────────────────────
 CSI 采集        UDP:5005 → sensing-server
                             │
-                            ├─ parse_esp32_frame()     → amplitudes/phases
-                            ├─ VitalSignDetector        → VitalSigns (呼吸率/心率)
-                            ├─ TriageEngine.process()   → TriageUpdate ⭐ NEW
+                            ├─ parser::parse_esp32_frame() → amplitudes/phases
+                            ├─ signal_processing::extract_features_from_frame()
+                            ├─ state_ops::smooth_and_classify()
+                            ├─ VitalSignDetector           → VitalSigns (呼吸率/心率)
+                            ├─ TriageEngine.process()      → TriageUpdate ⭐
                             │    ├─ START 分诊 (红/黄/绿/黑)
                             │    ├─ 伤员追踪 (创建/匹配/更新)
                             │    ├─ 恶化检测 + 告警生成
@@ -333,13 +336,15 @@ CSI 采集        UDP:5005 → sensing-server
                             │
                             ├─ SensingUpdate 构造
                             │  ├─ vital_signs: VitalSigns
-                            │  └─ triage_update: TriageUpdate ⭐ NEW
+                            │  ├─ triage_update: TriageUpdate
+                            │  ├─ wasm_alerts: EdgeModuleEngine 输出
+                            │  └─ pose_keypoints: DensePose 骨架
                             │
                             └─ WebSocket /ws/sensing ──→ triage.html
                                                          ├─ 伤员地图 (Canvas 2D)
                                                          ├─ 生命体征卡片
                                                          ├─ START 分诊状态
-                                                         └─ 告警列表
+                                                         └─ AI / 告警列表
 ```
 
 ### 2.10 第二轮边缘模块集成 (2026-05-14): 19个模块
@@ -474,4 +479,58 @@ WebSocket 消息处理           └─ medical_knowledge.json
 | `cargo test --workspace` | 24 tests | **1004 tests** ✅ 0 failures |
 
 **修改文件**: 5 个文件，约 +200 行 Rust
+
+### 2.12 代码架构重构 — main.rs 拆分 + 并发安全修复 (2026-05-18) ⭐
+
+对 sensing-server 进行全面架构重构：将 3868 行单文件拆分为 22 个模块化文件，修复 2 个并发安全问题。
+
+#### 并发安全修复
+
+| # | 问题 | 修复 | 文件 |
+|---|------|------|------|
+| 1 | **engine.rs Mutex 锁跨越 .await** — `self.inner.lock().await` 持有 MutexGuard 期间调用 `spawn_generation().await`，死锁风险 | 提取 3 个字段到局部变量后立即释放锁 | `llm/engine.rs:248-262` |
+| 2 | **udp_receiver_task 写锁占用 ~135 行** — `state.write().await` 持有期间执行特征提取/DensePose/JSON序列化，阻塞所有读请求 | 拆分为 3 阶段：Phase1 快速写锁(state mutation) → Phase2 锁外纯计算 → Phase3 快速写锁(broadcast) | `tasks/udp_receiver.rs` |
+| 3 | **simulated_data_task 同样写锁问题** | 同样 3 阶段拆分 | `tasks/simulated_data.rs` |
+
+#### 模块拆分
+
+```
+sensing-server/src/          重构前 → 重构后
+├── main.rs                  3868行 → 976行 (-75%)
+├── types.rs                 NEW    175行 (12 数据类型 + 12 常量)
+├── signal_processing.rs     NEW    732行 (14 纯函数)
+├── state_ops.rs             NEW    153行 (3 状态变更函数)
+├── parser.rs                NEW    126行 (3 解析函数)
+├── server.rs                NEW    169行 (axum 启动 + 路由注册)
+├── handlers/
+│   ├── mod.rs               NEW
+│   ├── ws.rs                NEW    226行 (WebSocket 处理)
+│   ├── routes.rs            NEW    585行 (27 通用路由)
+│   ├── model_routes.rs      NEW    170行 (9 模型管理路由)
+│   ├── recording_routes.rs  NEW    100行 (6 录音路由)
+│   └── llm_routes.rs        NEW    183行 (4 LLM API 路由)
+└── tasks/
+    ├── mod.rs               NEW
+    ├── udp_receiver.rs      NEW    253行 (UDP 接收任务)
+    ├── simulated_data.rs    NEW    201行 (模拟数据任务)
+    └── broadcast_tick.rs    NEW     24行 (广播节拍任务)
+```
+
+#### 提取原则
+- 纯数据类型 → types.rs（无依赖，所有模块可引用）
+- 纯计算函数 → signal_processing.rs（不持有锁，不访问 AppState）
+- 状态变更函数 → state_ops.rs（接受 `&mut AppStateInner`）
+- 解析函数 → parser.rs（字节→结构体）
+- 路由处理器 → handlers/*.rs（通过 `State<SharedState>` 访问状态）
+- 后台任务 → tasks/*.rs（`pub async fn` 入口）
+
+#### 编译与测试
+
+| 检查项 | 结果 |
+|--------|:--:|
+| `cargo check` | ✅ 0 errors, 28 warnings (均为预存在) |
+| `cargo test --workspace` | ✅ 1004 passed, 0 failed |
+| 功能完整性验证 | ✅ 所有被移动函数/类型/常量均在目标文件中确认存在 |
+
+**修改文件**: 20 个文件（9 新建 + 11 修改），无功能逻辑变更，纯代码组织
 

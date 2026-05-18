@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/V2H + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10c 完成 ✅ | MAT 分诊 + 19 边缘模块 + 模拟演示 | 端侧 LLM 已集成 ✅
+> 状态：P0-P11 完成 ✅ | MAT 分诊 + 19 边缘模块 + 端侧 LLM + 代码重构 | main.rs 3868→976 行（-75%）
 
 ---
 
@@ -159,18 +159,18 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 
 | 模块 | 功能 | 文件 |
 |------|------|------|
-| UDP 接收器 | Tokio `UdpSocket::bind("0.0.0.0:5005")` | `main.rs:udp_receiver_task()` |
-| ADR-018 解析 | Magic 验证、node_id/u16子载波/u32频率/rssi/noise_floor 提取、IQ→幅度+相位 | `main.rs:parse_esp32_frame()` |
+| UDP 接收器 | Tokio `UdpSocket::bind("0.0.0.0:5005")`，写锁范围优化为两阶段（状态修改 + 纯计算分离） | `tasks/udp_receiver.rs` |
+| ADR-018 解析 | Magic 验证、node_id/u16子载波/u32频率/rssi/noise_floor 提取、IQ→幅度+相位 | `parser.rs:parse_esp32_frame()` |
 | 帧历史缓冲 | 环形缓冲区 N 帧，用于时序分析 | `AppStateInner.frame_history` |
 
 ### 第 3 层：信号处理 + 特征提取
 
 | 模块 | 功能 | 文件 |
 |------|------|------|
-| 运动检测 | 帧间幅度/相位方差 → motion_score [0,1] | `main.rs:extract_features_from_frame()` |
-| 运动分级 | 自适应阈值：active/still/idle + 5帧消抖 | `main.rs:smooth_and_classify()` |
-| 特征向量 | mean_rssi, variance, motion_band_power, breathing_band_power, dominant_freq, change_points, spectral_power | `main.rs` |
-| 多人估计 | EMA 平滑 + 迟滞阈值 | `main.rs:compute_person_score()` |
+| 运动检测 | 帧间幅度/相位方差 → motion_score [0,1] | `signal_processing.rs:extract_features_from_frame()` |
+| 运动分级 | 自适应阈值：active/still/idle + 5帧消抖 | `state_ops.rs:smooth_and_classify()` |
+| 特征向量 | mean_rssi, variance, motion_band_power, breathing_band_power, dominant_freq, change_points, spectral_power | `signal_processing.rs` |
+| 多人估计 | EMA 平滑 + 迟滞阈值 | `signal_processing.rs:compute_person_score()` |
 
 ### 第 4 层：生命体征检测
 
@@ -179,7 +179,7 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | 呼吸率 | 0.1-0.5Hz 带通 FFT → 峰值频率 × 60 → BPM + Goertzel 置信度 | `vital_signs.rs:extract_breathing()` |
 | 心率 | 0.8-2.0Hz 带通 FFT → BPM + 相位方差特征 | `vital_signs.rs:extract_heartbeat()` |
 | 信号质量 | SNR（RSSI-噪声底）+ 子载波一致性 → [0,1] | `vital_signs.rs:compute_signal_quality()` |
-| 平滑 | EMA + 中值滤波 + trimmed mean 异常值剔除 | `main.rs:smooth_vitals()` |
+| 平滑 | EMA + 中值滤波 + trimmed mean 异常值剔除 | `state_ops.rs:smooth_vitals()` |
 | 输出 | `VitalSigns { breathing_rate_bpm, heart_rate_bpm, breathing_confidence, heartbeat_confidence, signal_quality }` | `vital_signs.rs` |
 
 ### 第 5 层：START 分诊 + 伤员追踪（MAT Pipeline ⭐）
@@ -194,7 +194,7 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | 群体评估 | 统计 total/immediate/delayed/minor/deceased + severity + rescuer_estimate | `mat_pipeline.rs:build_update()` |
 | 告警系统 | 自动生成 + 优先级排序 + 时间戳 | `mat_pipeline.rs` |
 | 年龄估算 | 呼吸率/心率 → Infant(<2y)/Child(2-12y)/Adult/Elderly(60y+) | `mat_pipeline.rs:estimate_age()` |
-| 集成方式 | `TriageEngine::process()` 在 udp_receiver_task + simulated_data_task 中调用，结果写入 `SensingUpdate.triage_update` | `main.rs` |
+| 集成方式 | `TriageEngine::process()` 在 `tasks/udp_receiver.rs` + `tasks/simulated_data.rs` 中调用，结果写入 `SensingUpdate.triage_update` | `tasks/` |
 
 ### 第 6 层：Web 可视化（展示层）
 
@@ -206,7 +206,7 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | 告警列表 | 时间倒序、颜色编码、最近 20 条 | `triage.html` |
 | 群体评估 | 伤情等级 + 救援人员需求 | `triage.html` |
 | **边缘模块引擎** | 19 个医疗WASM模块原生编译，零额外依赖，RZ/V2H硬件FPU加速 | `edge_module_engine.rs` |
-| WebSocket | `/ws/sensing` 实时推送 `SensingUpdate` JSON | `main.rs` |
+| WebSocket | `/ws/sensing` 实时推送 `SensingUpdate` JSON | `handlers/ws.rs` |
 | 3D 可视化 | Three.js 实时姿态渲染 (可选 ONNX DensePose) | `ui/index.html` |
 
 ### 边缘模块引擎性能优化
@@ -234,21 +234,30 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 ESP32-C5 ×3                    RZ/V2H (sensing-server)                 浏览器
 ─────────────    ──────────────────────────────────────    ──────────────────
 CSI 采集          UDP:5005 →
-                  parse_esp32_frame()
+                  parser::parse_esp32_frame()
                     → Esp32Frame { amplitudes, phases, rssi, node_id... }
                   
-                  extract_features_from_frame()
+                  signal_processing::extract_features_from_frame()
                     → 运动检测、存在检测、特征提取
+                  
+                  state_ops::smooth_and_classify()
+                    → 自适应基线 + 消抖分级
                   
                   VitalSignDetector::process_frame()
                     → VitalSigns { breathing_rate_bpm, heart_rate_bpm,
                                    confidence, signal_quality }
+                  
+                  state_ops::smooth_vitals()
+                    → 中值滤波 + EMA 平滑
                   
                   TriageEngine::process()
                     → TriageUpdate { survivors, assessment, alerts }
 
                   EdgeModuleEngine::process_frame()
                     → Vec<EdgeAlert> (19 个边缘模块并行)
+
+                  signal_processing::generate_signal_field()
+                    → 20×20 信号场热力图
 
                   构造 SensingUpdate {
                     vital_signs,
@@ -287,7 +296,15 @@ CSI 采集          UDP:5005 →
 │       ├── wifi-densepose-llm/        ← 端侧 LLM 分析引擎 ⭐
 │       ├── wifi-densepose-nn/         ← ONNX 推理 (可选)
 │       ├── wifi-densepose-mat/        ← 分诊系统 ⭐
-│       ├── wifi-densepose-sensing-server/ ← 主服务 (含 MAT 集成)
+│       ├── wifi-densepose-sensing-server/ ← 主服务 (含 MAT 集成, 2026-05 重构模块化)
+│       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (976行)
+│       │   ├── src/types.rs                ← 数据类型 + 常量
+│       │   ├── src/signal_processing.rs    ← 14 个纯信号处理函数
+│       │   ├── src/state_ops.rs            ← 有状态操作 (smooth/classify)
+│       │   ├── src/parser.rs               ← ADP 二进制帧解析
+│       │   ├── src/server.rs               ← HTTP/WS 服务器启动
+│       │   ├── src/handlers/               ← 路由处理器 (ws/routes/model/recording/llm)
+│       │   └── src/tasks/                  ← 后台任务 (udp/simulated/broadcast)
 │       ├── wifi-densepose-config/     ← 系统配置
 │       └── wifi-densepose-wasm-edge/  ← 边缘 WASM 模块 (19 医疗)
 ├── ui/                                ← Web 3D 可视化 (210 files)
@@ -321,6 +338,7 @@ CSI 采集          UDP:5005 →
 - **全本地部署**: 数据不出方舱，隐私安全，无互联网依赖
 - **瑞萨 DRP-AI**: 可选硬件推理加速
 - **模拟模式**: 无需硬件即可启动完整演示（`cargo run -- --source simulate`）
+- **代码质量**: 2026-05 完成大规模重构，消除锁竞态死锁隐患，写锁持有时间从 135 行压缩为两阶段锁，main.rs 拆分 16 模块
 
 ---
 
