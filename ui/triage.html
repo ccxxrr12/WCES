@@ -541,6 +541,7 @@ let selectedPatientId=null, registeredPatients={}, llmStreamBuffer={};
 let lastRenderStamp=0; const MIN_RENDER_MS=150;
 let wsReconnectAttempts=0; const WS_MAX_RECONNECT=10;
 let mapResizeObserver=null, animFrameId=null;
+let _lastSurvivorHtml='', _lastAlertHtml='', _lastWasmHtml='';
 
 // Vitals history ring buffers (60s)
 const VITALS_HISTORY_LEN=60;
@@ -898,12 +899,14 @@ function renderFromServer(){
 
     if(now-lastRenderStamp>=MIN_RENDER_MS){
         lastRenderStamp=now;
-        const sl=document.getElementById('survivorsList');
+
+        // Survivors list — only redraw if content changed
+        let newSurvivorHtml;
         if(!latestTriage.survivors||latestTriage.survivors.length===0){
-            sl.innerHTML='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
+            newSurvivorHtml='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
         }else{
-            sl.innerHTML=latestTriage.survivors.map((s,idx)=>`
-                <div class="survivor-card ${s.triage_color} animate-in" style="animation-delay:${idx*50}ms" onclick="openEhr(latestTriage.survivors[${idx}])">
+            newSurvivorHtml=latestTriage.survivors.map((s,idx)=>`
+                <div class="survivor-card ${s.triage_color}" onclick="openEhr(latestTriage.survivors[${idx}])">
                     <div class="survivor-header">
                         <div class="survivor-id"><div class="survivor-avatar">${s.id.substring(5,7)}</div><div class="survivor-info"><h3>${s.id}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${s.estimated_age}</p></div></div>
                         <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}<span class="triage-badge ${s.triage_color}">${s.triage}</span></div>
@@ -914,19 +917,35 @@ function renderFromServer(){
                     </div>
                 </div>`).join('');
         }
-
-        const al=document.getElementById('alertsList');
-        if(!latestTriage.alerts||latestTriage.alerts.length===0){
-            al.innerHTML='<div class="empty-state"><div class="empty-icon">🔔</div><div class="empty-text">暂无告警</div></div>';
-        }else{
-            al.innerHTML=latestTriage.alerts.slice(0,10).map((a,idx)=>`<div class="alert-item prio${a.priority} animate-in" style="animation-delay:${idx*50}ms"><div class="alert-icon">${a.priority===1?'🚨':'⚠️'}</div><div class="alert-content"><div class="alert-title">${a.survivor_id.substring(0,8)}: ${a.message}</div><div class="alert-time">${a.time}</div></div></div>`).join('');
+        if(_lastSurvivorHtml!==newSurvivorHtml){
+            _lastSurvivorHtml=newSurvivorHtml;
+            document.getElementById('survivorsList').innerHTML=newSurvivorHtml;
         }
 
-        const wl=document.getElementById('wasmAlertsList');
+        // Alerts list — only redraw if content changed
+        let newAlertHtml;
+        if(!latestTriage.alerts||latestTriage.alerts.length===0){
+            newAlertHtml='<div class="empty-state"><div class="empty-icon">🔔</div><div class="empty-text">暂无告警</div></div>';
+        }else{
+            newAlertHtml=latestTriage.alerts.slice(0,10).map(a=>`<div class="alert-item prio${a.priority}"><div class="alert-icon">${a.priority===1?'🚨':'⚠️'}</div><div class="alert-content"><div class="alert-title">${a.survivor_id.substring(0,8)}: ${a.message}</div><div class="alert-time">${a.time}</div></div></div>`).join('');
+        }
+        if(_lastAlertHtml!==newAlertHtml){
+            _lastAlertHtml=newAlertHtml;
+            document.getElementById('alertsList').innerHTML=newAlertHtml;
+        }
+
+        // Wasm alerts — only redraw if content changed
+        let newWasmHtml;
         if(latestData&&latestData.wasm_alerts&&latestData.wasm_alerts.length>0){
             const icons={gait:'🚶',loitering:'⏳',vibration:'🏗️',ltl:'⚡',meta_adapt:'🧠',sparse_recovery:'🔧',vital_trend:'💓',attractor:'🌀',coherence:'📶',resp_distress:'🫁',confined_space:'🚧',panic_motion:'🏃',sleep_apnea:'😴',cardiac:'❤️',seizure:'⚡',intrusion:'🔒',occupancy:'👥',mincut:'🆔',weapon_detect:'🔪'};
-            wl.innerHTML=latestData.wasm_alerts.slice(0,12).map((a,idx)=>`<div class="wasm-alert ${a.severity} animate-in" style="animation-delay:${idx*30}ms"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${a.module}">[${a.module}]</span><span>${a.event_name}</span><span class="wasm-value">${a.value.toFixed(1)}</span></div>`).join('');
-        }else{wl.innerHTML='<div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>'}
+            newWasmHtml=latestData.wasm_alerts.slice(0,12).map(a=>`<div class="wasm-alert ${a.severity}"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${a.module}">[${a.module}]</span><span>${a.event_name}</span><span class="wasm-value">${a.value.toFixed(1)}</span></div>`).join('');
+        }else{
+            newWasmHtml='<div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>';
+        }
+        if(_lastWasmHtml!==newWasmHtml){
+            _lastWasmHtml=newWasmHtml;
+            document.getElementById('wasmAlertsList').innerHTML=newWasmHtml;
+        }
     }
 
     if(latestData&&latestData.vital_signs){
