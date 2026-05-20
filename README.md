@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/V2H + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P11 完成 ✅ | MAT 分诊 + 19 边缘模块 + 端侧 LLM + 代码重构 | main.rs 3868→976 行（-75%）
+> 状态：P0-P10e 完成 ✅ | MAT 分诊 + 19 边缘模块 + 端侧 LLM + 代码重构 | main.rs 3868→976 行（-75%）
 
 ---
 
@@ -287,7 +287,7 @@ CSI 采集          UDP:5005 →
 ├── firmware/
 │   └── esp32-c5-csi-node/            ← C5 CSI 固件 (完整, 含竞赛配置)
 ├── rust-server/
-│   ├── Cargo.toml                     ← Rust workspace (8 crates)
+│   ├── Cargo.toml                     ← Rust workspace (9 crates)
 │   └── crates/
 │       ├── wifi-densepose-core/       ← 基础类型
 │       ├── wifi-densepose-signal/     ← CSI 信号处理
@@ -298,30 +298,50 @@ CSI 采集          UDP:5005 →
 │       ├── wifi-densepose-mat/        ← 分诊系统 ⭐
 │       ├── wifi-densepose-sensing-server/ ← 主服务 (含 MAT 集成, 2026-05 重构模块化)
 │       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (976行)
+│       │   ├── src/lib.rs                  ← crate 入口
 │       │   ├── src/types.rs                ← 数据类型 + 常量
 │       │   ├── src/signal_processing.rs    ← 14 个纯信号处理函数
 │       │   ├── src/state_ops.rs            ← 有状态操作 (smooth/classify)
-│       │   ├── src/parser.rs               ← ADP 二进制帧解析
+│       │   ├── src/parser.rs               ← ADR-018 二进制帧解析
 │       │   ├── src/server.rs               ← HTTP/WS 服务器启动
+│       │   ├── src/vital_signs.rs          ← FFT 生命体征检测 (呼吸/心率)
+│       │   ├── src/mat_pipeline.rs         ← START 分诊 + 伤员追踪
+│       │   ├── src/edge_module_engine.rs   ← 19 边缘模块引擎
 │       │   ├── src/handlers/               ← 路由处理器 (ws/routes/model/recording/llm)
-│       │   └── src/tasks/                  ← 后台任务 (udp/simulated/broadcast)
-│       ├── wifi-densepose-config/     ← 系统配置
-│       └── wifi-densepose-wasm-edge/  ← 边缘 WASM 模块 (19 医疗)
+│       │   ├── src/tasks/                  ← 后台任务 (udp_receiver/simulated_data/broadcast_tick)
+│       │   ├── src/rvf_container.rs        ← RVF 模型容器
+│       │   ├── src/rvf_pipeline.rs         ← RVF 推理管道
+│       │   ├── src/adaptive_classifier.rs  ← 自适应分类器
+│       │   ├── src/dataset.rs              ← 数据集管理
+│       │   ├── src/embedding.rs            ← 嵌入层
+│       │   ├── src/graph_transformer.rs    ← 图神经网络
+│       │   ├── src/model_manager.rs        ← 模型管理
+│       │   ├── src/recording.rs            ← 数据录制
+│       │   ├── src/sona.rs                 ← SONA 配置文件
+│       │   ├── src/sparse_inference.rs     ← 稀疏推理
+│       │   ├── src/trainer.rs              ← 模型训练
+│       │   └── src/training_api.rs         ← 训练 API
+│       └── wifi-densepose-config/     ← 系统配置
 ├── ui/                                ← Web 3D 可视化 (210 files)
 ├── scripts/
-│   └── provision.py                   ← C5 烧录脚本
+│   └── provision.py                   ← C5 烧录脚本 (固件内也有副本)
 └── docs/                              ← 竞赛设计文档
     ├── README_COMPETITION.md          ← 竞赛版 README
+    ├── 项目全览.md                     ← 全项目技术全览
     ├── PROGRESS.md                    ← 构建进度 (实时更新)
     ├── 竞赛改造方案.md                 ← 完整改造计划 (A/B/C/D/E类)
     ├── 竞赛差距分析.md                 ← 需求 vs 能力对比
     ├── 竞赛准备清单.md                 ← PPT/视频/展板等材料清单
     ├── ML架构详解.md                   ← CSI→姿态 ML 架构
     ├── 端侧LLM方案设计.md              ← LLM 伤病报告方案
+    ├── 端侧LLM技术文档.md              ← LLM 接口/技术文档
+    ├── 项目完整分析报告.md             ← 项目完整分析
     ├── ESP32-C5 移植审计报告.md        ← 39 处修改审计
     ├── ESP32-C5 移植指南.md            ← C5 移植指南
     ├── 瑞萨 RZV2H 移植计划.md          ← RZ/V2H 移植计划
+    ├── 固件官方文档审计报告.md         ← 固件 vs 官方 API 审计
     ├── 目录审计报告.md                 ← 目录完整性审计
+    ├── API_REFERENCE.md               ← WebSocket 数据接口文档
     └── triage-ui/
         └── triage.html                ← 分诊仪表盘
 ```
