@@ -2,7 +2,7 @@
 
 > 项目：WCES — 基于WiFi CSI感知与端侧LLM的方舱生命体征感知与监护系统
 > 模块：P10d — wifi-densepose-llm
-> 文档版本：v1.1 | 2026-05-17
+> 文档版本：v1.2 | 2026-05-20
 
 ---
 
@@ -357,7 +357,7 @@ VitalTrendSummary {
 |------|------|------|
 | GET | `/api/v1/patients` | 列出所有伤员 |
 | POST | `/api/v1/patients` | 创建/更新伤员记录 |
-| POST | `/api/v1/llm/analyze` | 手动触发 LLM 流式分析 (WebSocket upgreade) |
+| POST | `/api/v1/llm/analyze` | 手动触发 LLM 分析 (同步返回 JSON，流式输出通过 /ws/sensing 广播) |
 | GET | `/api/v1/llm/status` | LLM 引擎状态 (患者数/知识条目/LLM加载) |
 
 ---
