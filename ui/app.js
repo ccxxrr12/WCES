@@ -87,12 +87,22 @@ class WiFiDensePoseApp {
   initializeComponents() {
     const container = document.querySelector('.container');
     if (!container) {
-      throw new Error('Main container not found');
+      // Landing page or pages without tabbed UI — skip module init,
+      // but still run health checks and backend detection.
+      console.log('No .container found — running in lightweight mode');
+      this.startLightweightServices();
+      return;
     }
 
     // Initialize tab manager
-    this.components.tabManager = new TabManager(container);
-    this.components.tabManager.init();
+    try {
+      this.components.tabManager = new TabManager(container);
+      this.components.tabManager.init();
+    } catch (e) {
+      console.warn('TabManager init failed (page may lack tab structure):', e.message);
+      this.startLightweightServices();
+      return;
+    }
 
     // Initialize tab components
     this.initializeTabComponents();
@@ -311,6 +321,13 @@ class WiFiDensePoseApp {
     setTimeout(() => {
       errorToast.classList.remove('show');
     }, 5000);
+  }
+
+  // Lightweight mode for pages without tab structure (e.g. landing page)
+  startLightweightServices() {
+    healthService.startHealthMonitoring();
+    sensingService.start();
+    console.log('Lightweight services started (health + sensing)');
   }
 
   // Clean up resources

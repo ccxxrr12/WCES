@@ -298,17 +298,34 @@ pub(crate) async fn sona_activate(
 
 pub(crate) async fn info_page() -> Html<String> {
     Html(format!(
-        "<html><body>\
-         <h1>WCES — WiFi-DensePose Sensing Server</h1>\
-         <p>Rust + Axum + RuVector | 模拟模式运行中</p>\
-         <ul>\
-         <li><a href='/ui/triage.html'><strong>/ui/triage.html</strong></a> —<strong>分诊仪表盘 (竞赛核心)</strong></li>\
-         <li><a href='/health'>/health</a> —Server health</li>\
-         <li><a href='/api/v1/vital-signs'>/api/v1/vital-signs</a> —Vital sign estimates (HR/RR)</li>\
-         <li><a href='/api/v1/sensing/latest'>/api/v1/sensing/latest</a> —Latest sensing data</li>\
-         <li><a href='/api/v1/model/info'>/api/v1/model/info</a> —RVF model container info</li>\
-         <li>ws://localhost:8765/ws/sensing —WebSocket stream</li>\
-         </ul>\
+        "<html><head><meta charset='UTF-8'><title>WCES Sensing Server</title>\
+         <style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;\
+         background:#1C1C1E;color:#FFF;padding:32px}}\
+         a{{color:#007AFF;text-decoration:none;font-size:16px}}\
+         a:hover{{text-decoration:underline}}\
+         li{{margin:8px 0}}\
+         .tag{{font-size:11px;color:#98989D;margin-left:8px}}\
+         .section{{margin-top:20px;border-top:1px solid #38383A;padding-top:16px}}\
+         </style></head><body>\
+         <h1>WCES — WiFi CSI 应急感知系统</h1>\
+         <p>Rust + Axum + Tokio | 瑞萨 RZ/V2H + ESP32-C5 ×3</p>\
+         <div class='section'><h3>Web 仪表盘</h3><ul>\
+         <li><a href='/ui/index.html'><strong>/ui/index.html</strong></a>\
+         <span class='tag'>控制中心</span></li>\
+         <li><a href='/ui/triage.html'><strong>/ui/triage.html</strong></a>\
+         <span class='tag'>分诊仪表盘 (竞赛核心)</span></li>\
+         <li><a href='/ui/observatory.html'>/ui/observatory.html</a>\
+         <span class='tag'>观测台</span></li>\
+         <li><a href='/ui/viz.html'>/ui/viz.html</a>\
+         <span class='tag'>3D 骨架可视化</span></li>\
+         </ul></div>\
+         <div class='section'><h3>API 端点</h3><ul>\
+         <li><a href='/health'>/health</a> — 服务健康检查</li>\
+         <li><a href='/api/v1/vital-signs'>/api/v1/vital-signs</a> — 生命体征 (HR/RR)</li>\
+         <li><a href='/api/v1/sensing/latest'>/api/v1/sensing/latest</a> — 最新感知数据</li>\
+         <li><a href='/api/v1/model/info'>/api/v1/model/info</a> — RVF 模型信息</li>\
+         <li><span>/ws/sensing</span> <span class='tag'>WebSocket 实时流 (当前端口)</span></li>\
+         </ul></div>\
          </body></html>"
     ))
 }

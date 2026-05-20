@@ -84,11 +84,15 @@
     <div id="stats-container"></div>
   </div>
 
-  <!-- Three.js and OrbitControls from CDN -->
-  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-  <!-- Stats.js for performance monitoring -->
-  <script src="https://unpkg.com/stats.js@0.17.0/build/stats.min.js"></script>
+  <!-- Three.js and OrbitControls from local lib (offline-capable) -->
+  <script src="lib/three.min.js"></script>
+  <script src="lib/OrbitControls.js"></script>
+  <!-- Stats.js loaded from CDN with local fallback (non-critical, only for FPS display) -->
+  <script>
+    if (typeof Stats === 'undefined') {
+      document.write('<script src="https://unpkg.com/stats.js@0.17.0/build/stats.min.js"><\/script>');
+    }
+  </script>
 
   <!-- Application modules loaded as ES modules via importmap workaround -->
   <script type="module">
@@ -133,11 +137,20 @@
 
     // -- Initialize Stats.js --
     function initStats() {
-      const stats = new Stats();
-      stats.showPanel(0); // FPS panel
-      stats.dom.style.position = 'relative';
-      document.getElementById('stats-container').appendChild(stats.dom);
-      return stats;
+      try {
+        if (typeof Stats === 'undefined') {
+          console.warn('[VIZ] Stats.js not available — skipping FPS monitor');
+          return null;
+        }
+        const stats = new Stats();
+        stats.showPanel(0); // FPS panel
+        stats.dom.style.position = 'relative';
+        document.getElementById('stats-container').appendChild(stats.dom);
+        return stats;
+      } catch (e) {
+        console.warn('[VIZ] Stats.js init failed:', e.message);
+        return null;
+      }
     }
 
     // -- Main Initialization --
@@ -176,8 +189,9 @@
         setLoadingProgress(85, 'Connecting to server...');
 
         // 8. WebSocket client
+        const wsHost = window.location.host;
         state.wsClient = new WebSocketClient({
-          url: 'ws://localhost:8000/ws/pose',
+          url: `ws://${wsHost}/ws/sensing`,
           onMessage: (msg) => handleWebSocketMessage(msg),
           onStateChange: (newState, oldState) => handleConnectionStateChange(newState, oldState),
           onError: (err) => console.error('[VIZ] WebSocket error:', err)

@@ -11,7 +11,7 @@ use axum::{
 use axum::http::HeaderValue;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
-use tracing::{info, error};
+use tracing::{info, warn, error};
 
 use crate::handlers::{ws, routes, model_routes, recording_routes, llm_routes};
 use crate::rvf_container::{RvfBuilder, VitalSignConfig};
@@ -34,16 +34,30 @@ pub(crate) async fn run_server(
         .with_state(ws_state);
 
     let ws_addr = SocketAddr::from((bind_ip, args.ws_port));
-    let ws_listener = tokio::net::TcpListener::bind(ws_addr).await
-        .expect("Failed to bind WebSocket port");
-    info!("WebSocket server listening on {ws_addr}");
-
-    tokio::spawn(async move {
-        axum::serve(ws_listener, ws_app).await.unwrap();
-    });
+    match tokio::net::TcpListener::bind(ws_addr).await {
+        Ok(ws_listener) => {
+            info!("WebSocket server listening on {ws_addr}");
+            tokio::spawn(async move {
+                axum::serve(ws_listener, ws_app).await.unwrap();
+            });
+        }
+        Err(e) => {
+            // WS is also available on the HTTP port, so this is non-fatal.
+            warn!("WebSocket port {ws_addr} unavailable ({e}), using HTTP port for WS");
+        }
+    }
 
     // ── HTTP server (serves UI + full DensePose-compatible REST API) ──────────
     let ui_path = args.ui_path.clone();
+
+    // Compute absolute path to project-root/ui/lib so Three.js is always reachable
+    // even when --ui-path points to docs/triage-ui instead of ui/.
+    let project_ui_lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap()   // wifi-densepose-sensing-server/
+        .parent().unwrap()   // crates/
+        .parent().unwrap()   // rust-server/
+        .join("ui").join("lib");
+
     let http_app = Router::new()
         .route("/", get(routes::info_page))
         // Health endpoints (DensePose-compatible)
@@ -106,6 +120,9 @@ pub(crate) async fn run_server(
         .route("/api/v1/llm/analyze", post(llm_routes::llm_analyze))
         .route("/api/v1/llm/status", get(llm_routes::llm_status))
         // Static UI files
+        // Serve ui/lib/ from the project's actual ui/lib/ so Three.js is always found
+        // (placed before the /ui catch-all so more-specific /ui/lib takes priority)
+        .nest_service("/ui/lib", ServeDir::new(&project_ui_lib))
         .nest_service("/ui", ServeDir::new(&ui_path))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,
@@ -117,7 +134,8 @@ pub(crate) async fn run_server(
     let http_listener = tokio::net::TcpListener::bind(http_addr).await
         .expect("Failed to bind HTTP port");
     info!("HTTP server listening on {http_addr}");
-    info!("Open http://localhost:{}/ui/triage.html in your browser", args.http_port);
+    info!("  Control Center:  http://{bind_ip}:{}/ui/index.html", args.http_port);
+    info!("  Triage Dashboard: http://{bind_ip}:{}/ui/triage.html", args.http_port);
 
     // ── Run the HTTP server with graceful shutdown ────────────────────────────
     let shutdown_state = state.clone();
