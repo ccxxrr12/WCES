@@ -4,15 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WCES - 方舱生命体征监测系统</title>
-    <!-- Three.js Library -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="../../ui/lib/three.min.js"></script>
+    <script src="../../ui/lib/OrbitControls.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        *{margin:0;padding:0;box-sizing:border-box}
 
         :root {
             --primary-blue: #007AFF;
@@ -21,14 +16,29 @@
             --danger-red: #FF3B30;
             --gray: #8E8E93;
             --dark-gray: #636366;
-            --light-gray: #F2F2F7;
             --bg-primary: #000000;
             --bg-secondary: #1C1C1E;
             --bg-tertiary: #2C2C2E;
             --text-primary: #FFFFFF;
             --text-secondary: #98989D;
             --separator: #38383A;
-            --glass-bg: rgba(30, 30, 32, 0.8);
+            --glass-bg: rgba(30,30,32,0.8);
+            --card-shadow: rgba(0,0,0,0.4);
+            --overlay-bg: rgba(0,0,0,0.7);
+            --heatmap-low: rgba(0,255,100,0.15);
+            --heatmap-mid: rgba(255,200,0,0.25);
+            --heatmap-high: rgba(255,50,0,0.4);
+        }
+        :root.light {
+            --bg-primary: #F2F2F7;
+            --bg-secondary: #FFFFFF;
+            --bg-tertiary: #F2F2F7;
+            --text-primary: #1C1C1E;
+            --text-secondary: #636366;
+            --separator: #E5E5EA;
+            --glass-bg: rgba(255,255,255,0.85);
+            --card-shadow: rgba(0,0,0,0.08);
+            --overlay-bg: rgba(240,240,245,0.9);
         }
 
         body {
@@ -37,2454 +47,1028 @@
             color: var(--text-primary);
             overflow: hidden;
             height: 100vh;
-            font-smooth: always;
             -webkit-font-smoothing: antialiased;
+            transition: background .3s, color .3s;
         }
 
-        /* Header */
+        /* ── Header ── */
         .header {
-            background: linear-gradient(180deg, rgba(28, 28, 30, 0.95) 0%, rgba(28, 28, 30, 0.85) 100%);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            padding: 16px 24px;
-            border-bottom: 0.5px solid var(--separator);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            position: relative;
-            z-index: 100;
+            background: linear-gradient(180deg, var(--bg-secondary) 0%, rgba(from var(--bg-secondary) r g b / 0.85) 100%);
+            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            padding: 12px 20px;
+            border-bottom: .5px solid var(--separator);
+            display: flex; align-items: center; justify-content: space-between;
+            z-index: 100; position: relative;
         }
+        .header-left{display:flex;align-items:center;gap:14px}
+        .logo{display:flex;align-items:center;gap:10px}
+        .logo-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--primary-blue) 0%,#5856D6 100%);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;box-shadow:0 3px 12px rgba(0,122,255,.3)}
+        .logo-text h1{font-size:15px;font-weight:600;letter-spacing:-.3px}
+        .logo-text p{font-size:11px;color:var(--text-secondary)}
+        .header-right{display:flex;align-items:center;gap:10px}
+        .status-indicator{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--bg-tertiary);border-radius:16px;font-size:12px;transition:all .3s}
+        .status-dot{width:7px;height:7px;border-radius:50%;background:var(--gray);transition:all .3s}
+        .status-dot.online{background:var(--success-green);box-shadow:0 0 6px rgba(52,199,89,.5);animation:pulse 2s infinite}
+        .status-dot.offline{background:var(--danger-red)}
+        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.1)}}
+        .time-display{font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums}
+        .header-btn{width:32px;height:32px;background:var(--bg-tertiary);border:.5px solid var(--separator);border-radius:8px;color:var(--text-primary);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:all .2s}
+        .header-btn:hover{background:var(--separator);transform:scale(1.05)}
+        .header-btn:active{transform:scale(.95)}
 
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .logo-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary-blue) 0%, #5856D6 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            font-weight: 700;
-            box-shadow: 0 4px 16px rgba(0, 122, 255, 0.3);
-        }
-
-        .logo-text h1 {
-            font-size: 17px;
-            font-weight: 600;
-            letter-spacing: -0.4px;
-        }
-
-        .logo-text p {
-            font-size: 12px;
-            color: var(--text-secondary);
-            letter-spacing: -0.2px;
-        }
-
-        .header-right {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: var(--bg-tertiary);
-            border-radius: 20px;
-            font-size: 13px;
-            transition: all 0.3s ease;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--gray);
-            transition: all 0.3s ease;
-        }
-
-        .status-dot.online {
-            background: var(--success-green);
-            box-shadow: 0 0 8px rgba(52, 199, 89, 0.6);
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        .status-dot.offline {
-            background: var(--danger-red);
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.6; transform: scale(1.1); }
-        }
-
-        .time-display {
-            font-size: 13px;
-            color: var(--text-secondary);
-            font-variant-numeric: tabular-nums;
-        }
-
-        /* Main Layout */
+        /* ── Main Layout ── */
         .main-container {
             display: grid;
-            grid-template-columns: 1fr 400px;
-            height: calc(100vh - 73px);
+            grid-template-columns: 1fr minmax(340px, 420px);
+            height: calc(100vh - 57px);
             gap: 1px;
             background: var(--separator);
         }
-
-        /* Left Panel - Map */
-        .map-panel {
-            background: var(--bg-secondary);
-            position: relative;
-            overflow: hidden;
+        @media (max-width:900px) {
+            .main-container{grid-template-columns:1fr;grid-template-rows:55vh 45vh}
+        }
+        @media (max-width:600px) {
+            .main-container{grid-template-rows:45vh 55vh}
+            .header{padding:8px 12px}
+            .logo-icon{width:30px;height:30px;font-size:15px}
+            .logo-text h1{font-size:13px}
+            .sidebar-section{padding:12px}
+            .stats-grid{gap:4px}
+            .stat-card{padding:8px 4px}
+            .stat-value{font-size:18px}
         }
 
-        .map-header {
-            position: absolute;
-            top: 16px;
-            left: 16px;
-            right: 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 50;
-        }
+        /* ── Map Panel ── */
+        .map-panel{background:var(--bg-secondary);position:relative;overflow:hidden}
+        .map-header{position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:center;z-index:50}
+        .view-toggle{display:flex;gap:4px;background:var(--glass-bg);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:3px;border-radius:8px;border:.5px solid var(--separator)}
+        .view-tab{padding:6px 14px;border:none;background:transparent;color:var(--text-secondary);border-radius:6px;font-size:11px;font-weight:500;cursor:pointer;transition:all .2s}
+        .view-tab:hover{color:var(--text-primary)}
+        .view-tab.active{background:var(--primary-blue);color:white}
+        .map-controls{display:flex;gap:6px}
+        .control-btn{width:34px;height:34px;background:var(--glass-bg);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:.5px solid var(--separator);border-radius:8px;color:var(--text-primary);cursor:pointer;font-size:15px;transition:all .2s;display:flex;align-items:center;justify-content:center}
+        .control-btn:hover{background:var(--bg-tertiary);transform:scale(1.05)}
+        .control-btn.active{background:var(--primary-blue);color:white}
+        .map-container{width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:68px 16px 16px}
+        #map{border-radius:16px;background:var(--bg-tertiary);box-shadow:0 4px 20px var(--card-shadow);max-width:100%;max-height:100%}
+        .viewer-container{width:100%;height:100%;display:none}
+        .viewer-container.active{display:block}
+        #skeletonCanvas{width:100%;height:100%;display:block;border-radius:0}
 
-        .map-title {
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            padding: 10px 16px;
-            border-radius: 12px;
-            font-size: 13px;
-            font-weight: 500;
-            border: 0.5px solid var(--separator);
-        }
+        .map-legend{position:absolute;bottom:16px;left:16px;background:var(--glass-bg);backdrop-filter:blur(20px);padding:12px 14px;border-radius:12px;border:.5px solid var(--separator);z-index:50;font-size:11px}
+        .legend-title{font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-secondary);margin-bottom:8px;font-size:10px}
+        .legend-item{display:flex;align-items:center;gap:8px;padding:3px 0}
+        .legend-dot{width:10px;height:10px;border-radius:50%}
+        .legend-dot.red{background:var(--danger-red)}
+        .legend-dot.yellow{background:var(--warning-orange)}
+        .legend-dot.green{background:var(--success-green)}
+        .legend-dot.gray{background:var(--gray)}
+        .legend-dot.blue{background:var(--primary-blue);border-radius:2px;transform:rotate(45deg)}
+        .skeleton-controls{position:absolute;bottom:16px;right:16px;background:var(--glass-bg);backdrop-filter:blur(20px);padding:10px;border-radius:10px;border:.5px solid var(--separator);z-index:50;display:none;flex-direction:column;gap:6px}
+        .skeleton-control-btn{width:32px;height:32px;background:var(--bg-tertiary);border:.5px solid var(--separator);border-radius:7px;color:var(--text-primary);cursor:pointer;font-size:14px;transition:all .2s;display:flex;align-items:center;justify-content:center}
+        .skeleton-control-btn:hover{background:var(--primary-blue);color:white;transform:scale(1.05)}
 
-        .map-controls {
-            display: flex;
-            gap: 8px;
-        }
-
-        .control-btn {
-            width: 40px;
-            height: 40px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 0.5px solid var(--separator);
-            border-radius: 10px;
-            color: var(--text-primary);
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-        }
-
-        .control-btn:hover {
-            background: var(--bg-tertiary);
-            transform: scale(1.05);
-        }
-
-        .control-btn:active {
-            transform: scale(0.95);
-        }
-
-        .map-container {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 80px 24px 24px;
-        }
-
-        #map {
-            background: var(--bg-tertiary);
-            border-radius: 20px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-        }
-
-        .map-legend {
-            position: absolute;
-            bottom: 24px;
-            left: 24px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            padding: 16px;
-            border-radius: 16px;
-            border: 0.5px solid var(--separator);
-            z-index: 50;
-        }
-
-        .legend-title {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-secondary);
-            margin-bottom: 12px;
-        }
-
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 6px 0;
-            font-size: 13px;
-        }
-
-        .legend-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-        }
-
-        .legend-dot.red { background: var(--danger-red); }
-        .legend-dot.yellow { background: var(--warning-orange); }
-        .legend-dot.green { background: var(--success-green); }
-        .legend-dot.gray { background: var(--gray); }
-        .legend-dot.blue { 
-            background: var(--primary-blue); 
-            border-radius: 3px;
-            transform: rotate(45deg);
-        }
-
-        /* Right Panel */
-        .sidebar {
-            background: var(--bg-secondary);
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
-
-        .sidebar::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .sidebar::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .sidebar::-webkit-scrollbar-thumb {
-            background: var(--separator);
-            border-radius: 3px;
-        }
-
-        .sidebar-section {
-            padding: 20px;
-            border-bottom: 0.5px solid var(--separator);
-        }
-
-        .section-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 16px;
-        }
-
-        .section-title {
-            font-size: 13px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-secondary);
-        }
+        /* ── Sidebar ── */
+        .sidebar{background:var(--bg-secondary);overflow-y:auto;overflow-x:hidden}
+        .sidebar::-webkit-scrollbar{width:5px}
+        .sidebar::-webkit-scrollbar-track{background:transparent}
+        .sidebar::-webkit-scrollbar-thumb{background:var(--separator);border-radius:3px}
+        .sidebar-section{padding:16px;border-bottom:.5px solid var(--separator)}
+        .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;cursor:pointer;user-select:none}
+        .section-header.collapsible:hover{opacity:.8}
+        .section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-secondary);display:flex;align-items:center;gap:4px}
+        .section-toggle{font-size:10px;transition:transform .2s;color:var(--text-secondary)}
+        .section-toggle.open{transform:rotate(90deg)}
+        .section-body{transition:all .3s;overflow:hidden}
+        .section-body.collapsed{max-height:0!important;opacity:0;margin:0;padding:0}
 
         /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 8px;
-        }
-
-        .stat-card {
-            background: var(--bg-tertiary);
-            border-radius: 12px;
-            padding: 12px 8px;
-            text-align: center;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: var(--gray);
-        }
-
-        .stat-card.total::before { background: var(--primary-blue); }
-        .stat-card.red::before { background: var(--danger-red); }
-        .stat-card.yellow::before { background: var(--warning-orange); }
-        .stat-card.green::before { background: var(--success-green); }
-        .stat-card.black::before { background: var(--gray); }
-
-        .stat-value {
-            font-size: 24px;
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
-            margin-bottom: 4px;
-        }
-
-        .stat-card.total .stat-value { color: var(--primary-blue); }
-        .stat-card.red .stat-value { color: var(--danger-red); }
-        .stat-card.yellow .stat-value { color: var(--warning-orange); }
-        .stat-card.green .stat-value { color: var(--success-green); }
-        .stat-card.black .stat-value { color: var(--gray); }
-
-        .stat-label {
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
+        .stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+        .stat-card{background:var(--bg-tertiary);border-radius:10px;padding:10px 6px;text-align:center;position:relative;overflow:hidden}
+        .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--gray)}
+        .stat-card.total::before{background:var(--primary-blue)}
+        .stat-card.red::before{background:var(--danger-red)}
+        .stat-card.yellow::before{background:var(--warning-orange)}
+        .stat-card.green::before{background:var(--success-green)}
+        .stat-card.black::before{background:var(--gray)}
+        .stat-value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;margin-bottom:2px}
+        .stat-card.total .stat-value{color:var(--primary-blue)}
+        .stat-card.red .stat-value{color:var(--danger-red)}
+        .stat-card.yellow .stat-value{color:var(--warning-orange)}
+        .stat-card.green .stat-value{color:var(--success-green)}
+        .stat-card.black .stat-value{color:var(--gray)}
+        .stat-label{font-size:10px;color:var(--text-secondary)}
 
         /* Assessment */
-        .assessment-card {
-            background: var(--bg-tertiary);
-            border-radius: 16px;
-            padding: 16px;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
+        .assessment-card{background:var(--bg-tertiary);border-radius:12px;padding:14px;display:flex;align-items:center;gap:12px}
+        .assessment-icon{width:42px;height:42px;background:linear-gradient(135deg,var(--warning-orange) 0%,#FF6B00 100%);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+        .assessment-severity{font-size:13px;font-weight:600;margin-bottom:2px}
+        .assessment-detail{font-size:11px;color:var(--text-secondary)}
 
-        .assessment-icon {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--warning-orange) 0%, #FF6B00 100%);
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-        }
+        /* Vitals sparkline card */
+        .vitals-chart-card{background:var(--bg-tertiary);border-radius:12px;padding:12px}
+        .chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+        .chart-title{font-size:12px;font-weight:600;color:var(--text-secondary)}
+        .chart-metrics{display:flex;gap:12px;margin-bottom:8px}
+        .metric-item{text-align:center;flex:1}
+        .metric-value{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+        .metric-item.breathing .metric-value{color:var(--primary-blue)}
+        .metric-item.heart .metric-value{color:var(--danger-red)}
+        .metric-label{font-size:10px;color:var(--text-secondary)}
+        .sparkline-wrap{display:flex;gap:6px}
+        .sparkline-wrap canvas{flex:1;height:48px;border-radius:8px;background:var(--bg-secondary)}
 
-        .assessment-info {
-            flex: 1;
-        }
-
-        .assessment-severity {
-            font-size: 15px;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .assessment-detail {
-            font-size: 13px;
-            color: var(--text-secondary);
-        }
-
-        /* Survivors List */
-        .survivors-container {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .survivor-card {
-            background: var(--bg-tertiary);
-            border-radius: 16px;
-            padding: 16px;
-            transition: all 0.3s ease;
-            border: 0.5px solid transparent;
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .survivor-card::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 4px;
-            background: var(--primary-blue);
-        }
-
-        .survivor-card.red::before { background: var(--danger-red); }
-        .survivor-card.yellow::before { background: var(--warning-orange); }
-        .survivor-card.green::before { background: var(--success-green); }
-        .survivor-card.black::before { background: var(--gray); }
-
-        .survivor-card:hover {
-            background: rgba(80, 80, 84, 0.4);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-        }
-
-        .survivor-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 12px;
-        }
-
-        .survivor-id {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .survivor-avatar {
-            width: 36px;
-            height: 36px;
-            background: linear-gradient(135deg, #5856D6 0%, #AF52DE 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            font-size: 14px;
-        }
-
-        .survivor-info h3 {
-            font-size: 15px;
-            font-weight: 600;
-            margin-bottom: 2px;
-        }
-
-        .survivor-info p {
-            font-size: 12px;
-            color: var(--text-secondary);
-        }
-
-        .triage-badge {
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
-
-        .triage-badge.red { 
-            background: rgba(255, 59, 48, 0.15); 
-            color: var(--danger-red);
-        }
-        .triage-badge.yellow { 
-            background: rgba(255, 149, 0, 0.15); 
-            color: var(--warning-orange);
-        }
-        .triage-badge.green { 
-            background: rgba(52, 199, 89, 0.15); 
-            color: var(--success-green);
-        }
-        .triage-badge.black { 
-            background: rgba(142, 142, 147, 0.15); 
-            color: var(--gray);
-        }
-
-        .deteriorating-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 4px 8px;
-            background: rgba(255, 149, 0, 0.15);
-            color: var(--warning-orange);
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 500;
-            animation: pulse 1.5s ease-in-out infinite;
-        }
-
-        .vitals-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-top: 12px;
-        }
-
-        .vital-item {
-            background: var(--bg-secondary);
-            border-radius: 10px;
-            padding: 10px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .vital-icon {
-            width: 28px;
-            height: 28px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-        }
-
-        .vital-icon.breathing {
-            background: rgba(0, 122, 255, 0.15);
-            color: var(--primary-blue);
-        }
-
-        .vital-icon.heart {
-            background: rgba(255, 59, 48, 0.15);
-            color: var(--danger-red);
-        }
-
-        .vital-data {
-            flex: 1;
-        }
-
-        .vital-value {
-            font-size: 15px;
-            font-weight: 600;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .vital-unit {
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
+        /* Survivors */
+        .survivor-card{background:var(--bg-tertiary);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;position:relative;overflow:hidden;border:.5px solid transparent;transition:all .25s}
+        .survivor-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary-blue)}
+        .survivor-card.red::before{background:var(--danger-red)}
+        .survivor-card.yellow::before{background:var(--warning-orange)}
+        .survivor-card.green::before{background:var(--success-green)}
+        .survivor-card.black::before{background:var(--gray)}
+        .survivor-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px var(--card-shadow)}
+        .survivor-card.active{border-color:var(--primary-blue);box-shadow:0 0 16px rgba(0,122,255,.2)}
+        .survivor-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+        .survivor-id{display:flex;align-items:center;gap:8px}
+        .survivor-avatar{width:32px;height:32px;background:linear-gradient(135deg,#5856D6 0%,#AF52DE 100%);border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px}
+        .survivor-info h3{font-size:13px;font-weight:600}
+        .survivor-info p{font-size:11px;color:var(--text-secondary)}
+        .triage-badge{padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;text-transform:uppercase}
+        .triage-badge.red{background:rgba(255,59,48,.15);color:var(--danger-red)}
+        .triage-badge.yellow{background:rgba(255,149,0,.15);color:var(--warning-orange)}
+        .triage-badge.green{background:rgba(52,199,89,.15);color:var(--success-green)}
+        .triage-badge.black{background:rgba(142,142,147,.15);color:var(--gray)}
+        .deteriorating-badge{display:inline-flex;align-items:center;gap:3px;padding:3px 7px;background:rgba(255,149,0,.15);color:var(--warning-orange);border-radius:5px;font-size:10px;font-weight:500;animation:pulse 1.5s infinite}
+        .vitals-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+        .vital-item{background:var(--bg-secondary);border-radius:8px;padding:8px;display:flex;align-items:center;gap:8px}
+        .vital-icon{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px}
+        .vital-icon.breathing{background:rgba(0,122,255,.15);color:var(--primary-blue)}
+        .vital-icon.heart{background:rgba(255,59,48,.15);color:var(--danger-red)}
+        .vital-value{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+        .vital-unit{font-size:10px;color:var(--text-secondary)}
 
         /* Alerts */
-        .alerts-container {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .alert-item {
-            background: var(--bg-tertiary);
-            border-radius: 12px;
-            padding: 12px;
-            display: flex;
-            gap: 12px;
-            align-items: flex-start;
-            transition: all 0.3s ease;
-            border-left: 3px solid var(--gray);
-        }
-
-        .alert-item.prio1 { border-left-color: var(--danger-red); }
-        .alert-item.prio2 { border-left-color: var(--warning-orange); }
-
-        .alert-icon {
-            width: 28px;
-            height: 28px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            flex-shrink: 0;
-        }
-
-        .alert-item.prio1 .alert-icon { 
-            background: rgba(255, 59, 48, 0.15);
-            color: var(--danger-red);
-        }
-        .alert-item.prio2 .alert-icon { 
-            background: rgba(255, 149, 0, 0.15);
-            color: var(--warning-orange);
-        }
-
-        .alert-content {
-            flex: 1;
-        }
-
-        .alert-title {
-            font-size: 13px;
-            font-weight: 500;
-            margin-bottom: 2px;
-        }
-
-        .alert-time {
-            font-size: 11px;
-            color: var(--text-secondary);
-            font-variant-numeric: tabular-nums;
-        }
+        .alert-item{background:var(--bg-tertiary);border-radius:10px;padding:10px;display:flex;gap:10px;align-items:flex-start;margin-bottom:6px;border-left:3px solid var(--gray);transition:all .3s}
+        .alert-item.prio1{border-left-color:var(--danger-red)}
+        .alert-item.prio2{border-left-color:var(--warning-orange)}
+        .alert-icon{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+        .alert-item.prio1 .alert-icon{background:rgba(255,59,48,.15);color:var(--danger-red)}
+        .alert-item.prio2 .alert-icon{background:rgba(255,149,0,.15);color:var(--warning-orange)}
+        .alert-content{flex:1}
+        .alert-title{font-size:12px;font-weight:500;margin-bottom:1px}
+        .alert-time{font-size:10px;color:var(--text-secondary);font-variant-numeric:tabular-nums}
 
         /* Wasm Alerts */
-        .wasm-alert {
-            background: var(--bg-tertiary);
-            border-radius: 10px;
-            padding: 10px 12px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 12px;
-            border-left: 3px solid var(--gray);
-        }
+        .wasm-alert{background:var(--bg-tertiary);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px;border-left:3px solid var(--gray)}
+        .wasm-alert.critical{border-left-color:var(--danger-red)}
+        .wasm-alert.warning{border-left-color:var(--warning-orange)}
+        .wasm-alert.info{border-left-color:var(--primary-blue)}
+        .wasm-module{font-family:'SF Mono',Monaco,monospace;font-size:10px;color:var(--text-secondary);background:var(--bg-secondary);padding:1px 5px;border-radius:3px}
+        .wasm-module.gait{color:#30D158;background:rgba(48,209,88,.12)}
+        .wasm-module.loitering{color:#FF9F0A;background:rgba(255,159,10,.12)}
+        .wasm-module.vibration{color:#BF5AF2;background:rgba(191,90,242,.12)}
+        .wasm-module.weapon_detect{color:#FF375F;background:rgba(255,55,95,.12)}
 
-        .wasm-alert.critical { border-left-color: var(--danger-red); }
-        .wasm-alert.warning { border-left-color: var(--warning-orange); }
-        .wasm-alert.info { border-left-color: var(--primary-blue); }
-
-        .wasm-module {
-            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-            font-size: 11px;
-            color: var(--text-secondary);
-            background: var(--bg-secondary);
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-
-        .wasm-value {
-            font-variant-numeric: tabular-nums;
-        }
-
-        /* Module-specific accent colors */
-        .wasm-module.gait { color: #30D158; background: rgba(48, 209, 88, 0.12); }
-        .wasm-module.loitering { color: #FF9F0A; background: rgba(255, 159, 10, 0.12); }
-        .wasm-module.vibration { color: #BF5AF2; background: rgba(191, 90, 242, 0.12); }
-        .wasm-module.ltl { color: #FF375F; background: rgba(255, 55, 95, 0.12); }
-        .wasm-module.meta_adapt { color: #5E5CE6; background: rgba(94, 92, 230, 0.12); }
-        .wasm-module.sparse_recovery { color: #64D2FF; background: rgba(100, 210, 255, 0.12); }
-        .wasm-module.gait, .wasm-module.loitering, .wasm-module.vibration,
-        .wasm-module.ltl, .wasm-module.meta_adapt, .wasm-module.sparse_recovery {
-            font-weight: 500;
-        }
-
-        .wasm-icon {
-            font-size: 14px;
-            width: 18px;
-            text-align: center;
-            flex-shrink: 0;
-        }
-
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 32px;
-            color: var(--text-secondary);
-        }
-
-        .empty-icon {
-            font-size: 32px;
-            margin-bottom: 12px;
-            opacity: 0.5;
-        }
-
-        .empty-text {
-            font-size: 13px;
-        }
+        /* Empty state */
+        .empty-state{text-align:center;padding:24px;color:var(--text-secondary)}
+        .empty-icon{font-size:28px;margin-bottom:8px;opacity:.5}
+        .empty-text{font-size:12px}
 
         /* Animations */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+        @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+        .animate-in{animation:fadeIn .35s ease forwards}
+        @keyframes slideInRight{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
 
-        .animate-in {
-            animation: fadeIn 0.4s ease forwards;
-        }
+        /* ── EHR Slide Panel ── */
+        .ehr-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300}
+        .ehr-overlay.active{display:block}
+        .ehr-panel{position:fixed;top:0;right:-520px;width:min(500px,100vw);height:100vh;background:var(--bg-secondary);z-index:301;transition:right .35s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;box-shadow:-8px 0 40px var(--card-shadow)}
+        .ehr-panel.open{right:0}
+        .ehr-panel-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:.5px solid var(--separator);flex-shrink:0}
+        .ehr-panel-header h2{font-size:16px;font-weight:600}
+        .ehr-close{width:32px;height:32px;border-radius:8px;background:var(--bg-tertiary);border:.5px solid var(--separator);color:var(--text-primary);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
+        .ehr-close:hover{background:var(--danger-red);color:white}
+        .ehr-body{flex:1;overflow-y:auto;padding:16px 20px}
+        .ehr-body::-webkit-scrollbar{width:4px}
+        .ehr-body::-webkit-scrollbar-thumb{background:var(--separator);border-radius:2px}
+        .ehr-section{margin-bottom:20px}
+        .ehr-section h3{font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+        .ehr-info-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:.5px solid var(--separator);font-size:13px}
+        .ehr-info-row .label{color:var(--text-secondary)}
+        .ehr-vital-trend{width:100%;height:80px;background:var(--bg-tertiary);border-radius:8px;margin-top:8px}
+        .ehr-triage-history{display:flex;gap:8px;margin-top:8px}
+        .ehr-triage-chip{padding:4px 10px;border-radius:12px;font-size:11px;font-weight:500}
 
-        /* Skeleton Toggle */
-        .skeleton-toggle {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: var(--bg-tertiary);
-            padding: 12px 16px;
-            border-radius: 12px;
-        }
+        /* ── Theme Toggle ── */
+        .theme-toggle{position:relative;width:48px;height:26px;background:var(--bg-tertiary);border-radius:13px;border:1px solid var(--separator);cursor:pointer;transition:all .3s}
+        .theme-toggle::after{content:'🌙';position:absolute;left:3px;top:2px;width:20px;height:20px;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .3s;border-radius:50%}
+        :root.light .theme-toggle::after{content:'☀️';left:23px}
 
-        .toggle-label {
-            flex: 1;
-            font-size: 13px;
-        }
+        /* ── Patient Modal ── */
+        .patient-modal-overlay{display:none;position:fixed;inset:0;background:var(--overlay-bg);backdrop-filter:blur(6px);z-index:200;align-items:center;justify-content:center}
+        .patient-modal-overlay.active{display:flex}
+        .patient-modal{background:var(--bg-secondary);border-radius:16px;padding:28px;width:min(460px,90vw);max-height:85vh;overflow-y:auto;border:.5px solid var(--separator);box-shadow:0 20px 60px var(--card-shadow)}
+        .patient-modal h3{font-size:16px;font-weight:600;margin-bottom:2px}
+        .patient-modal .modal-subtitle{font-size:12px;color:var(--text-secondary);margin-bottom:20px}
+        .patient-modal .form-group{margin-bottom:14px}
+        .patient-modal label{display:block;font-size:11px;font-weight:500;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+        .patient-modal input,.patient-modal select,.patient-modal textarea{width:100%;background:var(--bg-tertiary);border:1px solid var(--separator);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;font-family:inherit;transition:border-color .2s}
+        .patient-modal input:focus,.patient-modal select:focus,.patient-modal textarea:focus{outline:none;border-color:var(--primary-blue)}
+        .patient-modal .form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .patient-modal .btn-row{display:flex;gap:10px;margin-top:20px}
+        .patient-modal .btn{flex:1;padding:10px 16px;border:none;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+        .btn-primary{background:var(--primary-blue);color:white}
+        .btn-primary:hover{opacity:.9}
+        .btn-ghost{background:var(--bg-tertiary);color:var(--text-primary)}
+        .btn-ghost:hover{background:var(--separator)}
 
-        .toggle-btn {
-            background: var(--bg-secondary);
-            border: none;
-            color: var(--text-primary);
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .toggle-btn.active {
-            background: var(--primary-blue);
-        }
-
-        .toggle-btn:hover {
-            opacity: 0.85;
-        }
-
-        /* Vital Signs Chart Area */
-        .vitals-chart-card {
-            background: var(--bg-tertiary);
-            border-radius: 16px;
-            padding: 16px;
-        }
-
-        .chart-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-
-        .chart-title {
-            font-size: 13px;
-            font-weight: 600;
-        }
-
-        .chart-metrics {
-            display: flex;
-            gap: 16px;
-        }
-
-        .metric-item {
-            text-align: center;
-        }
-
-        .metric-value {
-            font-size: 18px;
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .metric-item.breathing .metric-value { color: var(--primary-blue); }
-        .metric-item.heart .metric-value { color: var(--danger-red); }
-
-        .metric-label {
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
-
-        /* 3D Skeleton Viewer */
-        .viewer-container {
-            width: 100%;
-            height: 100%;
-            display: none;
-        }
-
-        .viewer-container.active {
-            display: block;
-        }
-
-        #skeletonCanvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-            border-radius: 20px;
-        }
-
-        .view-toggle {
-            display: flex;
-            gap: 8px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            padding: 4px;
-            border-radius: 10px;
-            border: 0.5px solid var(--separator);
-        }
-
-        .view-tab {
-            padding: 8px 16px;
-            border: none;
-            background: transparent;
-            color: var(--text-secondary);
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .view-tab:hover {
-            color: var(--text-primary);
-        }
-
-        .view-tab.active {
-            background: var(--primary-blue);
-            color: white;
-        }
-
-        .skeleton-controls {
-            position: absolute;
-            bottom: 24px;
-            right: 24px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            padding: 12px;
-            border-radius: 12px;
-            border: 0.5px solid var(--separator);
-            z-index: 50;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .skeleton-control-btn {
-            width: 36px;
-            height: 36px;
-            background: var(--bg-tertiary);
-            border: 0.5px solid var(--separator);
-            border-radius: 8px;
-            color: var(--text-primary);
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-        }
-
-        .skeleton-control-btn:hover {
-            background: var(--primary-blue);
-            transform: scale(1.05);
-        }
-        /* Patient Form Modal */
-        .patient-modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.7);
-            backdrop-filter: blur(8px);
-            z-index: 200;
-            align-items: center;
-            justify-content: center;
-        }
-        .patient-modal-overlay.active { display: flex; }
-
-        .patient-modal {
-            background: var(--bg-secondary);
-            border-radius: 20px;
-            padding: 32px;
-            width: 480px;
-            max-height: 80vh;
-            overflow-y: auto;
-            border: 0.5px solid var(--separator);
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-        }
-        .patient-modal h3 {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        .patient-modal .modal-subtitle {
-            font-size: 13px;
-            color: var(--text-secondary);
-            margin-bottom: 24px;
-        }
-        .patient-modal .form-group {
-            margin-bottom: 16px;
-        }
-        .patient-modal label {
-            display: block;
-            font-size: 12px;
-            font-weight: 500;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 6px;
-        }
-        .patient-modal input, .patient-modal select, .patient-modal textarea {
-            width: 100%;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--separator);
-            border-radius: 10px;
-            padding: 10px 14px;
-            color: var(--text-primary);
-            font-size: 14px;
-            font-family: inherit;
-            transition: border-color 0.2s;
-        }
-        .patient-modal input:focus, .patient-modal select:focus, .patient-modal textarea:focus {
-            outline: none;
-            border-color: var(--primary-blue);
-        }
-        .patient-modal textarea { resize: vertical; min-height: 60px; }
-        .patient-modal .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-        .patient-modal .btn-row {
-            display: flex;
-            gap: 12px;
-            margin-top: 24px;
-        }
-        .patient-modal .btn {
-            flex: 1;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 12px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .patient-modal .btn-primary {
-            background: var(--primary-blue);
-            color: white;
-        }
-        .patient-modal .btn-primary:hover { opacity: 0.9; }
-        .patient-modal .btn-ghost {
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-        }
-        .patient-modal .btn-ghost:hover { background: var(--separator); }
-
-        /* LLM Analysis Card */
-        .llm-card {
-            background: var(--bg-tertiary);
-            border-radius: 16px;
-            padding: 16px;
-            margin-bottom: 12px;
-            border: 0.5px solid var(--separator);
-            transition: all 0.3s;
-        }
-        .llm-card.streaming {
-            border-color: var(--primary-blue);
-            box-shadow: 0 0 20px rgba(0, 122, 255, 0.15);
-        }
-        .llm-card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 12px;
-        }
-        .llm-card-header .patient-tag {
-            font-size: 12px;
-            font-weight: 500;
-            color: var(--primary-blue);
-            background: rgba(0, 122, 255, 0.12);
-            padding: 4px 10px;
-            border-radius: 6px;
-        }
-        .llm-card-header .llm-badge {
-            font-size: 11px;
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-weight: 500;
-        }
-        .llm-badge.llm { background: rgba(94, 92, 230, 0.15); color: #5E5CE6; }
-        .llm-badge.fallback { background: rgba(142, 142, 147, 0.15); color: var(--gray); }
-        .llm-badge.generating { background: rgba(0, 122, 255, 0.15); color: var(--primary-blue); animation: pulse 1.5s infinite; }
-
-        .llm-stream-text {
-            font-size: 13px;
-            line-height: 1.6;
-            color: var(--text-primary);
-            max-height: 300px;
-            overflow-y: auto;
-            padding: 12px;
-            background: var(--bg-secondary);
-            border-radius: 10px;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-        .llm-stream-text .typing-cursor::after {
-            content: '▊';
-            animation: blink 1s step-end infinite;
-            color: var(--primary-blue);
-            margin-left: 2px;
-        }
-        @keyframes blink {
-            50% { opacity: 0; }
-        }
-
-        .llm-risk-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        .llm-risk-badge.critical { background: rgba(255, 59, 48, 0.15); color: var(--danger-red); }
-        .llm-risk-badge.high { background: rgba(255, 149, 0, 0.15); color: var(--warning-orange); }
-        .llm-risk-badge.moderate { background: rgba(0, 122, 255, 0.15); color: var(--primary-blue); }
-        .llm-risk-badge.low { background: rgba(52, 199, 89, 0.15); color: var(--success-green); }
-
-        .llm-section-label {
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin: 12px 0 6px;
-        }
-        .llm-rec-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            padding: 8px 0;
-            border-bottom: 0.5px solid var(--separator);
-        }
-        .llm-rec-item:last-child { border-bottom: none; }
-        .llm-rec-num {
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: var(--primary-blue);
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            font-weight: 600;
-            flex-shrink: 0;
-        }
-        .llm-rec-text { font-size: 13px; line-height: 1.5; }
-
-        .llm-triage-opinion {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
-            border-radius: 10px;
-            font-size: 13px;
-            margin: 8px 0;
-        }
-        .llm-triage-opinion.agrees { background: rgba(52, 199, 89, 0.1); border: 1px solid rgba(52, 199, 89, 0.2); }
-        .llm-triage-opinion.disagrees { background: rgba(255, 149, 0, 0.1); border: 1px solid rgba(255, 149, 0, 0.2); }
-
-        .llm-analyze-btn {
-            width: 100%;
-            padding: 12px;
-            background: linear-gradient(135deg, var(--primary-blue) 0%, #5856D6 100%);
-            color: white;
-            border: none;
-            border-radius: 12px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-        .llm-analyze-btn:hover { transform: scale(1.02); }
-        .llm-analyze-btn:active { transform: scale(0.98); }
-        .llm-analyze-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .patient-list-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 14px;
-            background: var(--bg-tertiary);
-            border-radius: 10px;
-            margin-bottom: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .patient-list-item:hover { background: var(--separator); }
-        .patient-list-item.active { border: 1px solid var(--primary-blue); }
-
+        /* LLM Card */
+        .llm-card{background:var(--bg-tertiary);border-radius:14px;padding:14px;margin-bottom:10px;border:.5px solid var(--separator);transition:all .3s}
+        .llm-card.streaming{border-color:var(--primary-blue);box-shadow:0 0 20px rgba(0,122,255,.15)}
+        .llm-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+        .llm-card-header .patient-tag{font-size:11px;font-weight:500;color:var(--primary-blue);background:rgba(0,122,255,.12);padding:3px 8px;border-radius:5px}
+        .llm-badge{font-size:10px;padding:3px 8px;border-radius:5px;font-weight:500}
+        .llm-badge.llm{background:rgba(94,92,230,.15);color:#5E5CE6}
+        .llm-badge.fallback{background:rgba(142,142,147,.15);color:var(--gray)}
+        .llm-badge.generating{background:rgba(0,122,255,.15);color:var(--primary-blue);animation:pulse 1.5s infinite}
+        .llm-stream-text{font-size:12px;line-height:1.5;color:var(--text-primary);max-height:240px;overflow-y:auto;padding:10px;background:var(--bg-secondary);border-radius:8px;white-space:pre-wrap;word-break:break-word}
+        .llm-stream-text .typing-cursor::after{content:'▊';animation:blink 1s step-end infinite;color:var(--primary-blue)}
+        @keyframes blink{50%{opacity:0}}
+        .llm-risk-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:16px;font-size:11px;font-weight:600;margin-bottom:10px}
+        .llm-risk-badge.critical{background:rgba(255,59,48,.15);color:var(--danger-red)}
+        .llm-risk-badge.high{background:rgba(255,149,0,.15);color:var(--warning-orange)}
+        .llm-risk-badge.moderate{background:rgba(0,122,255,.15);color:var(--primary-blue)}
+        .llm-risk-badge.low{background:rgba(52,199,89,.15);color:var(--success-green)}
+        .llm-section-label{font-size:10px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px;margin:10px 0 4px}
+        .llm-rec-item{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:.5px solid var(--separator)}
+        .llm-rec-item:last-child{border-bottom:none}
+        .llm-rec-num{width:20px;height:20px;border-radius:50%;background:var(--primary-blue);color:white;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
+        .llm-rec-text{font-size:12px;line-height:1.4}
+        .llm-triage-opinion{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:12px;margin:6px 0}
+        .llm-triage-opinion.agrees{background:rgba(52,199,89,.1);border:1px solid rgba(52,199,89,.2)}
+        .llm-triage-opinion.disagrees{background:rgba(255,149,0,.1);border:1px solid rgba(255,149,0,.2)}
+        .llm-analyze-btn{width:100%;padding:10px;background:linear-gradient(135deg,var(--primary-blue) 0%,#5856D6 100%);color:white;border:none;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px}
+        .llm-analyze-btn:hover{transform:scale(1.02)}
+        .llm-analyze-btn:active{transform:scale(.98)}
+        .llm-analyze-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+        .patient-list-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:all .2s;font-size:12px}
+        .patient-list-item:hover{background:var(--separator)}
+        .patient-list-item.active{border:1px solid var(--primary-blue)}
     </style>
 </head>
 <body>
-    <!-- Header -->
-    <header class="header">
-        <div class="header-left">
-            <div class="logo">
-                <div class="logo-icon">W</div>
-                <div class="logo-text">
-                    <h1>WCES 生命体征监测系统</h1>
-                    <p>WiFi CSI &amp; 边缘AI驱动</p>
-                </div>
+<header class="header">
+    <div class="header-left">
+        <div class="logo">
+            <div class="logo-icon">W</div>
+            <div class="logo-text">
+                <h1>WCES 生命体征监测系统</h1>
+                <p>WiFi CSI &amp; 边缘AI驱动</p>
             </div>
         </div>
-        <div class="header-right">
-            <div class="time-display" id="timeDisplay">--:--:--</div>
-            <div class="status-indicator">
-                <span class="status-dot" id="statusDot"></span>
-                <span id="statusText">等待连接</span>
-            </div>
+    </div>
+    <div class="header-right">
+        <div class="time-display" id="timeDisplay">--:--:--</div>
+        <button class="theme-toggle" onclick="toggleTheme()" title="切换明暗主题" style="width:48px;height:26px;"></button>
+        <div class="status-indicator">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">等待连接</span>
         </div>
-    </header>
+    </div>
+</header>
 
-    <!-- Main Container -->
-    <div class="main-container">
-        <!-- Map Panel -->
-        <div class="map-panel">
-            <div class="map-header">
-                <div class="view-toggle">
-                    <button class="view-tab active" id="mapTab" onclick="switchView('map')">
-                        🗺️ 位置地图
-                    </button>
-                    <button class="view-tab" id="skeletonTab" onclick="switchView('skeleton')">
-                        🦴 3D骨架
-                    </button>
-                </div>
-                <div class="map-controls">
-                    <button class="control-btn" onclick="resetView()" title="重置视图">⟲</button>
-                    <button class="control-btn" onclick="toggleHeatmap()" title="热力图">🌡</button>
-                </div>
+<div class="main-container">
+    <!-- ── LEFT: Map + Skeleton ── -->
+    <div class="map-panel" id="mapPanel">
+        <div class="map-header">
+            <div class="view-toggle">
+                <button class="view-tab active" id="mapTab" onclick="switchView('map')">🗺️ 位置地图</button>
+                <button class="view-tab" id="skeletonTab" onclick="switchView('skeleton')">🦴 3D骨架</button>
             </div>
-            
-            <!-- Map View -->
-            <div class="map-container" id="mapContainer">
-                <canvas id="map" width="700" height="550"></canvas>
+            <div class="map-controls">
+                <button class="control-btn" onclick="resetView()" title="重置视图">⟲</button>
+                <button class="control-btn" id="heatmapBtn" onclick="toggleHeatmap()" title="热力图">🌡</button>
             </div>
-            
-            <!-- 3D Skeleton View -->
-            <div class="viewer-container" id="skeletonContainer">
-                <canvas id="skeletonCanvas"></canvas>
-            </div>
-            
-            <!-- Map Legend (only in map view) -->
-            <div class="map-legend" id="mapLegend">
-                <div class="legend-title">图例</div>
-                <div class="legend-item">
-                    <span class="legend-dot red"></span>
-                    <span>紧急 (Immediate)</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-dot yellow"></span>
-                    <span>延迟 (Delayed)</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-dot green"></span>
-                    <span>轻伤 (Minor)</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-dot gray"></span>
-                    <span>死亡 (Deceased)</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-dot blue"></span>
-                    <span>ESP32-C5 节点</span>
-                </div>
-            </div>
-            
-            <!-- Skeleton Controls (only in skeleton view) -->
-            <div class="skeleton-controls" id="skeletonControls" style="display: none;">
-                <button class="skeleton-control-btn" onclick="resetCamera()" title="重置相机">🎯</button>
-                <button class="skeleton-control-btn" onclick="toggleAutoRotate()" title="自动旋转">🔄</button>
-                <button class="skeleton-control-btn" onclick="toggleWireframe()" title="线框模式">🔲</button>
+        </div>
+        <div class="map-container" id="mapContainer">
+            <canvas id="map" width="700" height="550"></canvas>
+        </div>
+        <div class="viewer-container" id="skeletonContainer">
+            <canvas id="skeletonCanvas"></canvas>
+        </div>
+        <div class="map-legend" id="mapLegend">
+            <div class="legend-title">图例</div>
+            <div class="legend-item"><span class="legend-dot red"></span>紧急 (Immediate)</div>
+            <div class="legend-item"><span class="legend-dot yellow"></span>延迟 (Delayed)</div>
+            <div class="legend-item"><span class="legend-dot green"></span>轻伤 (Minor)</div>
+            <div class="legend-item"><span class="legend-dot gray"></span>死亡 (Deceased)</div>
+            <div class="legend-item"><span class="legend-dot blue"></span>ESP32-C5 节点</div>
+        </div>
+        <div class="skeleton-controls" id="skeletonControls">
+            <button class="skeleton-control-btn" onclick="resetCamera()" title="重置相机">🎯</button>
+            <button class="skeleton-control-btn" onclick="toggleAutoRotate()" title="自动旋转">🔄</button>
+            <button class="skeleton-control-btn" onclick="toggleWireframe()" title="线框模式">🔲</button>
+        </div>
+    </div>
+
+    <!-- ── RIGHT: Sidebar ── -->
+    <div class="sidebar" id="sidebar">
+        <!-- Stats (always visible) -->
+        <div class="sidebar-section">
+            <div class="section-header"><span class="section-title">分诊统计</span></div>
+            <div class="stats-grid">
+                <div class="stat-card total"><div class="stat-value" id="statTotal">0</div><div class="stat-label">总计</div></div>
+                <div class="stat-card red"><div class="stat-value" id="statRed">0</div><div class="stat-label">紧急</div></div>
+                <div class="stat-card yellow"><div class="stat-value" id="statYellow">0</div><div class="stat-label">延迟</div></div>
+                <div class="stat-card green"><div class="stat-value" id="statGreen">0</div><div class="stat-label">轻伤</div></div>
+                <div class="stat-card black"><div class="stat-value" id="statBlack">0</div><div class="stat-label">死亡</div></div>
             </div>
         </div>
 
-        <!-- Sidebar -->
-        <div class="sidebar">
-            <!-- Stats Section -->
-            <div class="sidebar-section">
-                <div class="section-header">
-                    <span class="section-title">分诊统计</span>
-                </div>
-                <div class="stats-grid">
-                    <div class="stat-card total">
-                        <div class="stat-value" id="statTotal">0</div>
-                        <div class="stat-label">总计</div>
-                    </div>
-                    <div class="stat-card red">
-                        <div class="stat-value" id="statRed">0</div>
-                        <div class="stat-label">紧急</div>
-                    </div>
-                    <div class="stat-card yellow">
-                        <div class="stat-value" id="statYellow">0</div>
-                        <div class="stat-label">延迟</div>
-                    </div>
-                    <div class="stat-card green">
-                        <div class="stat-value" id="statGreen">0</div>
-                        <div class="stat-label">轻伤</div>
-                    </div>
-                    <div class="stat-card black">
-                        <div class="stat-value" id="statBlack">0</div>
-                        <div class="stat-label">死亡</div>
-                    </div>
+        <!-- Assessment (always visible) -->
+        <div class="sidebar-section">
+            <div class="section-header"><span class="section-title">伤情评估</span></div>
+            <div class="assessment-card">
+                <div class="assessment-icon">⚠️</div>
+                <div class="assessment-info">
+                    <div class="assessment-severity" id="severityText">等待数据</div>
+                    <div class="assessment-detail" id="rescuerText">—</div>
                 </div>
             </div>
+        </div>
 
-            <!-- Assessment Section -->
-            <div class="sidebar-section">
-                <div class="section-header">
-                    <span class="section-title">伤情评估</span>
-                </div>
-                <div class="assessment-card">
-                    <div class="assessment-icon">⚠️</div>
-                    <div class="assessment-info">
-                        <div class="assessment-severity" id="severityText">等待数据</div>
-                        <div class="assessment-detail" id="rescuerText">—</div>
+        <!-- Vitals with Sparkline -->
+        <div class="sidebar-section">
+            <div class="section-header"><span class="section-title">当前生命体征</span></div>
+            <div class="vitals-chart-card">
+                <div class="chart-metrics">
+                    <div class="metric-item breathing">
+                        <div class="metric-value" id="currentBreathing">--</div>
+                        <div class="metric-label">呼吸/分</div>
                     </div>
+                    <div class="metric-item heart">
+                        <div class="metric-value" id="currentHeart">--</div>
+                        <div class="metric-label">心率BPM</div>
+                    </div>
+                </div>
+                <div class="sparkline-wrap">
+                    <canvas id="sparkBreathing"></canvas>
+                    <canvas id="sparkHeart"></canvas>
                 </div>
             </div>
+        </div>
 
-            <!-- Vital Signs Overview -->
-            <div class="sidebar-section">
-                <div class="section-header">
-                    <span class="section-title">当前生命体征</span>
-                </div>
-                <div class="vitals-chart-card">
-                    <div class="chart-header">
-                        <span class="chart-title">综合指标</span>
-                    </div>
-                    <div class="chart-metrics">
-                        <div class="metric-item breathing">
-                            <div class="metric-value" id="currentBreathing">--</div>
-                            <div class="metric-label">呼吸/分</div>
-                        </div>
-                        <div class="metric-item heart">
-                            <div class="metric-value" id="currentHeart">--</div>
-                            <div class="metric-label">心率BPM</div>
-                        </div>
-                    </div>
+        <!-- Survivors (collapsible) -->
+        <div class="sidebar-section">
+            <div class="section-header collapsible" onclick="toggleSection('survivorBody','survivorToggle')">
+                <span class="section-title">👤 伤员列表</span>
+                <span class="section-toggle open" id="survivorToggle">▶</span>
+            </div>
+            <div class="section-body" id="survivorBody">
+                <div id="survivorsList">
+                    <div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">等待 CSI 数据...</div></div>
                 </div>
             </div>
+        </div>
 
-            <!-- Survivors List -->
-            <div class="sidebar-section">
-                <div class="section-header">
-                    <span class="section-title">伤员列表</span>
-                </div>
-                <div class="survivors-container" id="survivorsList">
-                    <div class="empty-state">
-                        <div class="empty-icon">👤</div>
-                        <div class="empty-text">等待 CSI 数据...</div>
-                    </div>
+        <!-- Alerts (collapsible, auto-expand on alert) -->
+        <div class="sidebar-section">
+            <div class="section-header collapsible" onclick="toggleSection('alertsBody','alertsToggle')">
+                <span class="section-title">🔔 告警通知</span>
+                <span class="section-toggle open" id="alertsToggle">▶</span>
+            </div>
+            <div class="section-body" id="alertsBody">
+                <div id="alertsList">
+                    <div class="empty-state"><div class="empty-icon">🔔</div><div class="empty-text">暂无告警</div></div>
                 </div>
             </div>
+        </div>
 
-            <!-- Alerts Section -->
-            <div class="sidebar-section">
-                <div class="section-header">
-                    <span class="section-title">告警通知</span>
-                </div>
-                <div class="alerts-container" id="alertsList">
-                    <div class="empty-state">
-                        <div class="empty-icon">🔔</div>
-                        <div class="empty-text">暂无告警</div>
-                    </div>
+        <!-- Edge Modules (collapsible) -->
+        <div class="sidebar-section">
+            <div class="section-header collapsible" onclick="toggleSection('wasmBody','wasmToggle')">
+                <span class="section-title">🔬 边缘模块 (19)</span>
+                <span class="section-toggle open" id="wasmToggle">▶</span>
+            </div>
+            <div class="section-body" id="wasmBody">
+                <div id="wasmAlertsList">
+                    <div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>
                 </div>
             </div>
+        </div>
 
-            <!-- Wasm Alerts Section (19 Edge Modules) -->
-            <div class="sidebar-section">
-                <div class="section-header">
-                    <span class="section-title">边缘模块事件 (19模块)</span>
-                    <span style="font-size:10px;color:var(--text-secondary);">🚶步态 ⏳徘徊 🏗️振动 ⚡LTL 🧠自适应 🔧恢复</span>
-                </div>
-                <div class="alerts-container" id="wasmAlertsList">
-                    <div class="empty-state">
-                        <div class="empty-icon">🔬</div>
-                        <div class="empty-text">边缘模块就绪</div>
-                    </div>
-                </div>
+        <!-- LLM AI (collapsible) -->
+        <div class="sidebar-section">
+            <div class="section-header collapsible" onclick="toggleSection('llmBody','llmToggle')">
+                <span class="section-title">🧠 AI 辅助分析</span>
+                <span class="section-toggle open" id="llmToggle">▶</span>
             </div>
-
-            <!-- LLM AI Analysis Section -->
-            <div class="sidebar-section">
-                <div class="section-header">
-                    <span class="section-title">🧠 AI 辅助分析</span>
-                    <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="showPatientModal()">+ 登记伤员</button>
-                </div>
+            <div class="section-body" id="llmBody">
                 <div id="llmAnalysisContainer">
-                    <div class="empty-state">
-                        <div class="empty-icon">🧠</div>
-                        <div class="empty-text">点击伤员卡片或登记伤员后进行AI分析</div>
-                    </div>
+                    <div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击伤员或登记后进行AI分析</div></div>
                 </div>
-                <div style="margin-top:12px;">
-                    <button class="llm-analyze-btn" id="llmAnalyzeBtn" disabled onclick="requestLlmAnalysis()">
-                        🤖 生成AI分析报告
-                    </button>
+                <div style="margin-top:10px;display:flex;gap:6px;">
+                    <button class="btn btn-ghost" style="font-size:11px;padding:6px 10px;flex:1;" onclick="showPatientModal()">+ 登记伤员</button>
+                    <button class="llm-analyze-btn" id="llmAnalyzeBtn" disabled onclick="requestLlmAnalysis()" style="flex:2;margin-top:0;">🤖 AI分析</button>
                 </div>
-            </div>
-
-            <!-- Registered Patients Quick List -->
-            <div class="sidebar-section" id="patientListSection" style="display:none;">
-                <div class="section-header">
-                    <span class="section-title">📋 已登记伤员</span>
+                <div id="patientListSection" style="display:none;margin-top:8px;">
+                    <div class="section-title" style="margin-bottom:6px;">📋 已登记伤员</div>
+                    <div id="patientQuickList"></div>
                 </div>
-                <div id="patientQuickList"></div>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Patient Registration Modal -->
-    <div class="patient-modal-overlay" id="patientModalOverlay">
-        <div class="patient-modal">
-            <h3>🏥 伤员信息登记</h3>
-            <p class="modal-subtitle">登记伤员基本信息与既往病史，AI将结合这些信息进行智能分析</p>
-            <div class="form-group">
-                <label>伤员ID</label>
-                <input type="text" id="regPatientId" placeholder="如 PAT-0001" value="">
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>年龄</label>
-                    <input type="number" id="regAge" placeholder="岁" min="0" max="120">
-                </div>
-                <div class="form-group">
-                    <label>性别</label>
-                    <select id="regGender">
-                        <option value="">未知</option>
-                        <option value="male">男</option>
-                        <option value="female">女</option>
-                    </select>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>关联节点ID (ESP32)</label>
-                <select id="regNodeId">
-                    <option value="">未知</option>
-                    <option value="1">节点 1</option>
-                    <option value="2">节点 2</option>
-                    <option value="3">节点 3</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>既往病史 (逗号分隔)</label>
-                <input type="text" id="regPreExisting" placeholder="如: COPD, 高血压, 2型糖尿病">
-            </div>
-            <div class="form-group">
-                <label>当前主诉</label>
-                <input type="text" id="regComplaint" placeholder="如: 呼吸困难3小时">
-            </div>
-            <div class="form-group">
-                <label>长期用药 (逗号分隔)</label>
-                <input type="text" id="regMedications" placeholder="如: 沙美特罗替卡松 50/250μg bid">
-            </div>
-            <div class="form-group">
-                <label>过敏史 (逗号分隔)</label>
-                <input type="text" id="regAllergies" placeholder="如: 青霉素">
-            </div>
-            <div class="form-group">
-                <label>备注</label>
-                <textarea id="regNotes" placeholder="其他需要记录的信息..."></textarea>
-            </div>
-            <div class="btn-row">
-                <button class="btn btn-ghost" onclick="closePatientModal()">取消</button>
-                <button class="btn btn-primary" onclick="registerPatient()">💾 登记伤员</button>
-            </div>
+<!-- ── EHR Patient Panel ── -->
+<div class="ehr-overlay" id="ehrOverlay" onclick="closeEhr()"></div>
+<div class="ehr-panel" id="ehrPanel">
+    <div class="ehr-panel-header">
+        <h2 id="ehrTitle">伤员详情</h2>
+        <button class="ehr-close" onclick="closeEhr()">✕</button>
+    </div>
+    <div class="ehr-body" id="ehrBody"></div>
+</div>
+
+<!-- ── Patient Registration Modal ── -->
+<div class="patient-modal-overlay" id="patientModalOverlay">
+    <div class="patient-modal">
+        <h3>🏥 伤员信息登记</h3>
+        <p class="modal-subtitle">登记伤员基本信息与既往病史</p>
+        <div class="form-group"><label>伤员ID</label><input type="text" id="regPatientId" placeholder="如 PAT-0001"></div>
+        <div class="form-row">
+            <div class="form-group"><label>年龄</label><input type="number" id="regAge" min="0" max="120" placeholder="岁"></div>
+            <div class="form-group"><label>性别</label><select id="regGender"><option value="">未知</option><option value="male">男</option><option value="female">女</option></select></div>
+        </div>
+        <div class="form-group"><label>关联节点</label><select id="regNodeId"><option value="">未知</option><option value="1">节点1</option><option value="2">节点2</option><option value="3">节点3</option></select></div>
+        <div class="form-group"><label>既往病史</label><input type="text" id="regPreExisting" placeholder="如: COPD, 高血压"></div>
+        <div class="form-group"><label>当前主诉</label><input type="text" id="regComplaint" placeholder="如: 呼吸困难3小时"></div>
+        <div class="form-group"><label>长期用药</label><input type="text" id="regMedications" placeholder="如: 沙丁胺醇 200μg"></div>
+        <div class="form-group"><label>过敏史</label><input type="text" id="regAllergies" placeholder="如: 青霉素"></div>
+        <div class="form-group"><label>备注</label><textarea id="regNotes" rows="2" placeholder="其他信息..."></textarea></div>
+        <div class="btn-row">
+            <button class="btn btn-ghost" onclick="closePatientModal()">取消</button>
+            <button class="btn btn-primary" onclick="registerPatient()">💾 登记</button>
         </div>
     </div>
+</div>
 
-    <script>
-        // ==================== Global State ====================
-        const NODES = [
-            { id: 1, x: 350, y: 120, label: 'C5 #1' },
-            { id: 2, x: 120, y: 420, label: 'C5 #2' },
-            { id: 3, x: 580, y: 420, label: 'C5 #3' }
-        ];
-        const MAP_WIDTH = 700;
-        const MAP_HEIGHT = 550;
-        const MAP_MARGIN = 50;
-        
-        let latestTriage = null;
-        let latestData = null;
-        let showHeatmap = false;
-        let renderPending = false;
-        let ws = null;
-        let currentView = 'map';
-        
-        // 3D Skeleton State
-        let scene, camera, renderer, controls;
-        let autoRotate = true;
-        let isWireframe = false;
-        let animationTime = 0;
-        
-        // ==================== 3D Skeleton ====================
-        // 17-point COCO keypoint connectivity
-        const SKELETON_PAIRS = [
-            [0,1],[0,2],[1,3],[2,4],        // head
-            [5,6],[5,7],[7,9],[6,8],[8,10], // arms
-            [5,11],[6,12],[11,12],          // torso
-            [11,13],[13,15],[12,14],[14,16] // legs
-        ];
-        
-        // Body segment definitions for volumetric rendering
-        const BODY_SEGMENTS = [
-            {joints:[5,11],rad:0.12},{joints:[6,12],rad:0.12},
-            {joints:[5,6],rad:0.10},{joints:[11,12],rad:0.10},
-            {joints:[5,7],rad:0.05},{joints:[6,8],rad:0.05},
-            {joints:[7,9],rad:0.04},{joints:[8,10],rad:0.04},
-            {joints:[11,13],rad:0.07},{joints:[12,14],rad:0.07},
-            {joints:[13,15],rad:0.05},{joints:[14,16],rad:0.05},
-            {joints:[0,0],rad:0.10,isHead:true}
-        ];
-        
-        // Bone thickness taper (thicker core, thinner extremities)
-        const BONE_TAPER = { '5-6':1.4,'11-12':1.3,'5-11':1.3,'6-12':1.3,
-            '5-7':1.0,'6-8':1.0,'11-13':1.1,'12-14':1.1,
-            '7-9':0.7,'8-10':0.7,'13-15':0.8,'14-16':0.8,
-            '0-1':0.5,'0-2':0.5,'1-3':0.4,'2-4':0.4 };
-        
-        const COLORS = { joint:0x00d878, limb:0x3eff8a, head:0x00e5ff, spine:0x5856d6, background:0x0f0f10 };
+<script>
+// ═══════════════════════════════════════════════════════════
+// GLOBAL STATE
+// ═══════════════════════════════════════════════════════════
+const NODES = [{id:1,x:350,y:120,label:'C5 #1'},{id:2,x:120,y:420,label:'C5 #2'},{id:3,x:580,y:420,label:'C5 #3'}];
+let latestTriage=null, latestData=null, showHeatmap=false, ws=null, currentView='map';
+let selectedPatientId=null, registeredPatients={}, llmStreamBuffer={};
+let lastRenderStamp=0; const MIN_RENDER_MS=150;
 
-        // Smoothed pose state (per-person lerp targets)
-        let smoothedPoses = [];
-        const _vFrom = new THREE.Vector3();
-        const _vTo = new THREE.Vector3();
+// Vitals history ring buffers (60s)
+const VITALS_HISTORY_LEN=60;
+let breathingHistory=new Array(VITALS_HISTORY_LEN).fill(null);
+let heartHistory=new Array(VITALS_HISTORY_LEN).fill(null);
+let vitalsTick=0;
 
-        // ==================== Canvas Map ====================
-        const canvas = document.getElementById('map');
-        const ctx = canvas.getContext('2d');
+// 3D state
+let scene,camera,renderer,controls,autoRotate=true,isWireframe=false,animationTime=0;
 
-        function drawMap() {
-            // Clear
-            ctx.clearRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
-            
-            // Background gradient
-            const bgGrad = ctx.createLinearGradient(0, 0, 0, MAP_HEIGHT);
-            bgGrad.addColorStop(0, '#1C1C1E');
-            bgGrad.addColorStop(1, '#0F0F10');
-            ctx.fillStyle = bgGrad;
-            ctx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+const SKELETON_PAIRS=[[0,1],[0,2],[1,3],[2,4],[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
+const COLORS={joint:0x00d878,limb:0x3eff8a,head:0x00e5ff,spine:0x5856d6,skin:0xffccaa,background:0x0f0f10};
+let figureGroups=[],smoothedPoses=[];
+const _vFrom=new THREE.Vector3(),_vTo=new THREE.Vector3();
 
-            // Grid
-            ctx.strokeStyle = '#2C2C2E';
-            ctx.lineWidth = 0.5;
-            for (let x = MAP_MARGIN; x <= MAP_WIDTH - MAP_MARGIN; x += 40) {
-                ctx.beginPath();
-                ctx.moveTo(x, MAP_MARGIN);
-                ctx.lineTo(x, MAP_HEIGHT - MAP_MARGIN);
-                ctx.stroke();
+// ═══════════════════════════════════════════════════════════
+// CANVAS MAP (with heatmap support)
+// ═══════════════════════════════════════════════════════════
+const canvas=document.getElementById('map'),ctx=canvas.getContext('2d');
+let mapW=700,mapH=550,margin=50;
+
+function resizeMap(){
+    const container=document.getElementById('mapContainer');
+    const maxW=container.clientWidth-32,maxH=container.clientHeight-84;
+    const ratio=700/550;
+    if(maxW/ratio<=maxH){mapW=maxW;mapH=maxW/ratio}else{mapH=maxH;mapW=maxH*ratio}
+    canvas.width=mapW;canvas.height=mapH;
+    margin=Math.max(30,mapW*0.07);
+}
+
+function drawMap(){
+    resizeMap();
+    ctx.clearRect(0,0,mapW,mapH);
+    const bgGrad=ctx.createLinearGradient(0,0,0,mapH);
+    bgGrad.addColorStop(0,'#1C1C1E');bgGrad.addColorStop(1,'#0F0F10');
+    ctx.fillStyle=bgGrad;ctx.fillRect(0,0,mapW,mapH);
+
+    // Heatmap layer
+    if(showHeatmap&&latestData&&latestData.signal_field&&latestData.signal_field.values){
+        const sf=latestData.signal_field;
+        const gs=sf.grid_size||[20,20,1];
+        const cellW=(mapW-2*margin)/gs[0],cellH=(mapH-2*margin)/gs[1];
+        const maxV=Math.max(...sf.values.filter(v=>v>0),1);
+        for(let y=0;y<gs[1];y++)for(let x=0;x<gs[0];x++){
+            const v=sf.values[y*gs[0]+x]/maxV;
+            if(v<0.05)continue;
+            const h=margin+x*cellW,t=margin+y*cellH;
+            ctx.fillStyle=v>0.7?`rgba(255,50,0,${v*0.45})`:v>0.35?`rgba(255,180,0,${v*0.35})`:`rgba(0,220,80,${v*0.25})`;
+            ctx.fillRect(h,t,cellW,cellH);
+        }
+    }
+
+    // Grid
+    ctx.strokeStyle='#2C2C2E';ctx.lineWidth=.5;
+    for(let x=margin;x<=mapW-margin;x+=40){ctx.beginPath();ctx.moveTo(x,margin);ctx.lineTo(x,mapH-margin);ctx.stroke()}
+    for(let y=margin;y<=mapH-margin;y+=40){ctx.beginPath();ctx.moveTo(margin,y);ctx.lineTo(mapW-margin,y);ctx.stroke()}
+    ctx.strokeStyle='#38383A';ctx.lineWidth=2;
+    ctx.strokeRect(margin,margin,mapW-2*margin,mapH-2*margin);
+    ctx.fillStyle='#636366';ctx.font='10px -apple-system,sans-serif';ctx.textAlign='center';
+    ctx.fillText('4m',mapW/2,margin-8);
+    ctx.textAlign='right';ctx.fillText('3m',margin-8,mapH/2+4);
+
+    // Nodes
+    const scaleX=(mapW-2*margin)/700,scaleY=(mapH-2*margin)/550;
+    NODES.forEach(node=>{
+        const nx=margin+node.x*scaleX,ny=margin+node.y*scaleY;
+        ctx.beginPath();ctx.arc(nx,ny,100*scaleX,0,Math.PI*2);
+        ctx.strokeStyle='rgba(0,122,255,0.15)';ctx.setLineDash([6,6]);ctx.lineWidth=1.5;ctx.stroke();ctx.setLineDash([]);
+        ctx.save();ctx.translate(nx,ny);ctx.rotate(Math.PI/4);
+        ctx.fillStyle='#007AFF';ctx.shadowColor='rgba(0,122,255,0.5)';ctx.shadowBlur=12;
+        ctx.fillRect(-8,-8,16,16);ctx.restore();
+        ctx.fillStyle='#007AFF';ctx.font='11px -apple-system,sans-serif';ctx.textAlign='center';ctx.shadowBlur=0;
+        ctx.fillText(node.label,nx,ny-20);
+    });
+
+    // Survivors
+    if(latestTriage&&latestTriage.survivors){
+        latestTriage.survivors.forEach((s,i)=>{
+            const px=s.position?margin+(s.position[0]+2)/4*(mapW-2*margin):mapW/2;
+            const py=s.position?margin+(s.position[1]+1.5)/3*(mapH-2*margin):mapH/2;
+            const cx=Math.max(margin,Math.min(mapW-margin,px));
+            const cy=Math.max(margin,Math.min(mapH-margin,py));
+            if(s.triage_color==='red'||s.is_deteriorating){
+                ctx.beginPath();ctx.arc(cx,cy,28,0,Math.PI*2);
+                ctx.fillStyle=s.is_deteriorating?'rgba(255,149,0,0.2)':'rgba(255,59,48,0.15)';ctx.fill();
             }
-            for (let y = MAP_MARGIN; y <= MAP_HEIGHT - MAP_MARGIN; y += 40) {
-                ctx.beginPath();
-                ctx.moveTo(MAP_MARGIN, y);
-                ctx.lineTo(MAP_WIDTH - MAP_MARGIN, y);
-                ctx.stroke();
-            }
+            ctx.beginPath();ctx.arc(cx,cy,14,0,Math.PI*2);
+            let dc='#007AFF';
+            if(s.triage_color==='red')dc='#FF3B30';else if(s.triage_color==='yellow')dc='#FF9500';
+            else if(s.triage_color==='green')dc='#34C759';else if(s.triage_color==='black')dc='#8E8E93';
+            ctx.fillStyle=dc;ctx.shadowColor=dc;ctx.shadowBlur=16;ctx.fill();
+            ctx.shadowBlur=0;ctx.strokeStyle='rgba(255,255,255,0.8)';ctx.lineWidth=2;ctx.stroke();
+            ctx.fillStyle='#FFFFFF';ctx.font='bold 10px -apple-system,sans-serif';ctx.textAlign='center';
+            ctx.fillText(s.id.substring(0,8),cx,cy-22);
+            if(s.breathing_rate!=null){ctx.font='9px -apple-system,sans-serif';ctx.fillStyle='#98989D';ctx.fillText(s.breathing_rate.toFixed(0)+'/min',cx,cy+24)}
+        });
+    }
+}
 
-            // Border
-            ctx.strokeStyle = '#38383A';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(MAP_MARGIN, MAP_MARGIN, MAP_WIDTH - 2 * MAP_MARGIN, MAP_HEIGHT - 2 * MAP_MARGIN);
+// Map click → EHR
+canvas.addEventListener('click',(e)=>{
+    if(!latestTriage||!latestTriage.survivors)return;
+    const rect=canvas.getBoundingClientRect();
+    const clickX=e.clientX-rect.left,clickY=e.clientY-rect.top;
+    const scaleX=(mapW-2*margin)/700,scaleY=(mapH-2*margin)/550;
+    latestTriage.survivors.forEach(s=>{
+        const px=s.position?margin+(s.position[0]+2)/4*(mapW-2*margin):mapW/2;
+        const py=s.position?margin+(s.position[1]+1.5)/3*(mapH-2*margin):mapH/2;
+        const dx=clickX-px,dy=clickY-py;
+        if(dx*dx+dy*dy<400){openEhr(s)}
+    });
+});
 
-            // Scale labels
-            ctx.fillStyle = '#636366';
-            ctx.font = '11px -apple-system, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('4m', MAP_WIDTH / 2, MAP_MARGIN - 10);
-            ctx.textAlign = 'right';
-            ctx.fillText('3m', MAP_MARGIN - 10, MAP_HEIGHT / 2 + 4);
+// ═══════════════════════════════════════════════════════════
+// 3D SKELETON (improved capsule-body rendering)
+// ═══════════════════════════════════════════════════════════
+function createCapsuleGeo(radius,length,segments=12){
+    const halfLen=length/2;
+    const geo=new THREE.CylinderGeometry(radius,radius,length,segments,1);
+    // Add sphere caps via groups — simpler: use a single cylinder with rounded look
+    const mat=new THREE.MeshStandardMaterial({color:COLORS.skin,emissive:COLORS.spine,emissiveIntensity:.08,metalness:.1,roughness:.55,transparent:true,opacity:.85});
+    const mesh=new THREE.Mesh(geo,mat);
+    mesh.castShadow=true;mesh.receiveShadow=true;
+    // Sphere caps
+    const capGeo=new THREE.SphereGeometry(radius,segments,segments/2);
+    const topCap=new THREE.Mesh(capGeo,mat);topCap.position.y=halfLen;mesh.add(topCap);
+    const botCap=new THREE.Mesh(capGeo,mat);botCap.position.y=-halfLen;mesh.add(botCap);
+    return mesh;
+}
 
-            // Draw Nodes
-            NODES.forEach(node => {
-                // Range ring
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, 100, 0, Math.PI * 2);
-                ctx.strokeStyle = 'rgba(0, 122, 255, 0.15)';
-                ctx.setLineDash([6, 6]);
-                ctx.lineWidth = 1.5;
-                ctx.stroke();
-                ctx.setLineDash([]);
+function init3D(){
+    const container=document.getElementById('skeletonContainer');
+    const canvasEl=document.getElementById('skeletonCanvas');
+    const w=container.clientWidth||700,h=container.clientHeight||550;
+    if(typeof THREE==='undefined')return;
+    scene=new THREE.Scene();scene.background=new THREE.Color(COLORS.background);
+    camera=new THREE.PerspectiveCamera(50,w/Math.max(h,1),.1,1000);
+    camera.position.set(0,1.2,4);
+    renderer=new THREE.WebGLRenderer({canvas:canvasEl,antialias:true,alpha:true});
+    renderer.setSize(w,h);renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.shadowMap.enabled=true;
+    controls=new THREE.OrbitControls(camera,renderer.domElement);
+    controls.enableDamping=true;controls.dampingFactor=.08;controls.autoRotate=autoRotate;
+    controls.autoRotateSpeed=1;controls.minDistance=1.5;controls.maxDistance=8;
+    controls.target.set(0,1,0);
 
-                // Node body
-                ctx.beginPath();
-                ctx.save();
-                ctx.translate(node.x, node.y);
-                ctx.rotate(Math.PI / 4);
-                ctx.fillStyle = '#007AFF';
-                ctx.shadowColor = 'rgba(0, 122, 255, 0.5)';
-                ctx.shadowBlur = 12;
-                ctx.fillRect(-8, -8, 16, 16);
-                ctx.restore();
+    scene.add(new THREE.AmbientLight(0x334466,.6));
+    const key=new THREE.DirectionalLight(0x4488cc,1.2);key.position.set(3,6,5);key.castShadow=true;scene.add(key);
+    const fill=new THREE.DirectionalLight(0xff9966,.4);fill.position.set(-3,2,-3);scene.add(fill);
+    const rim=new THREE.DirectionalLight(0x3366ff,.5);rim.position.set(0,0,-4);scene.add(rim);
+    const ground=new THREE.Mesh(new THREE.CircleGeometry(3,32),new THREE.MeshStandardMaterial({color:0x1C1C1E,metalness:.3,roughness:.8}));
+    ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+    scene.add(new THREE.GridHelper(4,20,0x38383A,0x2C2C2E));
 
-                // Node label
-                ctx.fillStyle = '#007AFF';
-                ctx.font = '12px -apple-system, sans-serif';
-                ctx.fontWeight = '500';
-                ctx.textAlign = 'center';
-                ctx.shadowBlur = 0;
-                ctx.fillText(node.label, node.x, node.y - 22);
-            });
+    createFigurePool();
+    window.addEventListener('resize',onWindowResize);
+    animate();
+}
 
-            // Draw Survivors
-            if (latestTriage && latestTriage.survivors) {
-                latestTriage.survivors.forEach((survivor, index) => {
-                    const px = survivor.position 
-                        ? MAP_MARGIN + (survivor.position[0] + 2) / 4 * (MAP_WIDTH - 2 * MAP_MARGIN)
-                        : MAP_WIDTH / 2;
-                    const py = survivor.position 
-                        ? MAP_MARGIN + (survivor.position[1] + 1.5) / 3 * (MAP_HEIGHT - 2 * MAP_MARGIN)
-                        : MAP_HEIGHT / 2;
-                    
-                    const cx = Math.max(MAP_MARGIN, Math.min(MAP_WIDTH - MAP_MARGIN, px));
-                    const cy = Math.max(MAP_MARGIN, Math.min(MAP_HEIGHT - MAP_MARGIN, py));
-
-                    // Deterioration ring
-                    if (survivor.triage_color === 'red' || survivor.is_deteriorating) {
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, 28, 0, Math.PI * 2);
-                        const ringColor = survivor.is_deteriorating 
-                            ? 'rgba(255, 149, 0, 0.2)'
-                            : 'rgba(255, 59, 48, 0.15)';
-                        ctx.fillStyle = ringColor;
-                        ctx.fill();
-                    }
-
-                    // Survivor dot
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, 14, 0, Math.PI * 2);
-                    
-                    let dotColor = '#007AFF';
-                    if (survivor.triage_color === 'red') dotColor = '#FF3B30';
-                    else if (survivor.triage_color === 'yellow') dotColor = '#FF9500';
-                    else if (survivor.triage_color === 'green') dotColor = '#34C759';
-                    else if (survivor.triage_color === 'black') dotColor = '#8E8E93';
-                    
-                    ctx.fillStyle = dotColor;
-                    ctx.shadowColor = dotColor;
-                    ctx.shadowBlur = 16;
-                    ctx.fill();
-                    
-                    // White border
-                    ctx.shadowBlur = 0;
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-
-                    // ID label
-                    ctx.fillStyle = '#FFFFFF';
-                    ctx.font = 'bold 11px -apple-system, sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(survivor.id.substring(0, 8), cx, cy - 24);
-
-                    // Breathing rate
-                    if (survivor.breathing_rate !== null && survivor.breathing_rate !== undefined) {
-                        ctx.font = '10px -apple-system, sans-serif';
-                        ctx.fillStyle = '#98989D';
-                        ctx.fillText(survivor.breathing_rate.toFixed(0) + '/min', cx, cy + 26);
-                    }
-                });
-            }
+function createFigurePool(){
+    for(let p=0;p<4;p++){
+        const group=new THREE.Group();
+        const joints=[],bones=[],segments=[];
+        for(let i=0;i<17;i++){
+            const r=i>=1&&i<=4?.04:i>=5&&i<=6?.055:.04;
+            const geo=new THREE.SphereGeometry(r,16,16);
+            const mat=new THREE.MeshStandardMaterial({color:i<=4?COLORS.head:COLORS.joint,emissive:i<=4?COLORS.head:COLORS.joint,emissiveIntensity:.25,metalness:.3,roughness:.3});
+            const j=new THREE.Mesh(geo,mat);j.castShadow=true;j.userData.index=i;
+            joints.push(j);group.add(j);
         }
-        
-        // ==================== 3D Skeleton ====================
-        function init3D() {
-            const container = document.getElementById('skeletonContainer');
-            const canvasEl = document.getElementById('skeletonCanvas');
-            const w = container.clientWidth || 700;
-            const h = container.clientHeight || 550;
-            console.log('[init3D] size:', w, 'x', h, '| THREE:', typeof THREE !== 'undefined' ? 'v'+THREE.REVISION : 'MISSING');
-            if (typeof THREE === 'undefined') { console.error('[init3D] THREE.js missing!'); return; }
-            
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(COLORS.background);
-            camera = new THREE.PerspectiveCamera(50, w / Math.max(h, 1), 0.1, 1000);
-            camera.position.set(0, 1.2, 4);
-            renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, alpha: true });
-            renderer.setSize(w, h);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-            controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.08;
-            controls.autoRotate = autoRotate;
-            controls.autoRotateSpeed = 1.0;
-            controls.minDistance = 1.5;
-            controls.maxDistance = 8;
-            controls.target.set(0, 1, 0);
-            
-            // Lighting
-            scene.add(new THREE.AmbientLight(0x334466, 0.6));
-            const key = new THREE.DirectionalLight(0x4488cc, 1.2);
-            key.position.set(3, 6, 5); key.castShadow = true; scene.add(key);
-            const fill = new THREE.DirectionalLight(0xff9966, 0.4);
-            fill.position.set(-3, 2, -3); scene.add(fill);
-            const rim = new THREE.DirectionalLight(0x3366ff, 0.5);
-            rim.position.set(0, 0, -4); scene.add(rim);
-            
-            // Ground + grid
-            const ground = new THREE.Mesh(
-                new THREE.CircleGeometry(3, 32),
-                new THREE.MeshStandardMaterial({ color: 0x1C1C1E, metalness: 0.3, roughness: 0.8 })
-            );
-            ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
-            scene.add(new THREE.GridHelper(4, 20, 0x38383A, 0x2C2C2E));
-            
-            // Create figure pool (up to 4 people)
-            createFigurePool();
-            window.addEventListener('resize', onWindowResize);
-            animate();
+        for(const[a,b]of SKELETON_PAIRS){
+            const geo=new THREE.CylinderGeometry(.018,.018,1,8);
+            const mat=new THREE.MeshStandardMaterial({color:COLORS.limb,emissive:COLORS.limb,emissiveIntensity:.15,metalness:.3,roughness:.5});
+            const bone=new THREE.Mesh(geo,mat);bone.castShadow=true;bone.userData.jointA=a;bone.userData.jointB=b;
+            bones.push(bone);group.add(bone);
         }
+        // Capsule body segments (torso, upper arms, upper legs)
+        [{a:5,b:11,r:.10},{a:6,b:12,r:.10},{a:5,b:6,r:.08},{a:11,b:12,r:.09},{a:5,b:7,r:.045},{a:6,b:8,r:.045},{a:7,b:9,r:.04},{a:8,b:10,r:.04},{a:11,b:13,r:.065},{a:12,b:14,r:.065},{a:13,b:15,r:.05},{a:14,b:16,r:.05},{a:0,b:0,r:.09,head:true}].forEach(seg=>{
+            const mesh=seg.head?new THREE.Mesh(new THREE.SphereGeometry(seg.r,20,20),new THREE.MeshStandardMaterial({color:COLORS.head,emissive:COLORS.head,emissiveIntensity:.15,metalness:.1,roughness:.35,transparent:true,opacity:.8})):createCapsuleGeo(seg.r,1);
+            mesh.userData.jointA=seg.a;mesh.userData.jointB=seg.b;mesh.userData.isHead=seg.head||false;
+            mesh.castShadow=true;mesh.receiveShadow=true;
+            segments.push(mesh);group.add(mesh);
+        });
+        group.userData={joints,bones,segments,smoothed:null};group.visible=false;
+        scene.add(group);figureGroups.push(group);smoothedPoses.push(null);
+    }
+}
 
-        // ── Figure Pool (1-4 skeletons with body segments) ──
-        let figureGroups = [];
-        
-        function createFigurePool() {
-            for (let p = 0; p < 4; p++) {
-                const group = new THREE.Group();
-                const joints = [], bones = [], segments = [];
-                
-                // 17 joints
-                for (let i = 0; i < 17; i++) {
-                    const r = (i >= 1 && i <= 4) ? 0.04 : (i >= 5 && i <= 6) ? 0.06 : 0.045;
-                    const geo = new THREE.SphereGeometry(r, 16, 16);
-                    const mat = new THREE.MeshStandardMaterial({
-                        color: (i >= 0 && i <= 4) ? COLORS.head : COLORS.joint,
-                        emissive: (i >= 0 && i <= 4) ? COLORS.head : COLORS.joint,
-                        emissiveIntensity: 0.25, metalness: 0.4, roughness: 0.3
-                    });
-                    const joint = new THREE.Mesh(geo, mat);
-                    joint.castShadow = true; joint.userData.index = i;
-                    joints.push(joint); group.add(joint);
-                }
-                
-                // Bones
-                for (const [a, b] of SKELETON_PAIRS) {
-                    const key = a + '-' + b;
-                    const taper = BONE_TAPER[key] || 0.8;
-                    const thickness = 0.022 * taper;
-                    const geo = new THREE.CylinderGeometry(thickness, thickness, 1, 8);
-                    const mat = new THREE.MeshStandardMaterial({
-                        color: COLORS.limb, emissive: COLORS.limb,
-                        emissiveIntensity: 0.15, metalness: 0.3, roughness: 0.5
-                    });
-                    const bone = new THREE.Mesh(geo, mat);
-                    bone.castShadow = true; bone.userData.jointA = a; bone.userData.jointB = b;
-                    bones.push(bone); group.add(bone);
-                }
-                
-                // Body segments (volumetric torso/limbs)
-                for (const seg of BODY_SEGMENTS) {
-                    const geo = seg.isHead ? new THREE.SphereGeometry(seg.rad, 16, 16) :
-                        new THREE.CylinderGeometry(seg.rad, seg.rad * 0.9, 1, 12);
-                    const mat = new THREE.MeshStandardMaterial({
-                        color: seg.isHead ? COLORS.head : COLORS.spine,
-                        emissive: seg.isHead ? COLORS.head : COLORS.spine,
-                        emissiveIntensity: 0.08, metalness: 0.2, roughness: 0.6, transparent: true, opacity: 0.7
-                    });
-                    const mesh = new THREE.Mesh(geo, mat);
-                    mesh.castShadow = true; mesh.receiveShadow = true;
-                    mesh.userData.jointA = seg.joints[0]; mesh.userData.jointB = seg.joints[1];
-                    mesh.userData.isHead = seg.isHead || false;
-                    segments.push(mesh); group.add(mesh);
-                }
-                
-                group.userData = { joints, bones, segments, smoothed: null };
-                group.visible = false;
-                scene.add(group);
-                figureGroups.push(group);
-                smoothedPoses.push(null);
-            }
-        }
+function generatePose17(personIdx,tick,motionScore,breathAmp){
+    const t=tick*.016,px=(personIdx-1.5)*.8,pz=(personIdx%2)*.6-.3,bp=breathAmp*.015;
+    const walking=motionScore>.15,speed=Math.min(motionScore*5,2);
+    if(walking){
+        const wp=t*speed*8+personIdx*1.2,sF=Math.min(speed,1);
+        const legL=Math.sin(wp)*.25*sF,legR=Math.sin(wp+Math.PI)*.25*sF;
+        const knee=Math.abs(Math.sin(wp))*.1,armL=Math.sin(wp)*.28*sF,armR=-Math.sin(wp)*.28*sF;
+        const elL=Math.max(0,Math.sin(wp))*.1,elR=Math.max(0,-Math.sin(wp))*.1;
+        const twist=Math.sin(wp)*.025,bob=Math.abs(Math.sin(wp))*.025,headBob=Math.abs(Math.sin(wp-.2))*.015;
+        return[[px+Math.sin(wp)*.01,1.72+bp+bob+headBob,pz],[px-.03,1.74+bp+bob+headBob,pz-.02],[px+.03,1.74+bp+bob+headBob,pz-.02],[px-.07,1.72+bp+bob+headBob,pz],[px+.07,1.72+bp+bob+headBob,pz],[px-.22-twist,1.48+bp+bob,pz],[px+.22-twist,1.48+bp+bob,pz],[px-.28+armL*.3,1.18+bp+bob-elL,pz+armL*.3],[px+.28+armR*.3,1.18+bp+bob-elR,pz+armR*.3],[px-.26+armL*.6,.92+bp+bob-elL*1.5,pz+armL*.5],[px+.26+armR*.6,.92+bp+bob-elR*1.5,pz+armR*.5],[px-.11+twist*.5,.98+bp+bob,pz],[px+.11+twist*.5,.98+bp+bob,pz],[px-.12+legL*.3,.52+knee,pz+legL],[px+.12+legR*.3,.52+knee,pz+legR],[px-.12+legL*.6,.04,pz+legL*1.5],[px+.12+legR*.6,.04,pz+legR*1.5]];
+    }
+    const ws=Math.sin(t*.6+personIdx)*.012,ht=Math.sin(t*.3+personIdx)*.015;
+    const hTilt=Math.cos(t*.25+personIdx)*.008,sway=Math.sin(t*.8+personIdx)*.005+ws;
+    const lkb=Math.max(0,Math.sin(t*.6+personIdx))*.015,rkb=Math.max(0,-Math.sin(t*.6+personIdx))*.015;
+    return[[px+sway+ht,1.72+bp+hTilt,pz],[px-.03+sway+ht,1.74+bp+hTilt,pz-.02],[px+.03+sway+ht,1.74+bp+hTilt,pz-.02],[px-.07+ht*.5,1.72+bp,pz],[px+.07+ht*.5,1.72+bp,pz],[px-.22+ws*.3,1.48+bp,pz],[px+.22+ws*.3,1.48+bp,pz],[px-.24+ws*.2,1.18+bp,pz+.02],[px+.24+ws*.2,1.18+bp,pz-.02],[px-.22+ws*.15,.92+bp,pz+.05],[px+.22+ws*.15,.92+bp,pz-.05],[px-.11+ws*.5,.98+bp,pz],[px+.11+ws*.5,.98+bp,pz],[px-.12+ws*.3,.52+lkb,pz],[px+.12+ws*.3,.52+rkb,pz],[px-.12+ws*.4,.04,pz],[px+.12+ws*.4,.04,pz]];
+}
 
-        // ── 17-point COCO Pose Generation (physics-based, matching Rust server) ──
-        function generatePose17(personIdx, tick, motionScore, breathAmp) {
-            const t = tick * 0.016;
-            const px = (personIdx - 1.5) * 0.8;  // spread people side to side
-            const pz = (personIdx % 2) * 0.6 - 0.3;
-            const bp = breathAmp * 0.015;
-            
-            // Determine walking or standing based on motion score
-            const walking = motionScore > 0.15;
-            const speed = Math.min(motionScore * 5, 2.0);
-            
-            if (walking) {
-                // ── Walking pose ──
-                const wp = t * speed * 8 + personIdx * 1.2;  // stagger phase per person
-                const sFactor = Math.min(speed, 1);
-                const legStrideL = Math.sin(wp) * 0.25 * sFactor;
-                const legStrideR = Math.sin(wp + Math.PI) * 0.25 * sFactor;
-                const kneeAmt = Math.abs(Math.sin(wp)) * 0.1;
-                const armSwingL = Math.sin(wp) * 0.28 * sFactor;
-                const armSwingR = -Math.sin(wp) * 0.28 * sFactor;
-                const elbendL = Math.max(0, Math.sin(wp)) * 0.1;
-                const elbendR = Math.max(0, -Math.sin(wp)) * 0.1;
-                const torsoTwist = Math.sin(wp) * 0.025;
-                const bob = Math.abs(Math.sin(wp)) * 0.025;
-                const headBob = Math.abs(Math.sin(wp - 0.2)) * 0.015;
-                
-                return [
-                    [px + Math.sin(wp) * 0.01, 1.72 + bp + bob + headBob, pz],
-                    [px - 0.03, 1.74 + bp + bob + headBob, pz - 0.02],
-                    [px + 0.03, 1.74 + bp + bob + headBob, pz - 0.02],
-                    [px - 0.07, 1.72 + bp + bob + headBob, pz],
-                    [px + 0.07, 1.72 + bp + bob + headBob, pz],
-                    [px - 0.22 - torsoTwist, 1.48 + bp + bob, pz],
-                    [px + 0.22 - torsoTwist, 1.48 + bp + bob, pz],
-                    [px - 0.28 + armSwingL * 0.3, 1.18 + bp + bob - elbendL, pz + armSwingL * 0.3],
-                    [px + 0.28 + armSwingR * 0.3, 1.18 + bp + bob - elbendR, pz + armSwingR * 0.3],
-                    [px - 0.26 + armSwingL * 0.6, 0.92 + bp + bob - elbendL * 1.5, pz + armSwingL * 0.5],
-                    [px + 0.26 + armSwingR * 0.6, 0.92 + bp + bob - elbendR * 1.5, pz + armSwingR * 0.5],
-                    [px - 0.11 + torsoTwist * 0.5, 0.98 + bp + bob, pz],
-                    [px + 0.11 + torsoTwist * 0.5, 0.98 + bp + bob, pz],
-                    [px - 0.12 + legStrideL * 0.3, 0.52 + kneeAmt, pz + legStrideL],
-                    [px + 0.12 + legStrideR * 0.3, 0.52 + kneeAmt, pz + legStrideR],
-                    [px - 0.12 + legStrideL * 0.6, 0.04, pz + legStrideL * 1.5],
-                    [px + 0.12 + legStrideR * 0.6, 0.04, pz + legStrideR * 1.5],
-                ];
-            }
-            
-            // ── Standing pose (weight shift + breathing) ──
-            const ws = Math.sin(t * 0.6 + personIdx) * 0.012;
-            const headTurn = Math.sin(t * 0.3 + personIdx) * 0.015;
-            const headTilt = Math.cos(t * 0.25 + personIdx) * 0.008;
-            const sway = Math.sin(t * 0.8 + personIdx) * 0.005 + ws;
-            const lkb = Math.max(0, Math.sin(t * 0.6 + personIdx)) * 0.015;
-            const rkb = Math.max(0, -Math.sin(t * 0.6 + personIdx)) * 0.015;
-            
-            return [
-                [px + sway + headTurn, 1.72 + bp + headTilt, pz],
-                [px - 0.03 + sway + headTurn, 1.74 + bp + headTilt, pz - 0.02],
-                [px + 0.03 + sway + headTurn, 1.74 + bp + headTilt, pz - 0.02],
-                [px - 0.07 + headTurn * 0.5, 1.72 + bp, pz],
-                [px + 0.07 + headTurn * 0.5, 1.72 + bp, pz],
-                [px - 0.22 + ws * 0.3, 1.48 + bp, pz],
-                [px + 0.22 + ws * 0.3, 1.48 + bp, pz],
-                [px - 0.24 + ws * 0.2, 1.18 + bp, pz + 0.02],
-                [px + 0.24 + ws * 0.2, 1.18 + bp, pz - 0.02],
-                [px - 0.22 + ws * 0.15, 0.92 + bp, pz + 0.05],
-                [px + 0.22 + ws * 0.15, 0.92 + bp, pz - 0.05],
-                [px - 0.11 + ws * 0.5, 0.98 + bp, pz],
-                [px + 0.11 + ws * 0.5, 0.98 + bp, pz],
-                [px - 0.12 + ws * 0.3, 0.52 + lkb, pz],
-                [px + 0.12 + ws * 0.3, 0.52 + rkb, pz],
-                [px - 0.12 + ws * 0.4, 0.04, pz],
-                [px + 0.12 + ws * 0.4, 0.04, pz],
-            ];
-        }
+function lerpPose(target,current,factor){
+    if(!current)return target.map(k=>[...k]);
+    return target.map((kt,i)=>{const ci=current[i]||kt;return[ci[0]+(kt[0]-ci[0])*factor,ci[1]+(kt[1]-ci[1])*factor,ci[2]+(kt[2]-ci[2])*factor]});
+}
 
-        // ── Smooth interpolation helper ──
-        function lerpPose(target, current, factor) {
-            if (!current) return target.map(k => [...k]);
-            return target.map((kt, i) => {
-                const ci = current[i] || kt;
-                return [
-                    ci[0] + (kt[0] - ci[0]) * factor,
-                    ci[1] + (kt[1] - ci[1]) * factor,
-                    ci[2] + (kt[2] - ci[2]) * factor
-                ];
-            });
-        }
+function updateFigureFromPose(group,pose17){
+    if(!pose17)return;
+    const{joints,bones,segments}=group.userData;
+    pose17.forEach((kp,i)=>{if(joints[i])joints[i].position.set(kp[0],kp[1],kp[2])});
+    bones.forEach(bone=>{
+        const a=bone.userData.jointA,b=bone.userData.jointB;
+        if(!joints[a]||!joints[b])return;
+        _vFrom.copy(joints[a].position);_vTo.copy(joints[b].position);
+        const mid=_vFrom.clone().add(_vTo).multiplyScalar(.5);
+        bone.position.copy(mid);bone.scale.y=_vFrom.distanceTo(_vTo);
+        bone.lookAt(_vTo);bone.rotateX(Math.PI/2);
+    });
+    segments.forEach(seg=>{
+        const a=seg.userData.jointA,b=seg.userData.jointB,pa=joints[a]?.position,pb=joints[b]?.position;
+        if(!pa||!pb)return;
+        if(seg.userData.isHead){seg.position.copy(pa)}else{const mid=pa.clone().add(pb).multiplyScalar(.5);seg.position.copy(mid);seg.scale.y=pa.distanceTo(pb);seg.lookAt(pb);seg.rotateX(Math.PI/2)}
+    });
+}
 
-        function updateFigureFromPose(group, pose17) {
-            if (!pose17) return;
-            const { joints, bones, segments } = group.userData;
-            
-            // Update joint positions
-            pose17.forEach((kp, i) => {
-                if (joints[i]) joints[i].position.set(kp[0], kp[1], kp[2]);
-            });
-            
-            // Update bones
-            bones.forEach(bone => {
-                const a = bone.userData.jointA, b = bone.userData.jointB;
-                if (!joints[a] || !joints[b]) return;
-                _vFrom.copy(joints[a].position); _vTo.copy(joints[b].position);
-                const mid = _vFrom.clone().add(_vTo).multiplyScalar(0.5);
-                bone.position.copy(mid);
-                bone.scale.y = _vFrom.distanceTo(_vTo);
-                bone.lookAt(_vTo);
-                bone.rotateX(Math.PI / 2);
-            });
-            
-            // Update body segments
-            segments.forEach(seg => {
-                const a = seg.userData.jointA, b = seg.userData.jointB;
-                if (!joints[a] || !joints[b]) return;
-                const pa = joints[a].position, pb = joints[b].position;
-                if (seg.userData.isHead) {
-                    seg.position.copy(pa);
-                } else {
-                    const mid = pa.clone().add(pb).multiplyScalar(0.5);
-                    seg.position.copy(mid);
-                    seg.scale.y = pa.distanceTo(pb);
-                    seg.lookAt(pb);
-                    seg.rotateX(Math.PI / 2);
-                }
-            });
-        }
+function updateFigures(poses){
+    for(let i=0;i<figureGroups.length;i++){
+        const g=figureGroups[i];
+        if(i<poses.length){g.visible=true;g.userData.smoothed=g.userData.smoothed?lerpPose(poses[i],g.userData.smoothed,.12):poses[i];updateFigureFromPose(g,g.userData.smoothed)}else g.visible=false;
+    }
+}
 
-        function updateFigures(poses) {
-            for (let i = 0; i < figureGroups.length; i++) {
-                const group = figureGroups[i];
-                if (i < poses.length) {
-                    group.visible = true;
-                    if (!group.userData.smoothed) {
-                        // First frame: snap to target
-                        group.userData.smoothed = poses[i];
-                    } else {
-                        // Smooth lerp toward target
-                        group.userData.smoothed = lerpPose(poses[i], group.userData.smoothed, 0.12);
-                    }
-                    updateFigureFromPose(group, group.userData.smoothed);
-                } else {
-                    group.visible = false;
-                }
-            }
-        }
+function animate(){
+    requestAnimationFrame(animate);
+    if(currentView!=='skeleton'||!renderer)return;
+    animationTime+=.016;
+    let poses=[];
+    if(latestData&&latestData.pose_keypoints&&latestData.pose_keypoints.length>0){
+        poses.push(latestData.pose_keypoints.map(k=>[k[0],k[1],k[2]]));
+    }else{
+        const numPeople=latestTriage?.survivors?.length?Math.min(latestTriage.survivors.length,3):1;
+        const motionScore=latestData?.classification?.motion_score??(latestData?.classification?.motion_level==='high'?.8:latestData?.classification?.motion_level==='medium'?.3:.05);
+        const breathAmp=latestData?.vital_signs?.breathing_rate_bpm?Math.sin(animationTime*latestData.vital_signs.breathing_rate_bpm/60*Math.PI*2):0;
+        for(let i=0;i<numPeople;i++)poses.push(generatePose17(i,animationTime*60,motionScore,breathAmp));
+    }
+    updateFigures(poses);
+    controls.update();renderer.render(scene,camera);
+}
 
-        function animate() {
-            requestAnimationFrame(animate);
-            if (currentView !== 'skeleton' || !renderer) return;
-            
-            animationTime += 0.016;
-            
-            // Build pose list: prefer server pose_keypoints, fall back to simulation
-            let poses = [];
-            if (latestData && latestData.pose_keypoints && latestData.pose_keypoints.length > 0) {
-                // Real data from server (already 17-point COCO [x,y,z,conf])
-                poses.push(latestData.pose_keypoints.map(k => [k[0], k[1], k[2]]));
-            } else {
-                // Simulated: generate poses from available data
-                const numPeople = (latestTriage && latestTriage.survivors && latestTriage.survivors.length > 0)
-                    ? Math.min(latestTriage.survivors.length, 3) : 1;
-                const motionScore = latestData?.classification?.motion_score 
-                    ?? (latestData?.classification?.motion_level === 'high' ? 0.8 :
-                        latestData?.classification?.motion_level === 'medium' ? 0.3 : 0.05);
-                const breathAmp = latestData?.vital_signs?.breathing_rate_bpm 
-                    ? Math.sin(animationTime * latestData.vital_signs.breathing_rate_bpm / 60 * Math.PI * 2) : 0;
-                for (let i = 0; i < numPeople; i++) {
-                    poses.push(generatePose17(i, animationTime * 60, motionScore, breathAmp));
-                }
-            }
-            
-            updateFigures(poses);
-            if (controls) controls.update();
-            renderer.render(scene, camera);
-        }
+function onWindowResize(){
+    const cont=document.getElementById('skeletonContainer');
+    if(cont&&camera&&renderer){camera.aspect=cont.clientWidth/Math.max(cont.clientHeight,1);camera.updateProjectionMatrix();renderer.setSize(cont.clientWidth,cont.clientHeight)}
+}
 
-        function onWindowResize() {
-            const container = document.getElementById('skeletonContainer');
-            if (container && camera && renderer) {
-                camera.aspect = container.clientWidth / Math.max(container.clientHeight, 1);
-                camera.updateProjectionMatrix();
-                renderer.setSize(container.clientWidth, container.clientHeight);
-            }
-        }
-        
-        // ==================== View Switching ====================
-        function switchView(view) {
-            currentView = view;
-            
-            document.getElementById('mapTab').classList.toggle('active', view === 'map');
-            document.getElementById('skeletonTab').classList.toggle('active', view === 'skeleton');
-            document.getElementById('mapContainer').style.display = view === 'map' ? 'flex' : 'none';
-            document.getElementById('skeletonContainer').classList.toggle('active', view === 'skeleton');
-            document.getElementById('mapLegend').style.display = view === 'map' ? 'block' : 'none';
-            document.getElementById('skeletonControls').style.display = view === 'skeleton' ? 'flex' : 'none';
-            
-            if (view === 'skeleton') {
-                // Double-rAF ensures browser completes layout after display:none -> block
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        if (!scene) {
-                            init3D();
-                            // Re-resize after one more frame to catch final dimensions
-                            requestAnimationFrame(() => onWindowResize());
-                        } else {
-                            onWindowResize();
-                        }
-                    });
-                });
-            } else {
-                drawMap();
-            }
-        }
-        
-        function resetView() {
-            if (currentView === 'map') {
-                drawMap();
-            } else {
-                resetCamera();
-            }
-        }
-        
-        function resetCamera() {
-            if (camera && controls) {
-                camera.position.set(0, 1.2, 4);
-                controls.target.set(0, 1, 0);
-                controls.update();
-            }
-        }
-        
-        function toggleAutoRotate() {
-            autoRotate = !autoRotate;
-            if (controls) {
-                controls.autoRotate = autoRotate;
-            }
-        }
-        
-        function toggleWireframe() {
-            isWireframe = !isWireframe;
-            figureGroups.forEach(group => {
-                const ud = group.userData;
-                ud.joints?.forEach(j => { j.material.wireframe = isWireframe; });
-                ud.bones?.forEach(b => { b.material.wireframe = isWireframe; });
-                ud.segments?.forEach(s => { s.material.wireframe = isWireframe; });
-            });
-        }
+// ═══════════════════════════════════════════════════════════
+// VIEW SWITCHING
+// ═══════════════════════════════════════════════════════════
+function switchView(view){
+    currentView=view;
+    document.getElementById('mapTab').classList.toggle('active',view==='map');
+    document.getElementById('skeletonTab').classList.toggle('active',view==='skeleton');
+    document.getElementById('mapContainer').style.display=view==='map'?'flex':'none';
+    document.getElementById('skeletonContainer').classList.toggle('active',view==='skeleton');
+    document.getElementById('mapLegend').style.display=view==='map'?'block':'none';
+    document.getElementById('skeletonControls').style.display=view==='skeleton'?'flex':'none';
+    document.getElementById('heatmapBtn').style.display=view==='map'?'flex':'none';
+    if(view==='skeleton'){
+        requestAnimationFrame(()=>requestAnimationFrame(()=>{
+            if(!scene){init3D();requestAnimationFrame(()=>onWindowResize())}else onWindowResize();
+        }));
+    }else drawMap();
+}
+function resetView(){currentView==='map'?drawMap():resetCamera()}
+function resetCamera(){if(camera&&controls){camera.position.set(0,1.2,4);controls.target.set(0,1,0);controls.update()}}
+function toggleAutoRotate(){autoRotate=!autoRotate;if(controls)controls.autoRotate=autoRotate}
+function toggleWireframe(){isWireframe=!isWireframe;figureGroups.forEach(g=>{const ud=g.userData;ud.joints?.forEach(j=>j.material.wireframe=isWireframe);ud.bones?.forEach(b=>b.material.wireframe=isWireframe);ud.segments?.forEach(s=>s.material.wireframe=isWireframe)})}
+function toggleHeatmap(){showHeatmap=!showHeatmap;document.getElementById('heatmapBtn').classList.toggle('active',showHeatmap);if(currentView==='map')drawMap()}
 
-        // ==================== Data Rendering ====================
-        let lastRenderStamp = 0;
-        const MIN_RENDER_MS = 150; // throttle heavy DOM rebuilds to ~6fps
+// ═══════════════════════════════════════════════════════════
+// SIDEBAR COLLAPSIBLE SECTIONS
+// ═══════════════════════════════════════════════════════════
+function toggleSection(bodyId,toggleId){
+    const body=document.getElementById(bodyId),toggle=document.getElementById(toggleId);
+    if(!body||!toggle)return;
+    if(body.classList.contains('collapsed')){body.classList.remove('collapsed');toggle.classList.add('open')}else{body.classList.add('collapsed');toggle.classList.remove('open')}
+}
 
-        function renderFromServer() {
-            if (!latestTriage) return;
+// ═══════════════════════════════════════════════════════════
+// SPARKLINE VITALS TREND
+// ═══════════════════════════════════════════════════════════
+function drawSparklines(){
+    [['sparkBreathing',breathingHistory,'#007AFF',6,30],[['sparkHeart',heartHistory,'#FF3B30',40,120]].forEach(([id,data,color,min,max])=>{
+        const c=document.getElementById(id);if(!c)return;
+        const w=c.width=c.parentElement.clientWidth||160;c.height=48;
+        const cx=c.getContext('2d');cx.clearRect(0,0,w,c.height);
+        const valid=data.filter(v=>v!==null);
+        if(valid.length<2){cx.fillStyle='#636366';cx.font='10px -apple-system,sans-serif';cx.textAlign='center';cx.fillText('等待数据...',w/2,28);return}
+        cx.strokeStyle=color;cx.lineWidth=1.8;cx.beginPath();
+        valid.forEach((v,i)=>{const x=(i/(valid.length-1))*w,y=c.height-4-(v-min)/(max-min)*(c.height-12);i===0?cx.moveTo(x,y):cx.lineTo(x,y)});
+        cx.stroke();
+        // Fill gradient
+        cx.globalAlpha=.08;cx.fillStyle=color;cx.lineTo(w,c.height);cx.lineTo(0,c.height);cx.closePath();cx.fill();cx.globalAlpha=1;
+        // Latest value
+        const lastVal=valid[valid.length-1];
+        cx.fillStyle=color;cx.font='10px -apple-system,sans-serif';cx.textAlign='right';cx.fillText(lastVal.toFixed(0),w-4,12);
+    }));
+}
 
-            const assessment = latestTriage.assessment;
-            const now = performance.now();
-            
-            // Always update lightweight textContent (no flicker)
-            document.getElementById('statTotal').textContent = assessment.total;
-            document.getElementById('statRed').textContent = assessment.immediate;
-            document.getElementById('statYellow').textContent = assessment.delayed;
-            document.getElementById('statGreen').textContent = assessment.minor;
-            document.getElementById('statBlack').textContent = assessment.deceased;
-            document.getElementById('severityText').textContent = '伤情等级: ' + assessment.severity;
-            document.getElementById('rescuerText').textContent = '建议救援人员: ' + assessment.rescuer_estimate + ' 人';
+// ═══════════════════════════════════════════════════════════
+// DATA RENDERING
+// ═══════════════════════════════════════════════════════════
+function renderFromServer(){
+    if(!latestTriage)return;
+    const a=latestTriage.assessment,now=performance.now();
+    document.getElementById('statTotal').textContent=a.total;
+    document.getElementById('statRed').textContent=a.immediate;
+    document.getElementById('statYellow').textContent=a.delayed;
+    document.getElementById('statGreen').textContent=a.minor;
+    document.getElementById('statBlack').textContent=a.deceased;
+    document.getElementById('severityText').textContent='伤情等级: '+a.severity;
+    document.getElementById('rescuerText').textContent='建议救援人员: '+a.rescuer_estimate+' 人';
 
-            // Throttle heavy DOM rebuilds (survivors list, alerts, wasm alerts)
-            if (now - lastRenderStamp >= MIN_RENDER_MS) {
-            lastRenderStamp = now;
-            // Update survivors list
-            const survivorsList = document.getElementById('survivorsList');
-            if (!latestTriage.survivors || latestTriage.survivors.length === 0) {
-                survivorsList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-icon">👤</div>
-                        <div class="empty-text">未检测到伤员</div>
+    if(now-lastRenderStamp>=MIN_RENDER_MS){
+        lastRenderStamp=now;
+        const sl=document.getElementById('survivorsList');
+        if(!latestTriage.survivors||latestTriage.survivors.length===0){
+            sl.innerHTML='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
+        }else{
+            sl.innerHTML=latestTriage.survivors.map((s,idx)=>`
+                <div class="survivor-card ${s.triage_color} animate-in" style="animation-delay:${idx*50}ms" onclick="openEhr(latestTriage.survivors[${idx}])">
+                    <div class="survivor-header">
+                        <div class="survivor-id"><div class="survivor-avatar">${s.id.substring(5,7)}</div><div class="survivor-info"><h3>${s.id}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${s.estimated_age}</p></div></div>
+                        <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}<span class="triage-badge ${s.triage_color}">${s.triage}</span></div>
                     </div>
-                `;
-            } else {
-                survivorsList.innerHTML = latestTriage.survivors.map((s, idx) => `
-                    <div class="survivor-card ${s.triage_color} animate-in" style="animation-delay: ${idx * 50}ms">
-                        <div class="survivor-header">
-                            <div class="survivor-id">
-                                <div class="survivor-avatar">${s.id.substring(5, 7)}</div>
-                                <div class="survivor-info">
-                                    <h3>${s.id}</h3>
-                                    <p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${s.estimated_age}</p>
-                                </div>
-                            </div>
-                            <div style="display: flex; gap: 8px; align-items: center;">
-                                ${s.is_deteriorating ? '<span class="deteriorating-badge">⚠ 恶化</span>' : ''}
-                                <span class="triage-badge ${s.triage_color}">${s.triage}</span>
-                            </div>
-                        </div>
-                        <div class="vitals-row">
-                            <div class="vital-item">
-                                <div class="vital-icon breathing">🫁</div>
-                                <div class="vital-data">
-                                    <div class="vital-value">${s.breathing_rate?.toFixed(1) ?? '--'}</div>
-                                    <div class="vital-unit">呼吸/分</div>
-                                </div>
-                            </div>
-                            <div class="vital-item">
-                                <div class="vital-icon heart">❤️</div>
-                                <div class="vital-data">
-                                    <div class="vital-value">${s.heart_rate?.toFixed(0) ?? '--'}</div>
-                                    <div class="vital-unit">心率BPM</div>
-                                </div>
-                            </div>
-                        </div>
+                    <div class="vitals-row">
+                        <div class="vital-item"><div class="vital-icon breathing">🫁</div><div class="vital-data"><div class="vital-value">${s.breathing_rate?.toFixed(1)??'--'}</div><div class="vital-unit">呼吸/分</div></div></div>
+                        <div class="vital-item"><div class="vital-icon heart">❤️</div><div class="vital-data"><div class="vital-value">${s.heart_rate?.toFixed(0)??'--'}</div><div class="vital-unit">心率BPM</div></div></div>
                     </div>
-                `).join('');
-            }
-
-            // Update alerts
-            const alertsList = document.getElementById('alertsList');
-            if (!latestTriage.alerts || latestTriage.alerts.length === 0) {
-                alertsList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-icon">🔔</div>
-                        <div class="empty-text">暂无告警</div>
-                    </div>
-                `;
-            } else {
-                alertsList.innerHTML = latestTriage.alerts.slice(0, 10).map((alert, idx) => `
-                    <div class="alert-item prio${alert.priority} animate-in" style="animation-delay: ${idx * 50}ms">
-                        <div class="alert-icon">${alert.priority === 1 ? '🚨' : '⚠️'}</div>
-                        <div class="alert-content">
-                            <div class="alert-title">${alert.survivor_id.substring(0, 8)}: ${alert.message}</div>
-                            <div class="alert-time">${alert.time}</div>
-                        </div>
-                    </div>
-                `).join('');
-            }
-
-            // Update wasm alerts
-            const wasmAlertsList = document.getElementById('wasmAlertsList');
-            if (latestData && latestData.wasm_alerts && latestData.wasm_alerts.length > 0) {
-                const moduleIcons = {
-                    gait: '🚶', loitering: '⏳', vibration: '🏗️',
-                    ltl: '⚡', meta_adapt: '🧠', sparse_recovery: '🔧',
-                    vital_trend: '💓', attractor: '🌀', coherence: '📶',
-                    resp_distress: '🫁', confined_space: '🚧', panic_motion: '🏃',
-                    sleep_apnea: '😴', cardiac: '❤️', seizure: '⚡',
-                    intrusion: '🔒', occupancy: '👥', mincut: '🆔',
-                    weapon_detect: '🔪'
-                };
-                wasmAlertsList.innerHTML = latestData.wasm_alerts.slice(0, 12).map((alert, idx) => `
-                    <div class="wasm-alert ${alert.severity} animate-in" style="animation-delay: ${idx * 30}ms">
-                        <span class="wasm-icon">${moduleIcons[alert.module] || '📡'}</span>
-                        <span class="wasm-module ${alert.module}">[${alert.module}]</span>
-                        <span>${alert.event_name}</span>
-                        <span class="wasm-value">${alert.value.toFixed(1)}</span>
-                    </div>
-                `).join('');
-            } else {
-                wasmAlertsList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-icon">🔬</div>
-                        <div class="empty-text">边缘模块就绪</div>
-                    </div>
-                `;
-            }
-            } // end throttled
-
-            // Update current vitals (lightweight - always)
-            if (latestData && latestData.vital_signs) {
-                document.getElementById('currentBreathing').textContent = 
-                    latestData.vital_signs.breathing_rate_bpm?.toFixed(0) ?? '--';
-                document.getElementById('currentHeart').textContent = 
-                    latestData.vital_signs.heart_rate_bpm?.toFixed(0) ?? '--';
-            }
-
-            if (currentView === 'map') {
-                drawMap();
-            }
+                </div>`).join('');
         }
 
-        // ==================== WebSocket ====================
-        function handleUpdate(data) {
-            latestData = data;
-            
-            if (data.triage_update) {
-                latestTriage = data.triage_update;
-                renderFromServer();
-                enableAnalyzeButton();
-            }
+        const al=document.getElementById('alertsList');
+        if(!latestTriage.alerts||latestTriage.alerts.length===0){
+            al.innerHTML='<div class="empty-state"><div class="empty-icon">🔔</div><div class="empty-text">暂无告警</div></div>';
+        }else{
+            al.innerHTML=latestTriage.alerts.slice(0,10).map((a,idx)=>`<div class="alert-item prio${a.priority} animate-in" style="animation-delay:${idx*50}ms"><div class="alert-icon">${a.priority===1?'🚨':'⚠️'}</div><div class="alert-content"><div class="alert-title">${a.survivor_id.substring(0,8)}: ${a.message}</div><div class="alert-time">${a.time}</div></div></div>`).join('');
         }
 
-        function connectWebSocket() {
-            ws = new WebSocket(`ws://${location.hostname}:8765/ws/sensing`);
-            
-            ws.onopen = () => {
-                document.getElementById('statusDot').className = 'status-dot online';
-                document.getElementById('statusText').textContent = '已连接';
-                latestTriage = null;
-            };
-            
-            ws.onmessage = (e) => {
-                try {
-                    const data = JSON.parse(e.data);
-                    if (data.type === 'sensing_update') {
-                        handleUpdate(data);
-                    } else if (data.type === 'llm_stream') {
-                        handleLlmStream(data);
-                    } else if (data.type === 'llm_analysis_complete') {
-                        handleLlmComplete(data);
-                    } else if (data.type === 'llm_fallback') {
-                        handleLlmFallback(data);
-                    }
-                } catch (err) {
-                    console.error('Parse error:', err);
-                }
-            };
-            
-            ws.onclose = () => {
-                document.getElementById('statusDot').className = 'status-dot offline';
-                document.getElementById('statusText').textContent = '断开 · 5s重连';
-                setTimeout(connectWebSocket, 5000);
-            };
-            
-            ws.onerror = () => {
-                ws.close();
-            };
+        const wl=document.getElementById('wasmAlertsList');
+        if(latestData&&latestData.wasm_alerts&&latestData.wasm_alerts.length>0){
+            const icons={gait:'🚶',loitering:'⏳',vibration:'🏗️',ltl:'⚡',meta_adapt:'🧠',sparse_recovery:'🔧',vital_trend:'💓',attractor:'🌀',coherence:'📶',resp_distress:'🫁',confined_space:'🚧',panic_motion:'🏃',sleep_apnea:'😴',cardiac:'❤️',seizure:'⚡',intrusion:'🔒',occupancy:'👥',mincut:'🆔',weapon_detect:'🔪'};
+            wl.innerHTML=latestData.wasm_alerts.slice(0,12).map((a,idx)=>`<div class="wasm-alert ${a.severity} animate-in" style="animation-delay:${idx*30}ms"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${a.module}">[${a.module}]</span><span>${a.event_name}</span><span class="wasm-value">${a.value.toFixed(1)}</span></div>`).join('');
+        }else{wl.innerHTML='<div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>'}
+    }
+
+    if(latestData&&latestData.vital_signs){
+        const br=latestData.vital_signs.breathing_rate_bpm,hr=latestData.vital_signs.heart_rate_bpm;
+        document.getElementById('currentBreathing').textContent=br?.toFixed(0)??'--';
+        document.getElementById('currentHeart').textContent=hr?.toFixed(0)??'--';
+        // Push to history
+        breathingHistory.push(br??null);breathingHistory.shift();
+        heartHistory.push(hr??null);heartHistory.shift();
+        drawSparklines();
+    }
+    if(currentView==='map')drawMap();
+}
+
+// ═══════════════════════════════════════════════════════════
+// EHR SLIDE PANEL
+// ═══════════════════════════════════════════════════════════
+function openEhr(survivor){
+    const panel=document.getElementById('ehrPanel'),overlay=document.getElementById('ehrOverlay');
+    document.getElementById('ehrTitle').textContent='伤员: '+survivor.id;
+    const triageColors={red:'🔴 紧急',yellow:'🟡 延迟',green:'🟢 轻伤',black:'⚫ 死亡'};
+    const patientInfo=registeredPatients[survivor.id]||{};
+    let html='<div class="ehr-section">';
+    html+=`<h3>📋 基本信息</h3>`;
+    html+=`<div class="ehr-info-row"><span class="label">ID</span><span>${survivor.id}</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">分诊等级</span><span>${triageColors[survivor.triage_color]||survivor.triage}</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">追踪时间</span><span>${survivor.tracked_seconds?.toFixed(0)??0}s</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">关联节点</span><span>ESP32-C5 #${survivor.node_id}</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">估计年龄</span><span>${survivor.estimated_age||'--'}</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">恶化状态</span><span style="color:${survivor.is_deteriorating?'var(--danger-red)':'var(--success-green)'}">${survivor.is_deteriorating?'⚠ 是':'否'}</span></div>`;
+    if(patientInfo.age)html+=`<div class="ehr-info-row"><span class="label">登记年龄</span><span>${patientInfo.age}岁 / ${patientInfo.gender||'未知'}</span></div>`;
+    if(patientInfo.pre_existing?.length)html+=`<div class="ehr-info-row"><span class="label">既往病史</span><span>${patientInfo.pre_existing.join(', ')}</span></div>`;
+    if(patientInfo.chief_complaint)html+=`<div class="ehr-info-row"><span class="label">主诉</span><span>${patientInfo.chief_complaint}</span></div>`;
+    html+='</div>';
+
+    html+='<div class="ehr-section"><h3>🫀 生命体征趋势</h3>';
+    html+=`<canvas id="ehrVitalTrend" class="ehr-vital-trend"></canvas></div>`;
+
+    html+='<div class="ehr-section"><h3>🤖 AI 分析</h3>';
+    const llmCard=document.getElementById('llm-card-'+survivor.id);
+    if(llmCard)html+=llmCard.outerHTML;
+    else{html+='<div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击 AI 分析按钮生成报告</div></div>'}
+    html+='<button class="llm-analyze-btn" onclick="selectedPatientId=\''+survivor.id+'\';requestLlmAnalysis()">🤖 分析此伤员</button>';
+    html+='</div>';
+
+    document.getElementById('ehrBody').innerHTML=html;
+    panel.classList.add('open');overlay.classList.add('active');
+
+    // Draw EHR vital trend
+    setTimeout(()=>{
+        const tc=document.getElementById('ehrVitalTrend');if(!tc)return;
+        tc.width=tc.parentElement.clientWidth;tc.height=80;
+        const tx=tc.getContext('2d'),dw=tc.width,dh=tc.height;
+        tx.fillStyle='#1C1C1E';tx.fillRect(0,0,dw,dh);
+        const brValid=breathingHistory.filter(v=>v!==null);
+        if(brValid.length>1){
+            tx.strokeStyle='#007AFF';tx.lineWidth=1.5;tx.beginPath();
+            brValid.forEach((v,i)=>{const x=(i/(brValid.length-1))*dw,y=dh-8-(v-6)/(30-6)*(dh-20);i===0?tx.moveTo(x,y):tx.lineTo(x,y)});
+            tx.stroke();
         }
+    },100);
+}
+function closeEhr(){document.getElementById('ehrPanel').classList.remove('open');document.getElementById('ehrOverlay').classList.remove('active')}
 
-        // ==================== LLM Analysis ====================
-        let selectedPatientId = null;
-        let registeredPatients = {}; // patientId → { age, gender, pre_existing, chief_complaint, ... }
-        let llmStreamBuffer = {}; // patientId → { text, isStreaming, badge }
+// ═══════════════════════════════════════════════════════════
+// THEME TOGGLE
+// ═══════════════════════════════════════════════════════════
+function toggleTheme(){document.documentElement.classList.toggle('light');try{localStorage.setItem('wces_theme',document.documentElement.classList.contains('light')?'light':'dark')}catch(e){}setTimeout(()=>{if(currentView==='map')drawMap()},200)}
 
-        function enableAnalyzeButton() {
-            const btn = document.getElementById('llmAnalyzeBtn');
-            if (!btn) return;
-            if (latestTriage && latestTriage.survivors && latestTriage.survivors.length > 0) {
-                if (!selectedPatientId) {
-                    // Auto-select first survivor
-                    selectPatientForAnalysis(latestTriage.survivors[0].id);
-                }
-                btn.disabled = false;
-                btn.textContent = selectedPatientId ? `🤖 分析 ${selectedPatientId}` : '🤖 生成AI分析报告';
-            }
-        }
+// ═══════════════════════════════════════════════════════════
+// WEBSOCKET
+// ═══════════════════════════════════════════════════════════
+function handleUpdate(data){
+    latestData=data;
+    if(data.triage_update){latestTriage=data.triage_update;renderFromServer();enableAnalyzeButton()}
+}
+function connectWebSocket(){
+    ws=new WebSocket(`ws://${location.hostname}:8765/ws/sensing`);
+    ws.onopen=()=>{document.getElementById('statusDot').className='status-dot online';document.getElementById('statusText').textContent='已连接';latestTriage=null}
+    ws.onmessage=(e)=>{try{const d=JSON.parse(e.data);if(d.type==='sensing_update')handleUpdate(d);else if(d.type==='llm_stream')handleLlmStream(d);else if(d.type==='llm_analysis_complete')handleLlmComplete(d);else if(d.type==='llm_fallback')handleLlmFallback(d)}catch(err){}}
+    ws.onclose=()=>{document.getElementById('statusDot').className='status-dot offline';document.getElementById('statusText').textContent='断开 · 5s重连';setTimeout(connectWebSocket,5000)}
+    ws.onerror=()=>{ws.close()}
+}
 
-        function selectPatientForAnalysis(patientId) {
-            selectedPatientId = patientId;
-            document.querySelectorAll('.survivor-card').forEach(card => card.classList.remove('active'));
-            // Highlight selected
-            const cards = document.querySelectorAll('.survivor-card');
-            const survivors = latestTriage?.survivors || [];
-            const idx = survivors.findIndex(s => s.id === patientId);
-            if (idx >= 0 && cards[idx]) cards[idx].classList.add('active');
-            enableAnalyzeButton();
-        }
+// ═══════════════════════════════════════════════════════════
+// LLM ANALYSIS
+// ═══════════════════════════════════════════════════════════
+function enableAnalyzeButton(){
+    const btn=document.getElementById('llmAnalyzeBtn');if(!btn)return;
+    if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成AI分析报告'}
+}
+function selectPatientForAnalysis(patientId){selectedPatientId=patientId;enableAnalyzeButton()}
+function requestLlmAnalysis(){
+    if(!selectedPatientId||!latestTriage)return;
+    const survivor=(latestTriage.survivors||[]).find(s=>s.id===selectedPatientId);if(!survivor)return;
+    const btn=document.getElementById('llmAnalyzeBtn');btn.disabled=true;btn.innerHTML='<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
+    llmStreamBuffer[selectedPatientId]={text:'',isStreaming:true};renderLlmStreamCard(selectedPatientId,'');
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'llm_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id}));
+    else generateLocalAnalysis(selectedPatientId,survivor);
+}
+function handleLlmStream(data){
+    const pid=data.survivor_id||data.patient_id;if(!pid)return;
+    if(!llmStreamBuffer[pid])llmStreamBuffer[pid]={text:'',isStreaming:true};
+    if(data.is_complete){llmStreamBuffer[pid].isStreaming=false;return}
+    llmStreamBuffer[pid].text+=data.text||'';renderLlmStreamCard(pid,llmStreamBuffer[pid].text,true);
+}
+function handleLlmComplete(data){const pid=data.survivor_id||data.patient_id;if(!pid)return;llmStreamBuffer[pid]={text:'',isStreaming:false};if(data.analysis_json)renderLlmAnalysisCard(pid,data.analysis_json,data.generated_by||'llm');const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}}
+function handleLlmFallback(data){const pid=data.patient_id;if(!pid)return;renderLlmAnalysisCard(pid,data.analysis_json||data,data.generated_by||'fallback');const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}}
 
-        function requestLlmAnalysis() {
-            if (!selectedPatientId || !latestTriage) return;
-            
-            const survivor = (latestTriage.survivors || []).find(s => s.id === selectedPatientId);
-            if (!survivor) return;
+function renderLlmStreamCard(patientId,text,isStreaming){
+    const container=document.getElementById('llmAnalysisContainer');
+    let card=document.getElementById('llm-card-'+patientId);
+    if(!card){card=document.createElement('div');card.id='llm-card-'+patientId;card.className='llm-card streaming';container.innerHTML='';container.appendChild(card)}
+    card.innerHTML=`<div class="llm-card-header"><span class="patient-tag">${patientId}</span><span class="llm-badge generating">⚡ 生成中...</span></div><div class="llm-stream-text${isStreaming?' typing-cursor':''}">${escapeHtml(text)}</div>`;
+}
+function renderLlmAnalysisCard(patientId,analysis,generatedBy){
+    const container=document.getElementById('llmAnalysisContainer'),a=analysis;
+    const isLlm=generatedBy==='llm',badgeClass=isLlm?'llm':'fallback',badgeText=isLlm?'🤖 LLM分析':'📋 模板分析';
+    const riskLevel=a.risk_assessment?.overall_level||'moderate',riskEmoji={critical:'🔴',high:'🟠',moderate:'🟡',low:'🟢'}[riskLevel]||'⚪';
+    let html=`<div class="llm-card" id="llm-card-${patientId}"><div class="llm-card-header"><span class="patient-tag">${patientId}</span><span class="llm-badge ${badgeClass}">${badgeText}</span></div>`;
+    html+=`<div class="llm-risk-badge ${riskLevel}">${riskEmoji} 综合风险评估: ${riskLevel.toUpperCase()}</div>`;
+    if(a.risk_assessment?.primary_concern)html+=`<div style="font-size:13px;font-weight:500;margin-bottom:3px;">⚠️ ${escapeHtml(a.risk_assessment.primary_concern)}</div>`;
+    if(a.risk_assessment?.deteriorating)html+=`<div style="font-size:11px;color:var(--danger-red);margin-bottom:6px;">📈 ${escapeHtml(a.risk_assessment.deterioration_evidence||'存在恶化趋势')}</div>`;
+    if(a.condition_match?.most_likely&&a.condition_match.most_likely!=='无明确模式匹配'){html+=`<div class="llm-section-label">🔬 体征模式匹配</div><div style="font-size:12px;margin-bottom:3px;"><strong>${escapeHtml(a.condition_match.most_likely)}</strong><span style="color:var(--text-secondary);font-size:10px;"> (置信度: ${a.condition_match.confidence||'medium'})</span></div>`;}
+    if(a.triage_opinion){const agrees=a.triage_opinion.agrees_with_start!==false;html+=`<div class="llm-triage-opinion ${agrees?'agrees':'disagrees'}">${agrees?'✅':'⚠️'} ${escapeHtml(a.triage_opinion.reason||'')}</div>`;}
+    if(a.history_relevance?.relevant_conditions?.length){html+=`<div class="llm-section-label">📋 病史关联</div><div style="font-size:11px;color:var(--text-secondary);">${escapeHtml(a.history_relevance.impact_on_assessment||'')}</div>`;}
+    if(a.recommendations?.length){html+=`<div class="llm-section-label">💊 处置建议</div>`;a.recommendations.slice(0,5).forEach((rec,i)=>{html+=`<div class="llm-rec-item"><div class="llm-rec-num">${i+1}</div><div class="llm-rec-text">${escapeHtml(rec)}</div></div>`});}
+    if(a.monitoring_priority?.length){html+=`<div class="llm-section-label">👁️ 优先监测</div><div style="font-size:11px;color:var(--text-secondary);">${a.monitoring_priority.map(m=>'• '+escapeHtml(m)).join('<br>')}</div>`;}
+    html+=`<div style="margin-top:10px;font-size:9px;color:var(--text-secondary);text-align:right;">${a.generated_at?new Date(a.generated_at).toLocaleTimeString('zh-CN'):''}${a.analysis_time_ms?' · '+a.analysis_time_ms+'ms':''}</div></div>`;
+    container.innerHTML=html;
+}
 
-            const btn = document.getElementById('llmAnalyzeBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
+function escapeHtml(str){if(!str)return'';const div=document.createElement('div');div.textContent=str;return div.innerHTML}
 
-            // Show streaming card
-            llmStreamBuffer[selectedPatientId] = { text: '', isStreaming: true };
-            renderLlmStreamCard(selectedPatientId, '');
+function generateLocalAnalysis(patientId,survivor){
+    const pi=registeredPatients[patientId]||{},rr=survivor.breathing_rate,hr=survivor.heart_rate;
+    const riskLevel=survivor.triage_color==='red'?'critical':survivor.triage_color==='yellow'?'high':survivor.triage_color==='green'?'low':'moderate';
+    const triageName={red:'Immediate',yellow:'Delayed',green:'Minor',black:'Deceased'}[survivor.triage_color]||'';
+    const d=survivor.is_deteriorating||false;
+    renderLlmAnalysisCard(patientId,{patient_id:patientId,generated_at:new Date().toISOString(),generated_by:'local_fallback',analysis_time_ms:0,
+        risk_assessment:{overall_level:riskLevel,primary_concern:d?'检测到恶化趋势，需立即关注':'当前体征在分诊等级对应范围内',deteriorating:d,deterioration_evidence:d?'伤员标记为恶化状态':'无明显恶化证据'},
+        condition_match:{most_likely:'基于分诊等级评估',confidence:'medium',differential:['需连接服务端获取详细分析']},
+        triage_opinion:{agrees_with_start:true,suggested_level:triageName,reason:'认可START分诊判断 (离线模式)'},
+        trend_analysis:{respiratory:rr?`呼吸率 ${rr.toFixed(1)} 次/分`:'无呼吸数据',cardiac:hr?`心率 ${hr.toFixed(0)} BPM`:'无心率数据',combined:'离线模式，趋势数据需连接服务端'},
+        history_relevance:{relevant_conditions:pi.pre_existing||[],impact_on_assessment:pi.pre_existing?`既往病史: ${Array.isArray(pi.pre_existing)?pi.pre_existing.join('、'):pi.pre_existing}`:'无既往病史记录'},
+        recommendations:['连接服务端获取完整AI分析',d?'⚠️ 关注恶化趋势，准备干预':'定期生命体征监测',riskLevel==='critical'?'建议立即转送红色区域':'按分诊等级处理'],
+        monitoring_priority:['呼吸频率','心率','运动状态']},'fallback');
+    const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}
+}
 
-            // Send analysis request via WebSocket
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'llm_analyze_request',
-                    patient_id: selectedPatientId,
-                    node_id: survivor.node_id
-                }));
-            } else {
-                // Offline mode: generate local analysis from patient data
-                generateLocalAnalysis(selectedPatientId, survivor);
-            }
-        }
+// ═══════════════════════════════════════════════════════════
+// PATIENT REGISTRATION
+// ═══════════════════════════════════════════════════════════
+function showPatientModal(){document.getElementById('patientModalOverlay').classList.add('active');if(selectedPatientId)document.getElementById('regPatientId').value=selectedPatientId}
+function closePatientModal(){document.getElementById('patientModalOverlay').classList.remove('active')}
+function registerPatient(){
+    const patientId=document.getElementById('regPatientId').value.trim();if(!patientId){alert('请输入伤员ID');return}
+    registeredPatients[patientId]={patient_id:patientId,
+        age:document.getElementById('regAge').value?parseInt(document.getElementById('regAge').value):null,
+        gender:document.getElementById('regGender').value||null,
+        node_id:document.getElementById('regNodeId').value?parseInt(document.getElementById('regNodeId').value):null,
+        pre_existing:document.getElementById('regPreExisting').value.split(',').map(s=>s.trim()).filter(Boolean),
+        chief_complaint:document.getElementById('regComplaint').value.trim()||null,
+        medications:document.getElementById('regMedications').value.split(',').map(s=>s.trim()).filter(Boolean),
+        allergies:document.getElementById('regAllergies').value.split(',').map(s=>s.trim()).filter(Boolean),
+        notes:document.getElementById('regNotes').value.trim()||null};
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'patient_register',...registeredPatients[patientId]}));
+    try{localStorage.setItem('wces_patients',JSON.stringify(registeredPatients))}catch(e){}
+    selectedPatientId=patientId;refreshPatientList();closePatientModal();enableAnalyzeButton();
+}
+function refreshPatientList(){
+    const sec=document.getElementById('patientListSection'),list=document.getElementById('patientQuickList');
+    const ids=Object.keys(registeredPatients);
+    if(ids.length===0){sec.style.display='none';return}
+    sec.style.display='block';
+    list.innerHTML=ids.map(id=>{const p=registeredPatients[id];return`<div class="patient-list-item${id===selectedPatientId?' active':''}" onclick="selectPatientForAnalysis('${id}')"><div><div style="font-weight:500;font-size:12px;">${id}</div><div style="font-size:10px;color:var(--text-secondary);">${p.age?p.age+'岁 ':''}${(p.pre_existing||[]).slice(0,2).join(', ')||'无病史'}</div></div><button class="btn btn-ghost" style="font-size:9px;padding:2px 6px;" onclick="event.stopPropagation();deletePatient('${id}')">✕</button></div>`}).join('');
+}
+function deletePatient(patientId){delete registeredPatients[patientId];try{localStorage.setItem('wces_patients',JSON.stringify(registeredPatients))}catch(e){}if(selectedPatientId===patientId)selectedPatientId=null;refreshPatientList();enableAnalyzeButton()}
 
-        function handleLlmStream(data) {
-            const pid = data.survivor_id || data.patient_id;
-            if (!pid) return;
-            if (!llmStreamBuffer[pid]) llmStreamBuffer[pid] = { text: '', isStreaming: true };
-            
-            if (data.is_complete) {
-                llmStreamBuffer[pid].isStreaming = false;
-                return;
-            }
-            llmStreamBuffer[pid].text += data.text || '';
-            renderLlmStreamCard(pid, llmStreamBuffer[pid].text, true);
-        }
+// ═══════════════════════════════════════════════════════════
+// TIME & INIT
+// ═══════════════════════════════════════════════════════════
+function updateTime(){document.getElementById('timeDisplay').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 
-        function handleLlmComplete(data) {
-            const pid = data.survivor_id || data.patient_id;
-            if (!pid) return;
-            llmStreamBuffer[pid] = { text: '', isStreaming: false };
-            
-            if (data.analysis_json) {
-                renderLlmAnalysisCard(pid, data.analysis_json, data.generated_by || 'llm');
-            }
-            
-            const btn = document.getElementById('llmAnalyzeBtn');
-            if (btn) { btn.disabled = false; btn.textContent = '🤖 生成AI分析报告'; }
-        }
-
-        function handleLlmFallback(data) {
-            const pid = data.patient_id;
-            if (!pid) return;
-            renderLlmAnalysisCard(pid, data.analysis_json || data, data.generated_by || 'fallback');
-            
-            const btn = document.getElementById('llmAnalyzeBtn');
-            if (btn) { btn.disabled = false; btn.textContent = '🤖 生成AI分析报告'; }
-        }
-
-        function renderLlmStreamCard(patientId, text, isStreaming) {
-            const container = document.getElementById('llmAnalysisContainer');
-            let card = document.getElementById('llm-card-' + patientId);
-            
-            if (!card) {
-                card = document.createElement('div');
-                card.id = 'llm-card-' + patientId;
-                card.className = 'llm-card streaming';
-                container.innerHTML = '';
-                container.appendChild(card);
-            }
-
-            card.innerHTML = `
-                <div class="llm-card-header">
-                    <span class="patient-tag">${patientId}</span>
-                    <span class="llm-badge generating">⚡ 生成中...</span>
-                </div>
-                <div class="llm-stream-text${isStreaming ? ' typing-cursor' : ''}">${escapeHtml(text)}</div>
-            `;
-        }
-
-        function renderLlmAnalysisCard(patientId, analysis, generatedBy) {
-            const container = document.getElementById('llmAnalysisContainer');
-            const a = analysis;
-            const isLlm = generatedBy === 'llm';
-            const badgeClass = isLlm ? 'llm' : 'fallback';
-            const badgeText = isLlm ? '🤖 LLM分析' : '📋 模板分析';
-
-            const riskLevel = a.risk_assessment?.overall_level || 'moderate';
-            const riskEmoji = { critical: '🔴', high: '🟠', moderate: '🟡', low: '🟢' }[riskLevel] || '⚪';
-
-            let html = `<div class="llm-card" id="llm-card-${patientId}">
-                <div class="llm-card-header">
-                    <span class="patient-tag">${patientId}</span>
-                    <span class="llm-badge ${badgeClass}">${badgeText}</span>
-                </div>`;
-
-            // Risk assessment
-            html += `<div class="llm-risk-badge ${riskLevel}">${riskEmoji} 综合风险评估: ${riskLevel.toUpperCase()}</div>`;
-            if (a.risk_assessment?.primary_concern) {
-                html += `<div style="font-size:14px;font-weight:500;margin-bottom:4px;">⚠️ ${escapeHtml(a.risk_assessment.primary_concern)}</div>`;
-            }
-            if (a.risk_assessment?.deteriorating) {
-                html += `<div style="font-size:12px;color:var(--danger-red);margin-bottom:8px;">📈 ${escapeHtml(a.risk_assessment.deterioration_evidence || '存在恶化趋势')}</div>`;
-            }
-
-            // Condition match
-            if (a.condition_match?.most_likely && a.condition_match.most_likely !== '无明确模式匹配') {
-                html += `<div class="llm-section-label">🔬 体征模式匹配</div>`;
-                html += `<div style="font-size:13px;margin-bottom:4px;">
-                    <strong>${escapeHtml(a.condition_match.most_likely)}</strong>
-                    <span style="color:var(--text-secondary);font-size:11px;"> (置信度: ${a.condition_match.confidence || 'medium'})</span>
-                </div>`;
-            }
-
-            // Triage opinion
-            if (a.triage_opinion) {
-                const agrees = a.triage_opinion.agrees_with_start !== false;
-                html += `<div class="llm-triage-opinion ${agrees ? 'agrees' : 'disagrees'}">
-                    ${agrees ? '✅' : '⚠️'} ${escapeHtml(a.triage_opinion.reason || '')}
-                </div>`;
-            }
-
-            // History relevance
-            const hist = a.history_relevance;
-            if (hist && hist.relevant_conditions && hist.relevant_conditions.length > 0) {
-                html += `<div class="llm-section-label">📋 病史关联</div>`;
-                html += `<div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(hist.impact_on_assessment || '')}</div>`;
-            }
-
-            // Recommendations
-            if (a.recommendations && a.recommendations.length > 0) {
-                html += `<div class="llm-section-label">💊 处置建议</div>`;
-                a.recommendations.slice(0, 5).forEach((rec, i) => {
-                    html += `<div class="llm-rec-item">
-                        <div class="llm-rec-num">${i+1}</div>
-                        <div class="llm-rec-text">${escapeHtml(rec)}</div>
-                    </div>`;
-                });
-            }
-
-            // Monitoring
-            if (a.monitoring_priority && a.monitoring_priority.length > 0) {
-                html += `<div class="llm-section-label">👁️ 优先监测</div>`;
-                html += `<div style="font-size:12px;color:var(--text-secondary);">`;
-                html += a.monitoring_priority.map(m => `• ${escapeHtml(m)}`).join('<br>');
-                html += `</div>`;
-            }
-
-            html += `<div style="margin-top:12px;font-size:10px;color:var(--text-secondary);text-align:right;">
-                ${a.generated_at ? new Date(a.generated_at).toLocaleTimeString('zh-CN') : ''}
-                ${a.analysis_time_ms ? ' · ' + a.analysis_time_ms + 'ms' : ''}
-            </div>`;
-            html += '</div>';
-
-            container.innerHTML = html;
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
-        }
-
-        function generateLocalAnalysis(patientId, survivor) {
-            // Offline fallback: build simple structured analysis from available data
-            const patientInfo = registeredPatients[patientId] || {};
-            const rr = survivor.breathing_rate || null;
-            const hr = survivor.heart_rate || null;
-            
-            const riskLevel = survivor.triage_color === 'red' ? 'critical' :
-                             survivor.triage_color === 'yellow' ? 'high' :
-                             survivor.triage_color === 'green' ? 'low' : 'moderate';
-            
-            const deteriorating = survivor.is_deteriorating || false;
-            const triageName = { red: 'Immediate', yellow: 'Delayed', green: 'Minor', black: 'Deceased' }[survivor.triage_color] || '';
-
-            const analysis = {
-                patient_id: patientId,
-                generated_at: new Date().toISOString(),
-                generated_by: 'local_fallback',
-                analysis_time_ms: 0,
-                risk_assessment: {
-                    overall_level: riskLevel,
-                    primary_concern: deteriorating ? '检测到恶化趋势，需立即关注' : '当前体征在分诊等级对应范围内',
-                    deteriorating: deteriorating,
-                    deterioration_evidence: deteriorating ? '伤员标记为恶化状态' : '无明显恶化证据'
-                },
-                condition_match: {
-                    most_likely: '基于分诊等级评估',
-                    confidence: 'medium',
-                    differential: ['需连接服务端获取详细分析']
-                },
-                triage_opinion: {
-                    agrees_with_start: true,
-                    suggested_level: triageName,
-                    reason: '认可START分诊判断 (离线模式)'
-                },
-                trend_analysis: {
-                    respiratory: rr ? `呼吸率 ${rr.toFixed(1)} 次/分` : '无呼吸数据',
-                    cardiac: hr ? `心率 ${hr.toFixed(0)} BPM` : '无心率数据',
-                    combined: '离线模式，趋势数据需连接服务端'
-                },
-                history_relevance: {
-                    relevant_conditions: patientInfo.pre_existing || [],
-                    impact_on_assessment: patientInfo.pre_existing ? `既往病史: ${Array.isArray(patientInfo.pre_existing) ? patientInfo.pre_existing.join('、') : patientInfo.pre_existing}` : '无既往病史记录'
-                },
-                recommendations: [
-                    '连接服务端获取完整AI分析',
-                    deteriorating ? '⚠️ 关注恶化趋势，准备干预' : '定期生命体征监测',
-                    riskLevel === 'critical' ? '建议立即转送红色区域' : '按分诊等级处理'
-                ],
-                monitoring_priority: ['呼吸频率', '心率', '运动状态']
-            };
-            
-            renderLlmAnalysisCard(patientId, analysis, 'fallback');
-            const btn = document.getElementById('llmAnalyzeBtn');
-            if (btn) { btn.disabled = false; btn.textContent = '🤖 生成AI分析报告'; }
-        }
-
-        // ==================== Patient Registration ====================
-        function showPatientModal() {
-            document.getElementById('patientModalOverlay').classList.add('active');
-            // Auto-fill ID if survivor selected
-            if (selectedPatientId) {
-                document.getElementById('regPatientId').value = selectedPatientId;
-            }
-        }
-        
-        function closePatientModal() {
-            document.getElementById('patientModalOverlay').classList.remove('active');
-        }
-        
-        function registerPatient() {
-            const patientId = document.getElementById('regPatientId').value.trim();
-            if (!patientId) { alert('请输入伤员ID'); return; }
-            
-            const age = document.getElementById('regAge').value;
-            const gender = document.getElementById('regGender').value;
-            const nodeId = document.getElementById('regNodeId').value;
-            const preExisting = document.getElementById('regPreExisting').value
-                .split(',').map(s => s.trim()).filter(Boolean);
-            const complaint = document.getElementById('regComplaint').value.trim();
-            const medications = document.getElementById('regMedications').value
-                .split(',').map(s => s.trim()).filter(Boolean);
-            const allergies = document.getElementById('regAllergies').value
-                .split(',').map(s => s.trim()).filter(Boolean);
-            const notes = document.getElementById('regNotes').value.trim();
-            
-            registeredPatients[patientId] = {
-                patient_id: patientId,
-                age: age ? parseInt(age) : null,
-                gender: gender || null,
-                node_id: nodeId ? parseInt(nodeId) : null,
-                pre_existing: preExisting,
-                chief_complaint: complaint || null,
-                medications: medications,
-                allergies: allergies,
-                notes: notes || null
-            };
-            
-            // Send to server
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'patient_register',
-                    ...registeredPatients[patientId]
-                }));
-            }
-            
-            // Save locally
-            try {
-                localStorage.setItem('wces_patients', JSON.stringify(registeredPatients));
-            } catch(e) {}
-            
-            selectedPatientId = patientId;
-            refreshPatientList();
-            closePatientModal();
-            enableAnalyzeButton();
-        }
-        
-        function refreshPatientList() {
-            const section = document.getElementById('patientListSection');
-            const list = document.getElementById('patientQuickList');
-            const ids = Object.keys(registeredPatients);
-            
-            if (ids.length === 0) {
-                section.style.display = 'none';
-                return;
-            }
-            
-            section.style.display = 'block';
-            list.innerHTML = ids.map(id => {
-                const p = registeredPatients[id];
-                const pre = (p.pre_existing || []).slice(0, 2).join(', ') || '无病史';
-                return `<div class="patient-list-item${id === selectedPatientId ? ' active' : ''}" onclick="selectPatientForAnalysis('${id}')">
-                    <div>
-                        <div style="font-weight:500;font-size:13px;">${id}</div>
-                        <div style="font-size:11px;color:var(--text-secondary);">${p.age ? p.age + '岁' : ''} ${pre}</div>
-                    </div>
-                    <button class="btn btn-ghost" style="font-size:10px;padding:4px 8px;" onclick="event.stopPropagation();deletePatient('${id}')">✕</button>
-                </div>`;
-            }).join('');
-        }
-        
-        function deletePatient(patientId) {
-            delete registeredPatients[patientId];
-            try { localStorage.setItem('wces_patients', JSON.stringify(registeredPatients)); } catch(e) {}
-            if (selectedPatientId === patientId) selectedPatientId = null;
-            refreshPatientList();
-            enableAnalyzeButton();
-        }
-
-        // ==================== Controls ====================
-        function toggleHeatmap() {
-            showHeatmap = !showHeatmap;
-            if (currentView === 'map') {
-                drawMap();
-            }
-        }
-
-        // ==================== Time Display ====================
-        function updateTime() {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('zh-CN', {
-                hour12: false,
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            });
-            document.getElementById('timeDisplay').textContent = timeStr;
-        }
-
-        // ==================== Init ====================
-        console.log('[Init] THREE:', typeof THREE !== 'undefined' ? 'v'+THREE.REVISION : 'MISSING',
-            '| OrbitControls:', typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined');
-        
-        // Restore registered patients from localStorage
-        try {
-            const saved = localStorage.getItem('wces_patients');
-            if (saved) { registeredPatients = JSON.parse(saved); refreshPatientList(); }
-        } catch(e) {}
-        
-        updateTime();
-        setInterval(updateTime, 1000);
-        drawMap();
-        connectWebSocket();
-    </script>
+// Init
+try{const saved=localStorage.getItem('wces_patients');if(saved){registeredPatients=JSON.parse(saved);refreshPatientList()}}catch(e){}
+try{if(localStorage.getItem('wces_theme')==='light')document.documentElement.classList.add('light')}catch(e){}
+updateTime();setInterval(updateTime,1000);
+drawMap();
+connectWebSocket();
+// Observe resize for canvas
+if(window.ResizeObserver)new ResizeObserver(()=>{if(currentView==='map')drawMap()}).observe(document.getElementById('mapContainer'));
+</script>
 </body>
 </html>

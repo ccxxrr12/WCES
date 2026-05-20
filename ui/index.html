@@ -1,513 +1,378 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WiFi DensePose: Human Tracking Through Walls</title>
-    <link rel="stylesheet" href="style.css">
+    <title>WCES — WiFi CSI 应急感知系统</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+
+        :root {
+            --primary-blue: #007AFF;
+            --success-green: #34C759;
+            --warning-orange: #FF9500;
+            --danger-red: #FF3B30;
+            --gray: #8E8E93;
+            --bg-primary: #000000;
+            --bg-secondary: #1C1C1E;
+            --bg-tertiary: #2C2C2E;
+            --text-primary: #FFFFFF;
+            --text-secondary: #98989D;
+            --separator: #38383A;
+            --glass-bg: rgba(30,30,32,0.8);
+            --card-shadow: rgba(0,0,0,0.4);
+            --card-glow: rgba(0,122,255,0.08);
+            --gradient-hero: linear-gradient(180deg, #1C1C1E 0%, #000000 100%);
+        }
+        :root.light {
+            --bg-primary: #F2F2F7;
+            --bg-secondary: #FFFFFF;
+            --bg-tertiary: #F2F2F7;
+            --text-primary: #1C1C1E;
+            --text-secondary: #636366;
+            --separator: #E5E5EA;
+            --glass-bg: rgba(255,255,255,0.85);
+            --card-shadow: rgba(0,0,0,0.08);
+            --card-glow: rgba(0,122,255,0.04);
+            --gradient-hero: linear-gradient(180deg, #FFFFFF 0%, #F2F2F7 100%);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            transition: background .3s, color .3s;
+            display: flex; flex-direction: column;
+        }
+
+        /* ── Header ── */
+        .header {
+            background: var(--bg-secondary);
+            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            padding: 14px 24px;
+            border-bottom: .5px solid var(--separator);
+            display: flex; align-items: center; justify-content: space-between;
+            position: sticky; top: 0; z-index: 100;
+        }
+        .header-left{display:flex;align-items:center;gap:14px}
+        .logo{display:flex;align-items:center;gap:10px}
+        .logo-icon{width:38px;height:38px;background:linear-gradient(135deg,var(--primary-blue) 0%,#5856D6 100%);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;box-shadow:0 3px 12px rgba(0,122,255,.3)}
+        .logo-text h1{font-size:16px;font-weight:600;letter-spacing:-.3px}
+        .logo-text p{font-size:11px;color:var(--text-secondary)}
+        .header-right{display:flex;align-items:center;gap:10px}
+        .status-indicator{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--bg-tertiary);border-radius:16px;font-size:12px}
+        .status-dot{width:7px;height:7px;border-radius:50%;background:var(--gray);transition:all .3s}
+        .status-dot.online{background:var(--success-green);box-shadow:0 0 6px rgba(52,199,89,.5);animation:pulse 2s infinite}
+        .status-dot.offline{background:var(--danger-red)}
+        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.1)}}
+        .theme-toggle{width:34px;height:34px;background:var(--bg-tertiary);border:.5px solid var(--separator);border-radius:8px;color:var(--text-primary);cursor:pointer;font-size:16px;transition:all .2s;display:flex;align-items:center;justify-content:center}
+        .theme-toggle:hover{background:var(--separator);transform:scale(1.05)}
+
+        /* ── Hero ── */
+        .hero {
+            background: var(--gradient-hero);
+            padding: 48px 24px 36px;
+            text-align: center;
+            border-bottom: .5px solid var(--separator);
+        }
+        .hero h2{font-size:28px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+        .hero p{font-size:15px;color:var(--text-secondary);max-width:600px;margin:0 auto;line-height:1.5}
+        .hero-tags{display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap}
+        .hero-tag{padding:5px 12px;background:var(--bg-tertiary);border-radius:16px;font-size:11px;color:var(--text-secondary)}
+
+        /* ── App Grid ── */
+        .apps-container{padding:32px 24px;max-width:1100px;margin:0 auto;width:100%}
+        .section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-secondary);margin-bottom:16px}
+        .apps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:36px}
+        @media(max-width:700px){.apps-grid{grid-template-columns:1fr}}
+
+        .app-card{
+            background:var(--bg-secondary);
+            border:.5px solid var(--separator);
+            border-radius:16px;
+            padding:24px;
+            cursor:pointer;
+            text-decoration:none;
+            color:inherit;
+            transition:all .25s;
+            position:relative;
+            overflow:hidden;
+            display:flex;flex-direction:column;gap:14px;
+        }
+        .app-card:hover{
+            transform:translateY(-3px);
+            box-shadow:0 8px 24px var(--card-shadow), 0 0 0 1px var(--primary-blue);
+            border-color:var(--primary-blue);
+        }
+        .app-card:active{transform:scale(.98)}
+        .app-icon{
+            width:48px;height:48px;
+            border-radius:12px;
+            display:flex;align-items:center;justify-content:center;
+            font-size:24px;flex-shrink:0;
+        }
+        .app-icon.map{background:linear-gradient(135deg,#007AFF 0%,#40A9FF 100%)}
+        .app-icon.skeleton{background:linear-gradient(135deg,#5856D6 0%,#AF52DE 100%)}
+        .app-icon.chart{background:linear-gradient(135deg,#34C759 0%,#30D158 100%)}
+        .app-icon.monitor{background:linear-gradient(135deg,#FF9500 0%,#FF6B00 100%)}
+        .app-icon.mobile{background:linear-gradient(135deg,#5AC8FA 0%,#007AFF 100%)}
+        .app-icon.test{background:linear-gradient(135deg,#8E8E93 0%,#636366 100%)}
+        .app-body h3{font-size:16px;font-weight:600;margin-bottom:4px}
+        .app-body p{font-size:13px;color:var(--text-secondary);line-height:1.45}
+        .app-badge{
+            align-self:flex-start;
+            padding:4px 10px;border-radius:6px;
+            font-size:10px;font-weight:600;text-transform:uppercase;
+            background:rgba(0,122,255,.12);color:var(--primary-blue);
+        }
+        .app-badge.live{background:rgba(52,199,89,.12);color:var(--success-green)}
+        .app-badge.realtime{background:rgba(255,149,0,.12);color:var(--warning-orange)}
+        .app-badge.tool{background:rgba(142,142,147,.12);color:var(--gray)}
+
+        /* ── Status Panel ── */
+        .status-panel{
+            background:var(--bg-secondary);
+            border:.5px solid var(--separator);
+            border-radius:16px;
+            padding:20px 24px;
+            max-width:1100px;
+            margin:0 auto 40px;
+            width:100%;
+        }
+        .status-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-secondary);margin-bottom:14px}
+        .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+        .status-item{display:flex;align-items:center;gap:8px;font-size:13px}
+        .status-label{color:var(--text-secondary);flex-shrink:0}
+        .status-value{font-weight:500;font-variant-numeric:tabular-nums}
+        .status-dot-sm{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+
+        /* ── Footer ── */
+        .footer{
+            margin-top:auto;padding:16px 24px;
+            border-top:.5px solid var(--separator);
+            text-align:center;font-size:11px;color:var(--text-secondary);
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <h1>WiFi DensePose</h1>
-            <p class="subtitle">Human Tracking Through Walls Using WiFi Signals</p>
-            <div class="header-info">
-                <span class="api-version"></span>
-                <span class="api-environment"></span>
-                <span class="overall-health"></span>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-left">
+        <div class="logo">
+            <div class="logo-icon">W</div>
+            <div class="logo-text">
+                <h1>WCES 控制中心</h1>
+                <p>WiFi CSI Emergency Sensing — 瑞萨 RZ/V2H + ESP32-C5</p>
             </div>
-        </header>
+        </div>
+    </div>
+    <div class="header-right">
+        <div class="status-indicator" id="sysStatus">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusLabel">检测中…</span>
+        </div>
+        <button class="theme-toggle" id="themeToggle" title="切换主题">☀</button>
+    </div>
+</header>
 
-        <!-- Navigation -->
-        <nav class="nav-tabs">
-            <button class="nav-tab active" data-tab="dashboard">Dashboard</button>
-            <button class="nav-tab" data-tab="hardware">Hardware</button>
-            <button class="nav-tab" data-tab="demo">Live Demo</button>
-            <button class="nav-tab" data-tab="architecture">Architecture</button>
-            <button class="nav-tab" data-tab="performance">Performance</button>
-            <button class="nav-tab" data-tab="applications">Applications</button>
-            <button class="nav-tab" data-tab="sensing">Sensing</button>
-            <button class="nav-tab" data-tab="training">Training</button>
-            <a href="pose-fusion.html" class="nav-tab" style="text-decoration:none">Pose Fusion</a>
-            <a href="observatory.html" class="nav-tab" style="text-decoration:none">Observatory</a>
-        </nav>
+<!-- Hero -->
+<section class="hero">
+    <h2>穿墙生命体征监测与分诊</h2>
+    <p>基于 WiFi CSI 信号的穿墙人体感知系统 — 实时骨架重建、多人生体征监测、START 分诊协议与端侧 LLM 辅助决策</p>
+    <div class="hero-tags">
+        <span class="hero-tag">WiFi CSI 感知</span>
+        <span class="hero-tag">3D 骨架重建</span>
+        <span class="hero-tag">生命体征监测</span>
+        <span class="hero-tag">START 分诊</span>
+        <span class="hero-tag">端侧 LLM</span>
+        <span class="hero-tag">ESP32-C5 ×3</span>
+    </div>
+</section>
 
-        <!-- Dashboard Tab -->
-        <section id="dashboard" class="tab-content active">
-            <div class="hero-section">
-                <h2>Revolutionary WiFi-Based Human Pose Detection</h2>
-                <p class="hero-description">
-                    AI can track your full-body movement through walls using just WiFi signals. 
-                    Researchers at Carnegie Mellon have trained a neural network to turn basic WiFi 
-                    signals into detailed wireframe models of human bodies.
-                </p>
-                
-                <!-- Error container -->
-                <div class="error-container" style="display: none;"></div>
-
-                <!-- Live Status Panel -->
-                <div class="live-status-panel">
-                    <h3>System Status</h3>
-                    <div class="status-grid">
-                        <div class="component-status" data-component="api">
-                            <span class="component-name">API Server</span>
-                            <span class="status-text">-</span>
-                            <span class="status-message"></span>
-                        </div>
-                        <div class="component-status" data-component="hardware">
-                            <span class="component-name">Hardware</span>
-                            <span class="status-text">-</span>
-                            <span class="status-message"></span>
-                        </div>
-                        <div class="component-status" data-component="inference">
-                            <span class="component-name">Inference</span>
-                            <span class="status-text">-</span>
-                            <span class="status-message"></span>
-                        </div>
-                        <div class="component-status" data-component="streaming">
-                            <span class="component-name">Streaming</span>
-                            <span class="status-text">-</span>
-                            <span class="status-message"></span>
-                        </div>
-                        <div class="component-status" data-component="datasource" id="dashboard-datasource">
-                            <span class="component-name">Data Source</span>
-                            <span class="status-text">-</span>
-                            <span class="status-message"></span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- System Metrics -->
-                <div class="system-metrics-panel">
-                    <h3>System Metrics</h3>
-                    <div class="metrics-grid">
-                        <div class="metric-item">
-                            <span class="metric-label">CPU Usage</span>
-                            <div class="progress-bar" data-type="cpu">
-                                <div class="progress-fill normal" style="width: 0%"></div>
-                            </div>
-                            <span class="cpu-usage">0%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Memory Usage</span>
-                            <div class="progress-bar" data-type="memory">
-                                <div class="progress-fill normal" style="width: 0%"></div>
-                            </div>
-                            <span class="memory-usage">0%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span class="metric-label">Disk Usage</span>
-                            <div class="progress-bar" data-type="disk">
-                                <div class="progress-fill normal" style="width: 0%"></div>
-                            </div>
-                            <span class="disk-usage">0%</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Features Status -->
-                <div class="features-panel">
-                    <h3>Features</h3>
-                    <div class="features-status"></div>
-                </div>
-
-                <!-- Live Statistics -->
-                <div class="live-stats-panel">
-                    <h3>Live Statistics</h3>
-                    <div class="stats-grid">
-                        <div class="stat-item">
-                            <span class="stat-label">Active Persons</span>
-                            <span class="person-count">0</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Avg Confidence</span>
-                            <span class="avg-confidence">0%</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Total Detections</span>
-                            <span class="detection-count">0</span>
-                        </div>
-                    </div>
-                    
-                    <div class="zones-panel">
-                        <h4>Zone Occupancy</h4>
-                        <div class="zones-summary"></div>
-                    </div>
-                </div>
-                
-                <div class="key-benefits">
-                    <div class="benefit-card">
-                        <div class="benefit-icon">🏠</div>
-                        <h3>Through Walls</h3>
-                        <p>Works through solid barriers with no line of sight required</p>
-                    </div>
-                    <div class="benefit-card">
-                        <div class="benefit-icon">🔒</div>
-                        <h3>Privacy-Preserving</h3>
-                        <p>No cameras or visual recording - just WiFi signal analysis</p>
-                    </div>
-                    <div class="benefit-card">
-                        <div class="benefit-icon">⚡</div>
-                        <h3>Real-Time</h3>
-                        <p>Maps 24 body regions in real-time at 100Hz sampling rate</p>
-                    </div>
-                    <div class="benefit-card">
-                        <div class="benefit-icon">💰</div>
-                        <h3>Low Cost</h3>
-                        <p>Built using $30 commercial WiFi hardware</p>
-                    </div>
-                </div>
-
-                <div class="system-stats">
-                    <div class="stat" data-stat="body-regions">
-                        <span class="stat-value">24</span>
-                        <span class="stat-label">Body Regions</span>
-                    </div>
-                    <div class="stat" data-stat="sampling-rate">
-                        <span class="stat-value">100Hz</span>
-                        <span class="stat-label">Sampling Rate</span>
-                    </div>
-                    <div class="stat" data-stat="accuracy">
-                        <span class="stat-value">87.2%</span>
-                        <span class="stat-label">Accuracy (AP@50)</span>
-                    </div>
-                    <div class="stat" data-stat="hardware-cost">
-                        <span class="stat-value">$30</span>
-                        <span class="stat-label">Hardware Cost</span>
-                    </div>
-                </div>
+<!-- Main Apps -->
+<div class="apps-container">
+    <div class="section-title">核心功能</div>
+    <div class="apps-grid">
+        <a href="observatory.html" class="app-card">
+            <div class="app-icon monitor">📡</div>
+            <div class="app-body">
+                <h3>Observatory 观测台</h3>
+                <p>实时数据流监控 — CSI 波形、节点状态、信号质量、UDP 数据包速率、系统资源用量</p>
             </div>
-        </section>
+            <span class="app-badge live">实时监控</span>
+        </a>
 
-        <!-- Hardware Tab -->
-        <section id="hardware" class="tab-content">
-            <h2>Hardware Configuration</h2>
-            
-            <div class="hardware-grid">
-                <div class="antenna-section">
-                    <h3>3×3 Antenna Array</h3>
-                    <p class="help-text">Click antennas to toggle their state</p>
-                    <div class="antenna-array">
-                        <div class="antenna-grid">
-                            <div class="antenna tx active" data-type="TX1"></div>
-                            <div class="antenna tx active" data-type="TX2"></div>
-                            <div class="antenna tx active" data-type="TX3"></div>
-                            <div class="antenna rx active" data-type="RX1"></div>
-                            <div class="antenna rx active" data-type="RX2"></div>
-                            <div class="antenna rx active" data-type="RX3"></div>
-                            <div class="antenna rx active" data-type="RX4"></div>
-                            <div class="antenna rx active" data-type="RX5"></div>
-                            <div class="antenna rx active" data-type="RX6"></div>
-                        </div>
-                        <div class="antenna-legend">
-                            <div class="legend-item">
-                                <div class="legend-color tx"></div>
-                                <span>Transmitters (3)</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color rx"></div>
-                                <span>Receivers (6)</span>
-                            </div>
-                        </div>
-                        <div class="array-status"></div>
-                    </div>
-                </div>
-
-                <div class="config-section">
-                    <h3>WiFi Configuration</h3>
-                    <div class="config-grid">
-                        <div class="config-item">
-                            <label>Frequency</label>
-                            <div class="config-value">2.4GHz ± 20MHz</div>
-                        </div>
-                        <div class="config-item">
-                            <label>Subcarriers</label>
-                            <div class="config-value">30</div>
-                        </div>
-                        <div class="config-item">
-                            <label>Sampling Rate</label>
-                            <div class="config-value">100 Hz</div>
-                        </div>
-                        <div class="config-item">
-                            <label>Total Cost</label>
-                            <div class="config-value">$30</div>
-                        </div>
-                    </div>
-
-                    <div class="csi-data">
-                        <h4>Real-time CSI Data</h4>
-                        <div class="csi-display">
-                            <div class="csi-row">
-                                <span>Amplitude:</span>
-                                <div class="csi-bar">
-                                    <div class="csi-fill amplitude" style="width: 75%"></div>
-                                </div>
-                                <span class="csi-value">0.75</span>
-                            </div>
-                            <div class="csi-row">
-                                <span>Phase:</span>
-                                <div class="csi-bar">
-                                    <div class="csi-fill phase" style="width: 60%"></div>
-                                </div>
-                                <span class="csi-value">1.2π</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <a href="../docs/triage-ui/triage.html" class="app-card">
+            <div class="app-icon skeleton">🏥</div>
+            <div class="app-body">
+                <h3>方舱分诊仪表盘</h3>
+                <p>START 分诊协议界面 — 伤员卡片、生命体征趋势图、热力图、3D 骨架、电子病历面板</p>
             </div>
-        </section>
+            <span class="app-badge realtime">竞赛核心</span>
+        </a>
 
-        <!-- Demo Tab -->
-        <section id="demo" class="tab-content">
-            <h2>Live Demonstration</h2>
-            
-            <div class="demo-controls">
-                <button id="startDemo" class="btn btn--primary">Start Stream</button>
-                <button id="stopDemo" class="btn btn--secondary" disabled>Stop Stream</button>
-                <div class="demo-status">
-                    <span class="status status--info" id="demoStatus">Ready</span>
-                </div>
+        <a href="viz.html" class="app-card">
+            <div class="app-icon skeleton">🦴</div>
+            <div class="app-body">
+                <h3>3D 骨架可视化</h3>
+                <p>全屏 3D 人体骨架实时渲染 — Three.js 蒙皮模型、多角度观察、骨骼动画</p>
             </div>
+            <span class="app-badge live">3D 实时</span>
+        </a>
 
-            <div class="demo-grid">
-                <div class="signal-panel">
-                    <h3>WiFi Signal Analysis</h3>
-                    <div class="signal-display">
-                        <canvas id="signalCanvas" width="400" height="200"></canvas>
-                    </div>
-                    <div class="signal-metrics">
-                        <div class="metric">
-                            <span>Signal Strength:</span>
-                            <span id="signalStrength">-45 dBm</span>
-                        </div>
-                        <div class="metric">
-                            <span>Processing Latency:</span>
-                            <span id="latency">12 ms</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="pose-panel">
-                    <h3>Human Pose Detection</h3>
-                    <div class="pose-display">
-                        <canvas id="poseCanvas" width="400" height="300"></canvas>
-                    </div>
-                    <div class="detection-info">
-                        <div class="info-item">
-                            <span>Persons Detected:</span>
-                            <span id="personCount">0</span>
-                        </div>
-                        <div class="info-item">
-                            <span>Confidence:</span>
-                            <span id="confidence">0.0%</span>
-                        </div>
-                        <div class="info-item">
-                            <span>Keypoints:</span>
-                            <span id="keypoints">0/0</span>
-                        </div>
-                    </div>
-                </div>
+        <a href="pose-fusion.html" class="app-card">
+            <div class="app-icon chart">📊</div>
+            <div class="app-body">
+                <h3>Pose Fusion 姿态融合</h3>
+                <p>多节点数据融合 — 跨 ESP32 节点姿态聚合、置信度加权、多人检测与跟踪</p>
             </div>
-        </section>
-
-        <!-- Architecture Tab -->
-        <section id="architecture" class="tab-content">
-            <h2>System Architecture</h2>
-            
-            <div class="architecture-flow">
-                <img src="https://pplx-res.cloudinary.com/image/upload/v1748813853/gpt4o_images/m7zztcttnue7vaxclvuw.png" 
-                     alt="WiFi DensePose Architecture" class="architecture-image">
-                
-                <div class="flow-steps">
-                    <div class="step-card" data-step="1">
-                        <div class="step-number">1</div>
-                        <h3>CSI Input</h3>
-                        <p>Channel State Information collected from WiFi antenna array</p>
-                    </div>
-                    <div class="step-card" data-step="2">
-                        <div class="step-number">2</div>
-                        <h3>Phase Sanitization</h3>
-                        <p>Remove hardware-specific noise and normalize signal phase</p>
-                    </div>
-                    <div class="step-card" data-step="3">
-                        <div class="step-number">3</div>
-                        <h3>Modality Translation</h3>
-                        <p>Convert WiFi signals to visual representation using CNN</p>
-                    </div>
-                    <div class="step-card" data-step="4">
-                        <div class="step-number">4</div>
-                        <h3>DensePose-RCNN</h3>
-                        <p>Extract human pose keypoints and body part segmentation</p>
-                    </div>
-                    <div class="step-card" data-step="5">
-                        <div class="step-number">5</div>
-                        <h3>Wireframe Output</h3>
-                        <p>Generate final human pose wireframe visualization</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Performance Tab -->
-        <section id="performance" class="tab-content">
-            <h2>Performance Analysis</h2>
-            
-            <div class="performance-chart">
-                <img src="https://pplx-res.cloudinary.com/image/upload/v1748813924/pplx_code_interpreter/af6ef268_nsauu6.jpg" 
-                     alt="Performance Comparison Chart" class="chart-image">
-            </div>
-
-            <div class="performance-grid">
-                <div class="performance-card">
-                    <h3>WiFi-based (Same Layout)</h3>
-                    <div class="metric-list">
-                        <div class="metric-item">
-                            <span>Average Precision:</span>
-                            <span class="metric-value">43.5%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span>AP@50:</span>
-                            <span class="metric-value success">87.2%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span>AP@75:</span>
-                            <span class="metric-value">44.6%</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="performance-card">
-                    <h3>Image-based (Reference)</h3>
-                    <div class="metric-list">
-                        <div class="metric-item">
-                            <span>Average Precision:</span>
-                            <span class="metric-value success">84.7%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span>AP@50:</span>
-                            <span class="metric-value success">94.4%</span>
-                        </div>
-                        <div class="metric-item">
-                            <span>AP@75:</span>
-                            <span class="metric-value success">77.1%</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="limitations-section">
-                    <h3>Advantages & Limitations</h3>
-                    <div class="pros-cons">
-                        <div class="pros">
-                            <h4>Advantages</h4>
-                            <ul>
-                                <li>Through-wall detection</li>
-                                <li>Privacy preserving</li>
-                                <li>Lighting independent</li>
-                                <li>Low cost hardware</li>
-                                <li>Uses existing WiFi</li>
-                            </ul>
-                        </div>
-                        <div class="cons">
-                            <h4>Limitations</h4>
-                            <ul>
-                                <li>Performance drops in different layouts</li>
-                                <li>Requires WiFi-compatible devices</li>
-                                <li>Training requires synchronized data</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Applications Tab -->
-        <section id="applications" class="tab-content">
-            <h2>Real-World Applications</h2>
-            
-            <div class="applications-grid">
-                <div class="app-card">
-                    <div class="app-icon">👴</div>
-                    <h3>Elderly Care Monitoring</h3>
-                    <p>Monitor elderly individuals for falls or emergencies without invading privacy. Track movement patterns and detect anomalies in daily routines.</p>
-                    <div class="app-features">
-                        <span class="feature-tag">Fall Detection</span>
-                        <span class="feature-tag">Activity Monitoring</span>
-                        <span class="feature-tag">Emergency Alert</span>
-                    </div>
-                </div>
-
-                <div class="app-card">
-                    <div class="app-icon">🏠</div>
-                    <h3>Home Security Systems</h3>
-                    <p>Detect intruders and monitor home security without visible cameras. Track multiple persons and identify suspicious movement patterns.</p>
-                    <div class="app-features">
-                        <span class="feature-tag">Intrusion Detection</span>
-                        <span class="feature-tag">Multi-person Tracking</span>
-                        <span class="feature-tag">Invisible Monitoring</span>
-                    </div>
-                </div>
-
-                <div class="app-card">
-                    <div class="app-icon">🏥</div>
-                    <h3>Healthcare Patient Monitoring</h3>
-                    <p>Monitor patients in hospitals and care facilities. Track vital signs through movement analysis and detect health emergencies.</p>
-                    <div class="app-features">
-                        <span class="feature-tag">Vital Sign Analysis</span>
-                        <span class="feature-tag">Movement Tracking</span>
-                        <span class="feature-tag">Health Alerts</span>
-                    </div>
-                </div>
-
-                <div class="app-card">
-                    <div class="app-icon">🏢</div>
-                    <h3>Smart Building Occupancy</h3>
-                    <p>Optimize building energy consumption by tracking occupancy patterns. Control lighting, HVAC, and security systems automatically.</p>
-                    <div class="app-features">
-                        <span class="feature-tag">Energy Optimization</span>
-                        <span class="feature-tag">Occupancy Tracking</span>
-                        <span class="feature-tag">Smart Controls</span>
-                    </div>
-                </div>
-
-                <div class="app-card">
-                    <div class="app-icon">🥽</div>
-                    <h3>AR/VR Applications</h3>
-                    <p>Enable full-body tracking for virtual and augmented reality applications without wearing additional sensors or cameras.</p>
-                    <div class="app-features">
-                        <span class="feature-tag">Full Body Tracking</span>
-                        <span class="feature-tag">Sensor-free</span>
-                        <span class="feature-tag">Immersive Experience</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="implementation-note">
-                <h3>Implementation Considerations</h3>
-                <p>While WiFi DensePose offers revolutionary capabilities, successful implementation requires careful consideration of environment setup, data privacy regulations, and system calibration for optimal performance.</p>
-            </div>
-        </section>
-
-        <!-- Sensing Tab -->
-        <section id="sensing" class="tab-content"></section>
-
-        <!-- Training Tab -->
-        <section id="training" class="tab-content">
-            <div class="tab-header">
-                <h2>Model Training</h2>
-                <p>Record CSI data, train pose estimation models, and manage .rvf files</p>
-            </div>
-            <div id="training-container" style="display: flex; gap: 20px; flex-wrap: wrap;">
-                <div id="training-panel-container" style="flex: 1; min-width: 400px;"></div>
-                <div id="model-panel-container" style="flex: 1; min-width: 350px; max-width: 450px;"></div>
-            </div>
-        </section>
+            <span class="app-badge">数据融合</span>
+        </a>
     </div>
 
-    <!-- Error Toast -->
-    <div id="globalErrorToast" class="error-toast"></div>
+    <div class="section-title">工具与测试</div>
+    <div class="apps-grid">
+        <a href="mobile/src/assets/webview/mat-dashboard.html" class="app-card">
+            <div class="app-icon mobile">📱</div>
+            <div class="app-body">
+                <h3>移动端仪表盘</h3>
+                <p>轻量级移动适配面板 — MAT 协议数据展示、紧凑布局、适合现场手持设备使用</p>
+            </div>
+            <span class="app-badge">移动端</span>
+        </a>
 
-    <!-- Load application scripts as modules -->
-    <script type="module" src="app.js"></script>
+        <a href="tests/test-runner.html" class="app-card">
+            <div class="app-icon test">🧪</div>
+            <div class="app-body">
+                <h3>自动化测试面板</h3>
+                <p>集成测试运行器 — WebSocket/HTTP/UDP 端到端测试、回归测试套件、结果可视化</p>
+            </div>
+            <span class="app-badge tool">测试工具</span>
+        </a>
+
+        <a href="tests/integration-test.html" class="app-card">
+            <div class="app-icon test">🔌</div>
+            <div class="app-body">
+                <h3>集成测试控制台</h3>
+                <p>手动集成测试界面 — 原始 WebSocket 帧检查、模拟数据注入、API 端点调试</p>
+            </div>
+            <span class="app-badge tool">调试工具</span>
+        </a>
+    </div>
+</div>
+
+<!-- System Status -->
+<div class="status-panel" id="statusPanel">
+    <div class="status-title">系统状态</div>
+    <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+        <div class="status-item">
+            <span class="status-dot-sm" id="httpDot" style="background:var(--gray)"></span>
+            <span class="status-label">HTTP API</span>
+            <span class="status-value" id="httpStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="wsDot" style="background:var(--gray)"></span>
+            <span class="status-label">WebSocket</span>
+            <span class="status-value" id="wsStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="udpDot" style="background:var(--gray)"></span>
+            <span class="status-label">UDP CSI</span>
+            <span class="status-value" id="udpStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="srcDot" style="background:var(--gray)"></span>
+            <span class="status-label">数据源</span>
+            <span class="status-value" id="srcStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="fpsDot" style="background:var(--gray)"></span>
+            <span class="status-label">帧率</span>
+            <span class="status-value" id="fpsStatus">—</span>
+        </div>
+    </div>
+</div>
+
+<!-- Footer -->
+<footer class="footer">
+    WCES — WiFi CSI Emergency Sensing System &nbsp;|&nbsp; 瑞萨 RZ/V2H &nbsp;|&nbsp; ESP32-C5 ×3 &nbsp;|&nbsp; Rust axum + WASM 推理
+</footer>
+
+<script>
+(function(){
+    const $ = s => document.querySelector(s);
+    const API = location.hostname + ':' + (location.port || 8080);
+
+    /* ── Theme ── */
+    const saved = localStorage.getItem('wces-theme');
+    if (saved === 'light') document.documentElement.classList.add('light');
+    updateThemeIcon();
+
+    $('#themeToggle').addEventListener('click', () => {
+        document.documentElement.classList.toggle('light');
+        localStorage.setItem('wces-theme',
+            document.documentElement.classList.contains('light') ? 'light' : 'dark');
+        updateThemeIcon();
+    });
+
+    function updateThemeIcon(){
+        const isLight = document.documentElement.classList.contains('light');
+        $('#themeToggle').textContent = isLight ? '🌙' : '☀';
+    }
+
+    /* ── System Status Check ── */
+    async function checkStatus(){
+        const dots = {
+            http: $('#httpDot'), ws: $('#wsDot'), udp: $('#udpDot'),
+            src: $('#srcDot'), fps: $('#fpsDot')
+        };
+
+        // HTTP check
+        try {
+            const r = await fetch(`http://${API}/api/health`, {signal: AbortSignal.timeout(3000)});
+            if (r.ok) {
+                dots.http.style.background = 'var(--success-green)';
+                $('#httpStatus').textContent = '在线';
+                const j = await r.json();
+                $('#srcStatus').textContent = j.source || 'auto';
+                dots.src.style.background = 'var(--success-green)';
+            }
+        } catch(e) {
+            dots.http.style.background = 'var(--danger-red)';
+            $('#httpStatus').textContent = '离线';
+        }
+
+        // Metrics check
+        try {
+            const r = await fetch(`http://${API}/api/metrics`, {signal: AbortSignal.timeout(3000)});
+            if (r.ok) {
+                const j = await r.json();
+                $('#fpsStatus').textContent = (j.fps || 0) + ' fps';
+                dots.fps.style.background = j.fps > 0 ? 'var(--success-green)' : 'var(--warning-orange)';
+            }
+        } catch(e) {
+            $('#fpsStatus').textContent = '—';
+        }
+
+        // Overall
+        const allOnline = dots.http.style.background.includes('199') || dots.http.style.background.includes('52,199');
+        if (allOnline) {
+            $('#statusDot').classList.add('online');
+            $('#statusDot').classList.remove('offline');
+            $('#statusLabel').textContent = '系统在线';
+            $('#wsStatus').textContent = '就绪';
+            $('#udpStatus').textContent = '就绪';
+            dots.ws.style.background = 'var(--success-green)';
+            dots.udp.style.background = 'var(--success-green)';
+        }
+    }
+
+    checkStatus();
+    setInterval(checkStatus, 10000);
+})();
+</script>
 </body>
 </html>

@@ -282,10 +282,11 @@ Current Vitals ───┘                                                     
 | **P10c** | **第二轮边缘模块集成 (6个: 步态/LTL/振动/徘徊/元学习/稀疏恢复)** | ✅ **2026-05-14** |
 | **P10d** | **端侧 LLM 智能分析引擎 (wifi-densepose-llm crate)** | ✅ **2026-05-15** |
 | **P10e** | **代码架构重构 (main.rs 3868→976 + 锁安全修复)** | ✅ **2026-05-18** |
+| **P10f** | **UI 全面优化 (8项: CDN本地化/趋势图/热力图/统一入口/响应式/蒙皮骨架/EHR面板/主题切换)** | ✅ **2026-05-20** |
 | P11 | 竞赛申报材料 | ❌ 待准备 |
 | P12 | 硬件联调 | ❌ 需硬件 |
 
-## 新建/修改文件 (阶段1: 11个 + 阶段2: 17个 + 阶段2.12重构: 20个)
+## 新建/修改文件 (阶段1: 11个 + 阶段2: 17个 + 阶段2.12重构: 20个 + 阶段2.13 UI优化: 4个)
 
 ### 阶段1 (2026-05-06)
 
@@ -316,6 +317,15 @@ Current Vitals ───┘                                                     
 | `signal/Cargo.toml` | 修改 | 移除缺失 bench |
 | `mat/Cargo.toml` | 修改 | 移除缺失 bench |
 | `Cargo.lock` | 新建 | `cargo check` 自动生成 |
+
+### 阶段2.13 (2026-05-20) — UI 全面优化
+
+| 文件 | 修改类型 | 说明 |
+|------|:--:|------|
+| `ui/lib/three.min.js` | 新建 | Three.js r140 UMD (623KB), 离线可用 |
+| `ui/lib/OrbitControls.js` | 新建 | OrbitControls r140 UMD (26KB) |
+| `docs/triage-ui/triage.html` | 重写 | ~1074行, 整合8项优化 (暗色/亮色主题/热力图/3D骨架/sparkline/EHR/响应式/折叠侧栏) |
+| `ui/index.html` | 重写 | ~290行, 统一入口门户页 (6应用卡片 + 系统状态检测 + 主题切换) |
 
 ## 数据流架构 (更新: MAT 已集成)
 
@@ -533,4 +543,46 @@ sensing-server/src/          重构前 → 重构后
 | 功能完整性验证 | ✅ 所有被移动函数/类型/常量均在目标文件中确认存在 |
 
 **修改文件**: 20 个文件（9 新建 + 11 修改），无功能逻辑变更，纯代码组织
+
+### 2.13 UI 全面优化 — 8 项可视化增强 (2026-05-20) ⭐
+
+对全项目 UI 层进行全面优化，提升竞赛演示效果和用户体验。
+
+#### 优化清单
+
+| # | 优化项 | 说明 | 文件 |
+|---|--------|------|------|
+| A | **CDN 本地化** | 下载 Three.js r140 + OrbitControls.js 到 `ui/lib/`，离线可用，无互联网依赖 | `ui/lib/three.min.js`, `ui/lib/OrbitControls.js` |
+| B | **生命体征趋势小图** | 60 秒环形缓冲 sparkline canvas，呼吸率/心率实时趋势可视化 | `triage.html` |
+| C | **侧边栏折叠** | survivors/alerts/edge modules/LLM 分区可折叠，节省垂直空间 | `triage.html` |
+| D | **地图热力图** | `signal_field.values` 20×20 网格色彩叠加层 (绿→黄→红)，可切换显示 | `triage.html` |
+| E | **统一入口页** | 新建 `ui/index.html` 门户页，6 张应用卡片 + 实时系统状态检测 (HTTP/WS/UDP/数据源/帧率) | `ui/index.html` |
+| F | **响应式改造** | @media 900px/600px 断点，ResizeObserver 画布自适应，移动端可用 | `triage.html` + `index.html` |
+| G | **真实蒙皮骨架** | 胶囊几何体 (CylinderGeometry + 2×SphereGeometry) 替代简单圆柱，分段比例更真实 | `triage.html` |
+| H | **伤员电子病历面板** | EHR 滑出面板 (`.ehr-panel`)，点击地图伤员/卡片触发，含体征趋势图 + 登记信息 + LLM 分析 | `triage.html` |
+| I | **暗色/亮色主题** | CSS 变量 `:root` / `:root.light` 双主题，`localStorage` 持久化，`theme-toggle` 按钮 | `triage.html` + `index.html` |
+
+#### Three.js 版本选择
+
+选择 **r140** (UMD 模块) 而非最新 r160：
+- r152+ 移除了 `examples/js/` 目录，仅保留 ES 模块 (`examples/jsm/`)
+- WCES UI 使用 `<script>` 标签加载，需要 UMD 兼容格式
+- r140 的 `OrbitControls.js` 可直接通过 `<script>` 标签引用
+
+#### 新建/重写文件
+
+| 文件 | 类型 | 说明 |
+|------|:--:|------|
+| `ui/lib/three.min.js` | 新建 | Three.js r140 UMD (623KB) |
+| `ui/lib/OrbitControls.js` | 新建 | OrbitControls r140 UMD (26KB) |
+| `docs/triage-ui/triage.html` | 重写 | ~1074 行，整合全部 8 项优化，暗色/亮色双主题 |
+| `ui/index.html` | 重写 | ~290 行，统一入口门户页，替代原产品介绍页 |
+
+#### 设计一致性
+
+- 两个新页面共享相同的 CSS 变量体系 (`--primary-blue`, `--bg-primary`, `--text-primary` 等)
+- 统一的 Apple-style 设计语言 (-apple-system 字体, SF Pro, 毛玻璃效果)
+- 暗色为默认主题 (适合方舱低光环境)，亮色为可选
+
+**验证**: 模拟模式运行确认仪表盘 + 入口页功能正常，CDN 已替换为本地路径
 

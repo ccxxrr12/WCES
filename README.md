@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/V2H + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10e 完成 ✅ | MAT 分诊 + 19 边缘模块 + 端侧 LLM + 代码重构 | main.rs 3868→976 行（-75%）
+> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + 端侧 LLM + 代码重构 + UI 全面优化 | main.rs 3868→976 行（-75%）
 
 ---
 
@@ -133,11 +133,12 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | **群体伤情评估** | 严重等级(Minimal→Critical) + 救援人员需求估算 | ✅ |
 | **伤员年龄估算** | 基于呼吸率/心率推断 (Infant→Child→Adult→Elderly) | ✅ |
 | **实时告警** | 自动生成 + 优先级排序 + 时间戳 | ✅ |
-| **分诊仪表盘** | Canvas 2D 伤员地图 + 统计栏 + 卡片 + 告警列表 | ✅ |
-| 3D 骨架重建 | ONNX DensePose (可选按钮) | ✨ |
+| **分诊仪表盘** | Canvas 2D 伤员地图 + 热力图 + 3D 骨架 + 生命体征趋势图 + EHR 面板 + 暗色/亮色主题 | ✅ |
+| 3D 骨架重建 | Three.js 胶囊几何体蒙皮骨架 + ONNX DensePose (可选按钮) | ✅ |
 | 19 个医疗 WASM 模块 | 步态/心律失常/呼吸窘迫/癫痫/徘徊/振动/LTL守卫/元学习/稀疏恢复等 | ✅ |
 | 模拟运行模式 | 正弦波合成 CSI，完整数据流通，无需硬件 | ✅ |
 | **端侧 LLM** | 生命体征→自然语言伤病报告 (Qwen2.5-0.5B / Candle) | ✅ |
+| **统一入口页** | 暗色/亮色主题门户，6 张应用卡片 + 实时系统状态检测 | ✅ |
 
 ---
 
@@ -200,14 +201,20 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 
 | 模块 | 功能 | 文件 |
 |------|------|------|
-| 2D 伤员地图 | Canvas 顶视图，C5 节点蓝色固定标记，伤员彩色圆点 | `triage.html:draw()` |
+| 统一入口页 | 暗色/亮色主题门户，6 张应用卡片 (Observatory/分诊/3D骨架/PoseFusion/移动端/测试)，实时系统状态检测 | `ui/index.html` |
+| 2D 伤员地图 | Canvas 顶视图，C5 节点蓝色固定标记，伤员彩色圆点，信号场热力图叠加层 | `triage.html:drawMap()` |
 | 实时统计栏 | 总计/紧急/延迟/轻伤/死亡 五色卡片 | `triage.html:renderFromServer()` |
-| 伤员卡片 | ID、追踪时长、节点号、年龄、呼吸率、心率、分诊标签、恶化警告 | `triage.html` |
-| 告警列表 | 时间倒序、颜色编码、最近 20 条 | `triage.html` |
+| 伤员卡片 | ID、追踪时长、节点号、年龄、呼吸率、心率、分诊标签、恶化警告，可折叠侧栏 | `triage.html` |
+| 告警列表 | 时间倒序、颜色编码、最近 20 条，可折叠 | `triage.html` |
 | 群体评估 | 伤情等级 + 救援人员需求 | `triage.html` |
+| 生命体征趋势 | 60 秒环形缓冲 sparkline 呼吸率/心率趋势小图 | `triage.html` |
+| 3D 骨架 | Three.js 胶囊几何体蒙皮骨架，OrbitControls 旋转/缩放 | `triage.html` |
+| EHR 面板 | 伤员电子病历滑出面板，含体征趋势图、登记信息、LLM 分析 | `triage.html` |
+| 暗色/亮色主题 | CSS 变量切换 + localStorage 持久化 | `triage.html` + `index.html` |
+| 响应式布局 | @media 900px/600px 断点，ResizeObserver 画布自适应 | `triage.html` + `index.html` |
 | **边缘模块引擎** | 19 个医疗WASM模块原生编译，零额外依赖，RZ/V2H硬件FPU加速 | `edge_module_engine.rs` |
 | WebSocket | `/ws/sensing` 实时推送 `SensingUpdate` JSON | `handlers/ws.rs` |
-| 3D 可视化 | Three.js 实时姿态渲染 (可选 ONNX DensePose) | `ui/index.html` |
+| Three.js 本地库 | r140 UMD 模块 (three.min.js + OrbitControls.js)，离线可用 | `ui/lib/` |
 
 ### 边缘模块引擎性能优化
 
@@ -322,7 +329,10 @@ CSI 采集          UDP:5005 →
 │       │   ├── src/trainer.rs              ← 模型训练
 │       │   └── src/training_api.rs         ← 训练 API
 │       └── wifi-densepose-config/     ← 系统配置
-├── ui/                                ← Web 3D 可视化 (210 files)
+├── ui/                                ← Web 可视化 (210+ files)
+│   ├── lib/
+│   │   ├── three.min.js               ← Three.js r140 UMD (离线可用)
+│   │   └── OrbitControls.js           ← OrbitControls r140 UMD
 ├── scripts/
 │   └── provision.py                   ← C5 烧录脚本 (固件内也有副本)
 └── docs/                              ← 竞赛设计文档
@@ -343,7 +353,8 @@ CSI 采集          UDP:5005 →
     ├── 目录审计报告.md                 ← 目录完整性审计
     ├── API_REFERENCE.md               ← WebSocket 数据接口文档
     └── triage-ui/
-        └── triage.html                ← 分诊仪表盘
+        ├── triage.html                ← 分诊仪表盘 (暗色/亮色主题, 热力图, 3D骨架, EHR面板)
+        └── triage-v1.html             ← 旧版分诊仪表盘 (备份)
 ```
 
 ---
