@@ -1,7 +1,7 @@
 ﻿# WCES — 基于 WiFi 6 CSI 的极端条件人员监护系统
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
-> 硬件: 瑞萨 RZ/V2H + 3× ESP32-C5-DevKitC-1-N8R8
+> 硬件: 瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
 
 ---
 
@@ -18,7 +18,7 @@
           ┌──────────┼────┼────┼──────────┐
           │          │    │    │          │
      ┌────▼────┐ ┌──▼────▼────▼──┐ ┌────▼────┐
-     │ ESP32-C5│ │  瑞萨 RZ/V2H │ │ 7" 触屏 │
+     │ ESP32-C5│ │  瑞萨 RZ/G2L │ │ 7" 触屏 │
      │ 节点 #1 │ │  (主控+AI)   │ │  HDMI   │
      │ 192.168 │ │192.168.1.1   │ │ 显示    │
      │ .1.10   │ │              │ │         │
@@ -35,7 +35,7 @@ python provision.py --chip esp32c5 --node-id 1 --port COM3
 python provision.py --chip esp32c5 --node-id 2 --port COM4
 python provision.py --chip esp32c5 --node-id 3 --port COM5
 
-# 2. RZ/V2H 上启动服务
+# 2. RZ/G2L 上启动服务
 ssh root@192.168.1.1
 cd /opt/WCES
 ./deploy.sh
@@ -51,7 +51,7 @@ cd /opt/WCES
 ```
 CSI 感知层            AI 计算层              展示层
 ─────────────────    ─────────────────    ─────────────────
-ESP32-C5 ×3          RZ/V2H               7" 触屏 / Web
+ESP32-C5 ×3          RZ/G2L               7" 触屏 / Web
   │                    │                     │
   ├─ CSI 采集          │                     │
   │  484 子载波        │                     │
@@ -98,7 +98,7 @@ ESP32-C5 ×3          RZ/V2H               7" 触屏 / Web
 │   ├── 端侧LLM方案设计.md         # LLM 方案设计
 │   ├── ESP32-C5 移植指南.md       # C5 移植指南
 │   ├── ESP32-C5 移植审计报告.md   # C5 审计报告
-│   ├── 瑞萨 RZV2H 移植计划.md     # RZ/V2H 移植
+│   ├── 瑞萨 RZ_G2L 移植计划.md     # RZ/G2L 移植
 │   └── 目录审计报告.md            # 目录审计
 ├── ui/                           # 3D Web 可视化
 ├── scripts/provision.py          # C5 烧录脚本
@@ -140,6 +140,6 @@ ESP32-C5 ×3          RZ/V2H               7" 触屏 / Web
 | `docs/端侧LLM方案设计.md` | 端侧 LLM 方案 |
 | `docs/项目全览.md` | 全项目技术全览 |
 | `docs/API_REFERENCE.md` | WebSocket 数据接口文档 |
-| `docs/瑞萨 RZV2H 移植计划.md` | RZ/V2H 移植计划 |
+| `docs/瑞萨 RZ_G2L 移植计划.md` | RZ/G2L 移植计划 |
 | `docs/目录审计报告.md` | 目录审计 |
 | `docs/PROGRESS.md` | 构建进度追踪 |

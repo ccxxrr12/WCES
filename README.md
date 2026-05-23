@@ -1,7 +1,7 @@
 ﻿# WCES — 基于WIFI CSI感知与端侧LLM的方舱生命体征感知与监护系统
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
-> 硬件：瑞萨 RZ/V2H + 3× ESP32-C5-DevKitC-1-N8R8
+> 硬件：瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
 > 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + 端侧 LLM + 代码重构 + UI 全面优化 | main.rs 3868→976 行（-75%）
 
 ---
@@ -16,7 +16,7 @@
           ┌───────────────────┼───────────────────┐
           │                   │                   │
     ┌─────▼─────┐      ┌──────▼──────┐      ┌─────▼─────┐
-    │ ESP32-C5  │      │ 瑞萨 RZ/V2H │      │ ESP32-C5  │
+    │ ESP32-C5  │      │ 瑞萨 RZ/G2L │      │ ESP32-C5  │
     │  节点 #2  │      │  (主控+AI)  │      │  节点 #3  │
     │ .1.11     │      │  192.168.1.1│      │ .1.12     │
     └───────────┘      │             │      └───────────┘
@@ -40,7 +40,7 @@ python provision.py --chip esp32c5 --node-id 1 --port COM3
 # 2. 编译服务端（在 rust-server 目录内）
 cd rust-server
 cargo build --release
-# RZ/V2H 交叉编译：
+# RZ/G2L 交叉编译：
 # cargo build --target aarch64-unknown-linux-gnu --release
 
 # 3. 返回项目根目录，一键部署
@@ -91,7 +91,7 @@ cargo run -p wifi-densepose-sensing-server -- --source simulate --ui-path ../doc
 ```
 CSI 感知层               AI 计算层                   展示层
 ─────────────────────    ──────────────────────    ────────────────
-ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
+ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
   │                        │                         │
   ├─ CSI 采集 (484子载波)  │                         │
   ├─ 2.4/5GHz 双频         │                         │
@@ -212,14 +212,14 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 | EHR 面板 | 伤员电子病历滑出面板，含体征趋势图、登记信息、LLM 分析 | `triage.html` |
 | 暗色/亮色主题 | CSS 变量切换 + localStorage 持久化 | `triage.html` + `index.html` |
 | 响应式布局 | @media 900px/600px 断点，ResizeObserver 画布自适应 | `triage.html` + `index.html` |
-| **边缘模块引擎** | 19 个医疗WASM模块原生编译，零额外依赖，RZ/V2H硬件FPU加速 | `edge_module_engine.rs` |
+| **边缘模块引擎** | 19 个医疗WASM模块原生编译，零额外依赖，RZ/G2L硬件FPU加速 | `edge_module_engine.rs` |
 | WebSocket | `/ws/sensing` 实时推送 `SensingUpdate` JSON | `handlers/ws.rs` |
 | Three.js 本地库 | r140 UMD 模块 (three.min.js + OrbitControls.js)，离线可用 | `ui/lib/` |
 
 ### 边缘模块引擎性能优化
 
 竞赛演示期，19 个 WASM 边缘模块以精简原生 Rust 编译到 sensing-server，
-无需 WASM 解释器开销，直接利用 RZ/V2H 硬件 FPU：
+无需 WASM 解释器开销，直接利用 RZ/G2L 硬件 FPU：
 
 | 优化 | 说明 | 提升 |
 |------|------|:--:|
@@ -238,7 +238,7 @@ ESP32-C5 ×3              RZ/V2H                    7" 触屏 / Web
 ## 数据流（端到端）
 
 ```
-ESP32-C5 ×3                    RZ/V2H (sensing-server)                 浏览器
+ESP32-C5 ×3                    RZ/G2L (sensing-server)                浏览器
 ─────────────    ──────────────────────────────────────    ──────────────────
 CSI 采集          UDP:5005 →
                   parser::parse_esp32_frame()
@@ -348,7 +348,7 @@ CSI 采集          UDP:5005 →
     ├── 项目完整分析报告.md             ← 项目完整分析
     ├── ESP32-C5 移植审计报告.md        ← 39 处修改审计
     ├── ESP32-C5 移植指南.md            ← C5 移植指南
-    ├── 瑞萨 RZV2H 移植计划.md          ← RZ/V2H 移植计划
+    ├── 瑞萨 RZ_G2L 移植计划.md         ← RZ/G2L 移植计划
     ├── 固件官方文档审计报告.md         ← 固件 vs 官方 API 审计
     ├── 目录审计报告.md                 ← 目录完整性审计
     ├── API_REFERENCE.md               ← WebSocket 数据接口文档
@@ -367,7 +367,7 @@ CSI 采集          UDP:5005 →
 - **START 分诊**: 标准战场分诊协议，自动伤员优先级评估
 - **端到端打通**: CSI 采集→信号处理→生命体征→分诊→追踪→可视化，完整管道
 - **全本地部署**: 数据不出方舱，隐私安全，无互联网依赖
-- **瑞萨 DRP-AI**: 可选硬件推理加速
+- **瑞萨 RZ/G2L SBC**: ARM64 边缘计算平台 (Cortex-A55 ×2 + M33, 1GB DDR4)
 - **模拟模式**: 无需硬件即可启动完整演示（`cargo run -- --source simulate`）
 - **代码质量**: 2026-05 完成大规模重构，消除锁竞态死锁隐患，写锁持有时间从 135 行压缩为两阶段锁，main.rs 拆分 16 模块
 
@@ -384,7 +384,7 @@ CSI 采集          UDP:5005 →
 | `docs/ESP32-C5 移植审计报告.md` | C5 移植 39 处修改审计 |
 | `docs/ESP32-C5 移植指南.md` | C5 移植完整指南 |
 | `docs/固件官方文档审计报告.md` | 固件 vs 官方 API 对照审计 |
-| `docs/瑞萨 RZV2H 移植计划.md` | RZ/V2H 主控移植计划 |
+| `docs/瑞萨 RZ_G2L 移植计划.md` | RZ/G2L 主控移植计划 |
 | `docs/端侧LLM方案设计.md` | 端侧 LLM 伤病报告方案设计 |
 | `docs/项目全览.md` | 全项目技术全览（本文档详细版） |
 | `docs/API_REFERENCE.md` | WebSocket 数据接口完整文档 |

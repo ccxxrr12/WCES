@@ -308,7 +308,7 @@ pub(crate) async fn info_page() -> Html<String> {
          .section{{margin-top:20px;border-top:1px solid #38383A;padding-top:16px}}\
          </style></head><body>\
          <h1>WCES — WiFi CSI 应急感知系统</h1>\
-         <p>Rust + Axum + Tokio | 瑞萨 RZ/V2H + ESP32-C5 ×3</p>\
+         <p>Rust + Axum + Tokio | 瑞萨 RZ/G2L + ESP32-C5 ×3</p>\
          <div class='section'><h3>Web 仪表盘</h3><ul>\
          <li><a href='/ui/index.html'><strong>/ui/index.html</strong></a>\
          <span class='tag'>控制中心</span></li>\

@@ -1,7 +1,7 @@
 # 端侧 LLM 智能分析引擎 — 方案设计
 
 > 项目：WCES — 基于WiFi CSI感知与端侧LLM的方舱生命体征感知与监护系统
-> 硬件：瑞萨 RZ/V2H (Cortex-A55 ×4, 8GB RAM, DRP-AI 可选)
+> 硬件：瑞萨 RZ/G2L (Cortex-A55 ×2 + Cortex-M33, 1GB DDR4)
 > 文档版本: v2.1 | 2026-05-17
 
 ---
@@ -45,15 +45,15 @@ LLM 作为**智能分析引擎**，深度参与数据理解：
 
 ## 二、核心硬件约束
 
-RZ/V2H 是 ARM64 嵌入式计算平台，推理速度是核心瓶颈：
+RZ/G2L 是 ARM64 嵌入式计算平台，推理速度与内存是核心瓶颈：
 
 | 约束项 | 数值 | 影响 |
 |--------|------|------|
-| 推理速度 | **~500ms/token** (Cortex-A55, Qwen2.5-0.5B INT4) | 不能逐帧推理 |
-| 100 token 响应 | **~50秒** | 必须流式输出 |
-| 500 token 深度分析 | **~4分钟** | 只能周期触发 |
-| 可用 RAM | ~5.3GB (8GB - OS/sensing-server) | 一个模型 + 充足缓存 |
-| CPU 核心 | Cortex-A55 ×4 | 推理占用 1-2 核，其他核可处理 CSI |
+| 推理速度 | **~1000ms/token** (Cortex-A55 ×2 @ 1.2GHz, Qwen2.5-0.5B INT4) | 不能逐帧推理 |
+| 100 token 响应 | **~100秒** | 必须流式输出 |
+| 500 token 深度分析 | **~8分钟** | 只能周期触发 |
+| 可用 RAM | ~300MB (1GB - OS/sensing-server) | 非常紧张，建议 template-only |
+| CPU 核心 | Cortex-A55 ×2 + Cortex-M33 | 推理占用 1 核，另 1 核处理 CSI |
 
 **关键设计原则：**
 - **异步而非同步** — 不走实时逐帧，走事件/周期触发
@@ -727,7 +727,7 @@ T=75s  → 事件触发 (分诊等级变化!)
 ESP32-C5 ×3
   │ UDP:5005
   ▼
-sensing-server (Rust, RZ/V2H)
+sensing-server (Rust, RZ/G2L)
   │
   ├─→ [规则引擎层] ──────────────────────────────
   │    ├─ VitalSignDetector → RR, HR
@@ -777,17 +777,17 @@ sensing-server (Rust, RZ/V2H)
 ## 八、内存预算
 
 ```
-RZ/V2H 总 RAM: 8GB
+RZ/G2L 总 RAM: 1GB DDR4
 ───────────────────────────────────────────
-Linux OS:                  ~1.5GB
-sensing-server (Rust):     ~500MB   (二进制 + CSI 缓冲区 + MAT + Edge)
-Qwen2.5-0.5B (INT4):       ~500MB   (模型加载 + KV Cache)
-PatientRecordDB (sled):    ~50MB    (嵌入式 KV 存储)
+Linux OS (精简):           ~200MB
+sensing-server (Rust):     ~150MB   (二进制 + CSI 缓冲区 + MAT + Edge)
+Qwen2.5-0.5B (INT4):       ~500MB   (模型加载 + KV Cache, LLM模式禁用时释放)
+PatientRecordDB (sled):    ~30MB    (嵌入式 KV 存储)
 MedicalKnowledge KB:       ~5MB     (JSON 知识库, 内存中)
-SlidingWindow buffers:     ~20MB    (每个伤员 3 个窗口)
-WebSocket + UI assets:     ~200MB
+SlidingWindow buffers:     ~15MB    (每个伤员 3 个窗口)
+WebSocket + UI assets:     ~100MB
 ───────────────────────────────────────────
-空闲:                      ~5.2GB   ✅ 充足
+空闲:                      ~0MB     ⚠️ 无余量，推荐 template-only
 ```
 
 ---
@@ -870,7 +870,7 @@ fn fallback_analysis(
 | | triage.html "AI分析"卡片 | 流式显示 + JSON 解析渲染 | 2h |
 | | 手动触发 + 分析历史 | 医护人员交互 | 1.5h |
 | | 端到端联调 + 边界测试 | 降级/超时/并发 测试 | 2h |
-| | RZ/V2H 交叉编译 + 性能测试 | aarch64 编译，实测 token/s | 1.5h |
+| | RZ/G2L 交叉编译 + 性能测试 | aarch64 编译，实测 token/s | 1.5h |
 | **合计** | | | **18-26h** |
 
 ### 竞赛策略
@@ -878,7 +878,7 @@ fn fallback_analysis(
 ```
 初赛 (视频+报告):
   → 实现 P10-1 + P10-2 (基础设施 + 模板回退分析)
-  → P10-3 下载模型 + 本地测试 (不要求在RZ/V2H上跑)
+  → P10-3 下载模型 + 本地测试 (不要求在RZ/G2L上跑)
   → 在设计报告中完整描述架构 + PPT展示流式推理方案
 
 决赛 (现场演示):
@@ -982,7 +982,7 @@ crates/wifi-densepose-llm/
 | **不可覆盖** | LLM 分析结果不可修改 START 分诊等级 |
 | **显式免责** | 所有 LLM 输出标注"仅供参考，最终决策由医护人员做出" |
 | **3级降级** | LLM 故障时自动回退到模板分析，不丢功能 |
-| **全本地推理** | 模型+数据均在 RZ/V2H 本地，无网络依赖，无隐私泄露 |
+| **全本地推理** | 模型+数据均在 RZ/G2L 本地，无网络依赖，无隐私泄露 |
 | **超时保护** | 单次推理超时 120s 自动中断，回退到 L2 |
 | **输出校验** | JSON 解析失败时使用 fallback，不崩溃 |
 

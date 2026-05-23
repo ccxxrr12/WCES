@@ -74,7 +74,7 @@ $SdkContent = @"
 # ESP32-C5 CSI Node — 竞赛现场配置 (由 apply-config.ps1 生成)
 # ⚠️ ESP-IDF v5.5+ REQUIRED (v5.4 has C5 CSI cache bug on 5GHz, fixed in v5.5)
 # 网络拓扑:
-#   RZ/V2H 主控:   ${TARGET_IP}    (静态 IP)
+#   RZ/G2L 主控:   ${TARGET_IP}    (静态 IP)
 #   ESP32-C5 #1:   192.168.1.10   (SSID: ${SSID}, 信道 ${CHANNEL})
 #   ESP32-C5 #2:   192.168.1.11
 #   ESP32-C5 #3:   192.168.1.12
@@ -112,7 +112,7 @@ CONFIG_LWIP_SO_RCVBUF=y
 # 内存 (C5 400KB SRAM)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
 
-# 关闭显示 (竞赛用外部触屏连 RZ/V2H)
+# 关闭显示 (竞赛用外部触屏连 RZ/G2L)
 # CONFIG_DISPLAY_ENABLE is not set
 
 # 关闭 mock CSI (竞赛用真实 CSI)

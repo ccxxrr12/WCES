@@ -271,7 +271,7 @@ if (channel >= 1 && channel <= 13) {
 | `采购方案.md` | 只有 S3 价格 | 已有时效 |
 | `.vscode/launch.json` | S3 调试配置 | 需添加 C5 |
 | `competition/ESP32-C5 移植指南.md` | 风险标注 | 已更新 ✅ |
-| `competition/瑞萨 RZV2H 移植计划.md` | 引用 S3 | 需检查 |
+| `competition/瑞萨 RZ_G2L 移植计划.md` | 引用 S3 | 需检查 |
 
 ---
 

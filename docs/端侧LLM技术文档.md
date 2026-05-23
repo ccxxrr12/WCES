@@ -16,7 +16,7 @@
 - **时序趋势感知**（短/中/长三窗口滑动统计）
 - **优先级细化**（在 START 规则引擎基础上提供第二层风险评估）
 
-引擎运行在瑞萨 RZ/V2H 主控（ARM64 Cortex-A55 ×4, 8GB RAM）上，使用 INT4 量化的 Qwen2.5-0.5B 模型进行全本地推理，无数据出舱，保障方舱医院隐私安全。
+引擎运行在瑞萨 RZ/G2L 主控（ARM64 Cortex-A55 ×2 + Cortex-M33, 1GB DDR4）上，使用 INT4 量化的 Qwen2.5-0.5B 模型进行全本地推理，无数据出舱，保障方舱医院隐私安全。
 
 ---
 
@@ -74,7 +74,7 @@ crates/wifi-densepose-llm/
 
 | 维度 | 选型理由 |
 |------|----------|
-| **参数量** | 0.5B — RZ/V2H 8GB RAM 可舒适加载 |
+| **参数量** | 0.5B — RZ/G2L 1GB RAM 可用但紧凑，需精简 OS |
 | **量化** | INT4 Q4_K_M (~380MB 磁盘, ~500MB RAM) |
 | **中文能力** | ⭐⭐⭐ 阿里出品，原生中文训练 |
 | **医疗适配** | Instruct 微调版本，指令遵循能力强 |
@@ -249,13 +249,13 @@ VitalTrendSummary {
 - `tokenizers::Tokenizer` — Qwen2 tokenizer (vocab ~152K)
 - EOS 检测：`<|im_end|>` token (id=151643)
 
-**性能估算**（RZ/V2H Cortex-A55）：
+**性能估算**（RZ/G2L Cortex-A55 ×2 @ 1.2GHz）：
 | 指标 | 数值 |
 |------|------|
-| 模型加载 | ~5-8 秒 |
-| 推理速度 | ~500ms/token |
-| 100 token 分析 | ~50 秒 |
-| 200 token 详细分析 | ~100 秒 |
+| 模型加载 | ~10-15 秒 |
+| 推理速度 | ~1000ms/token (dual A55) |
+| 100 token 分析 | ~100 秒 |
+| 200 token 详细分析 | ~200 秒 |
 | RAM 占用 | ~500MB |
 
 ### 4.7 协调引擎 (LlmAnalysisEngine)
@@ -370,7 +370,7 @@ VitalTrendSummary {
 ESP32-C5 ×3
   │ UDP:5005 (CSI 数据帧)
   ▼
-sensing-server (RZ/V2H)
+sensing-server (RZ/G2L)
   │
   ├─→ VitalSignDetector → 呼吸率/心率
   ├─→ TriageEngine → START分诊 (红/黄/绿/黑)
@@ -451,7 +451,7 @@ L3 最小模式
 | **不可覆盖** | LLM 分析结果永远不修改 START 分诊等级，只提供"第二意见" |
 | **显式免责** | 所有 LLM 输出标注"仅供参考，最终决策由医护人员做出" |
 | **3级降级** | LLM 故障时自动回退到模板分析，核心分诊功能不丢失 |
-| **全本地推理** | 模型+数据均运行在 RZ/V2H 本地，无网络依赖，无隐私泄露风险 |
+| **全本地推理** | 模型+数据均运行在 RZ/G2L 本地，无网络依赖，无隐私泄露风险 |
 | **超时保护** | 单次推理超时 120s 自动中断，回退到 L2 |
 | **输出校验** | JSON 解析失败时使用 fallback，不崩溃 |
 | **冷却机制** | 同一伤员 30s 内不重复触发分析，防止资源占用 |
@@ -535,19 +535,22 @@ async fn main() -> anyhow::Result<()> {
 
 ## 九、性能与资源
 
-### 9.1 内存预算 (RZ/V2H 8GB)
+### 9.1 内存预算 (RZ/G2L 1GB DDR4)
 
 ```
-Linux OS:                   ~1.5GB
-sensing-server (Rust):      ~500MB   (CSI缓冲区 + MAT + Edge Modules)
+Linux OS (精简):             ~200MB
+sensing-server (Rust):      ~150MB   (CSI缓冲区 + MAT + Edge Modules)
 Qwen2.5-0.5B (INT4):        ~500MB   (模型权重 + KV Cache)
-PatientRecordDB (sled):     ~50MB    (嵌入式KV存储)
+PatientRecordDB (sled):     ~30MB    (嵌入式KV存储)
 MedicalKnowledge KB:        ~5MB     (JSON知识库)
-SlidingWindow buffers:      ~20MB    (每伤员3窗口)
-WebSocket + UI assets:      ~200MB
+SlidingWindow buffers:      ~15MB    (每伤员3窗口)
+WebSocket + UI assets:      ~100MB
 ─────────────────────────────────
-空闲:                       ~5.2GB   ✅ 充足
+总计:                       ~1000MB  ⚠️ 非常紧凑
 ```
+
+> **注意**: RZ/G2L SBC 标配 1GB DDR4，LLM 模式内存非常紧张。
+> 推荐配置：禁用 LLM 使用 `template-only` 模式，或扩容至 2GB+ 内存。
 
 ### 9.2 测试覆盖
 
@@ -564,12 +567,12 @@ WebSocket + UI assets:      ~200MB
 
 | 维度 | 本方案 | 传统云LLM方案 | 纯规则引擎方案 |
 |------|:---:|:---:|:---:|
-| **部署位置** | RZ/V2H 本地 | 云服务器 | RZ/V2H 本地 |
+| **部署位置** | RZ/G2L 本地 | 云服务器 | RZ/G2L 本地 |
 | **隐私安全** | ✅ 全本地，无数据出舱 | ❌ 数据上传云端 | ✅ 全本地 |
 | **网络依赖** | ✅ 离线可用 | ❌ 需稳定网络 | ✅ 离线可用 |
 | **医学知识** | ✅ RAG外挂知识库 | ✅ 模型内化 | ❌ 规则硬编码 |
 | **分析深度** | ✅ 多维度联合推断 | ✅ 深度分析 | ⚠️ 仅规则覆盖范围 |
-| **推理延迟** | 30-120s (0.5B) | 2-5s (云端GPU) | <1ms |
+| **推理延迟** | 60-240s (0.5B, dual A55) | 2-5s (云端GPU) | <1ms |
 | **灵活性** | ✅ 更新知识库即可 | ⚠️ 需重新部署 | ❌ 修改代码 |
 | **成本** | ✅ 零 API 费用 | ❌ 按 token 计费 | ✅ 零费用 |
 

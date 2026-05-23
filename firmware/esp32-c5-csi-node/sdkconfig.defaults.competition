@@ -8,7 +8,7 @@
 #   idf.py set-target esp32c5 && idf.py build && idf.py -p COMx flash
 #
 # 网络拓扑:
-#   RZ/V2H 主控:   192.168.1.1    (静态 IP, 千兆路由)
+#   RZ/G2L 主控:   192.168.1.1    (静态 IP, 千兆路由)
 #   ESP32-C5 #1:   192.168.1.10   (SSID: WCES, 信道 6)
 #   ESP32-C5 #2:   192.168.1.11
 #   ESP32-C5 #3:   192.168.1.12
@@ -46,7 +46,7 @@ CONFIG_LWIP_SO_RCVBUF=y
 # 内存 (C5 400KB SRAM)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
 
-# 关闭显示 (竞赛用外部触屏连 RZ/V2H)
+# 关闭显示 (竞赛用外部触屏连 RZ/G2L)
 # CONFIG_DISPLAY_ENABLE is not set
 
 # 关闭 mock CSI (竞赛用真实 CSI)

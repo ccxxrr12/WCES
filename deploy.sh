@@ -1,6 +1,6 @@
 ﻿#!/bin/bash
 # WCES — 竞赛一键部署脚本
-# 在瑞萨 RZ/V2H 上运行, 启动所有服务
+# 在瑞萨 RZ/G2L 上运行, 启动所有服务
 # 使用: ssh root@192.168.1.1 && cd /opt/WCES && ./deploy.sh
 
 set -e
@@ -12,7 +12,7 @@ NC='\033[0m'
 
 echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}   WCES — 竞赛系统部署             ${NC}"
-echo -e "${CYAN}   瑞萨 RZ/V2H + ESP32-C5 × 3          ${NC}"
+echo -e "${CYAN}   瑞萨 RZ/G2L + ESP32-C5 × 3          ${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 

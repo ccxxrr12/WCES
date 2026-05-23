@@ -21,7 +21,7 @@ csi_channel = 6                # 主信道 (2.4G: 1-13, 5G: 36-177, 6G: 1-233)
 csi_band = "AUTO"              # AUTO | 2G_ONLY | 5G_ONLY (C5 双频)
                                 # ⚠️ 5G/6G 需要 ESP-IDF v5.5+
 
-# --- UDP 发送目标 (RZ/V2H 主控) ---
+# --- UDP 发送目标 (RZ/G2L 主控) ---
 target_ip = "192.168.1.1"      # sensing-server 地址
 target_port = 5005             # UDP 接收端口
 
@@ -133,12 +133,12 @@ sig_sparse_recovery = true
 # ============================================================================
 [deploy]
 
-# --- 瑞萨 RZ/V2H 目标 ---
+# --- 瑞萨 RZ/G2L 目标 ---
 rz_ip = "192.168.1.1"           # SSH 目标
 rz_user = "root"                # SSH 用户
 rz_project_root = "/opt/WCES"  # 项目根目录
 
-# --- 二进制路径 (RZ/V2H 上) ---
+# --- 二进制路径 (RZ/G2L 上) ---
 sensing_bin = "./rust-server/target/aarch64-unknown-linux-gnu/release/sensing-server"
 triage_ui = "./docs/triage-ui/triage.html"
 ui_dir = "./ui"

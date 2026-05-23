@@ -37,7 +37,7 @@ impl StreamingGenerator {
     /// # Arguments
     /// * `model_path` - Path to `.gguf` model file (e.g. Qwen2.5-0.5B Q4_0)
     /// * `tokenizer_path` - Path to `tokenizer.json`
-    /// * `cpu` - Force CPU inference (set to true for RZ/V2H ARM64)
+    /// * `cpu` - Force CPU inference (set to true for RZ/G2L ARM64)
     pub fn load(
         model_path: impl AsRef<Path>,
         tokenizer_path: impl AsRef<Path>,
@@ -48,7 +48,7 @@ impl StreamingGenerator {
 
         tracing::info!("Loading GGUF model from: {}", model_path.display());
 
-        // Use CPU on RZ/V2H
+        // Use CPU on RZ/G2L
         let device = if cpu {
             Device::Cpu
         } else {
@@ -245,7 +245,7 @@ impl StreamingGenerator {
 
 /// Dedicated runtime for hosting the LLM in its own tokio task.
 ///
-/// Inference can take 30-120 seconds on RZ/V2H ARM64.
+/// Inference can take 60-240 seconds on RZ/G2L ARM64 (dual A55).
 /// This runs on a dedicated blocking thread to avoid starving
 /// the sensing-server's main async loop.
 pub struct LlmRuntime {

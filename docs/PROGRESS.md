@@ -38,7 +38,7 @@
 | 6 | `main()` 中 `"wifi"` 源分支 | — |
 | **合计** | **约 390 行删除** | |
 
-**原因**: 竞赛目标平台为 RZ/V2H (ARM Linux)，不存在 Windows `netsh` 命令。原代码依赖 `wifi-densepose-wifiscan` crate 用于 Windows 笔记本 CSI 采集。
+**原因**: 竞赛目标平台为 RZ/G2L (ARM Linux)，不存在 Windows `netsh` 命令。原代码依赖 `wifi-densepose-wifiscan` crate 用于 Windows 笔记本 CSI 采集。
 
 ### 2.3 MAT Pipeline 完整集成 ⭐
 
@@ -88,7 +88,7 @@ cargo check  → ✅ 编译通过
 | 7 | `docs/竞赛差距分析.md` | 全局 `competition/`→`docs/` |
 | 8 | `docs/ML架构详解.md` | 删除不存在crate引用 |
 | 9 | `docs/ESP32-C5 移植审计报告.md` | `rust-port/`→`rust-server/` |
-| 10 | `docs/瑞萨 RZV2H 移植计划.md` | `rust-port/`→`rust-server/` |
+| 10 | `docs/瑞萨 RZ_G2L 移植计划.md` | `rust-port/`→`rust-server/` |
 | 11 | `docs/目录审计报告.md` | Cargo.lock状态更新 |
 | 12 | `docs/端侧LLM方案设计.md` | candle版本号(0.8→0.4) |
 | 13 | `rust-server/Cargo.toml` | 删除4个幽灵workspace依赖(api/db/wasm/ruvector) |
@@ -330,7 +330,7 @@ Current Vitals ───┘                                                     
 ## 数据流架构 (更新: MAT 已集成)
 
 ```
-ESP32-C5 ×3                  RZ/V2H                             Browser
+ESP32-C5 ×3                  RZ/G2L                             Browser
 ─────────────    ────────────────────────────    ─────────────────────────
 CSI 采集        UDP:5005 → sensing-server
                             │
@@ -397,7 +397,7 @@ CSI 采集        UDP:5005 → sensing-server
 | ~~端侧 LLM 代码实现~~ | ✅ 完成 2026-05-15 | wifi-densepose-llm crate + triage.html AI卡片 |
 | ~~WASM 边缘模块集成~~ | ✅ 完成 2026-05-14 | 19个模块全部接入 (13+6) |
 | C5 固件编译 | 🔴 必须 | ESP-IDF v5.5+ |
-| Rust aarch64 交叉编译 | 🔴 必须 | RZ/V2H SDK |
+| Rust aarch64 交叉编译 | 🔴 必须 | RZ/G2L SDK |
 | 3 节点 烧录+联调 | 🔴 必须 | 硬件 |
 
 ### 竞赛材料

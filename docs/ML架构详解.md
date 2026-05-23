@@ -155,7 +155,7 @@ L_transfer:  学生特征 vs 教师特征 → MSE
 ## 四、推理部署
 ### 4.1 三种推理后端
 
-| 后端 | 依赖 | 适用场景 | RZ/V2H 可用 |
+| 后端 | 依赖 | 适用场景 | RZ/G2L 可用 |
 |------|------|----------|:-----------:|
 | **tch-rs** (LibTorch) | libtorch.so (~2GB) | 训练+GPU推理 | ❌ (太重) |
 | **ONNX Runtime** | onnxruntime (~20MB) | **跨平台 CPU 推理** | ✅ |
@@ -168,7 +168,7 @@ L_transfer:  学生特征 vs 教师特征 → MSE
 1. 导出模型:
    python export_onnx.py --input densepose_model.pt --output densepose.onnx
 
-2. RZ/V2H 推理:
+2. RZ/G2L 推理:
    let model = OnnxModel::load("densepose.onnx")?;
    let output = model.run(vec![csi_input])?;
    // output[0] → keypoints [1,17,56,56]
@@ -271,7 +271,7 @@ let config = TrainingConfig {
 └──────────────────────────────────────────┘
 
 实现:
-1. 默认关闭 → 节省 RZ/V2H CPU, 确保核心分诊功能流畅
+1. 默认关闭 → 节省 RZ/G2L CPU, 确保核心分诊功能流畅
 2. 点击按钮 → 启动 ONNX 推理 → 3D 骨架渲染
 3. 再次点击 → 停止推理, 释放资源
 4. 同时最多开启 2 个伤员的骨架 (避免 CPU 过载)
