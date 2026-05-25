@@ -250,7 +250,118 @@ mod tests {
     #[test]
     fn test_config_competition() {
         let config = LlmConfig::competition();
-        assert_eq!(config.max_new_tokens, 200);
-        assert_eq!(config.temperature, 0.3);
+        assert_eq!(config.short_window_secs, 60);
+        assert_eq!(config.medium_window_secs, 300);
+        assert_eq!(config.periodic_interval_secs, 30);
+    }
+
+    // ── Agent Integration ────────────────────────────────────────────────────
+
+    use wifi_densepose_llm::{
+        AgentVitalSnapshot, AnalysisSource, DegradationLevel, MedicalAgent, MedicalKb,
+        StructuredContext, TriggerSource, TrendSummary,
+    };
+
+    #[tokio::test]
+    async fn test_agent_analyze_skip_deceased() {
+        let mut agent = MedicalAgent::new_template_only();
+        let ctx = make_context(1, "Deceased", TriggerSource::PeriodicScan);
+        let result = agent.analyze(ctx).await;
+        assert!(result.text.is_empty() || result.degrade_level >= DegradationLevel::L3TemplateOnly);
+    }
+
+    #[tokio::test]
+    async fn test_agent_analyze_minor_returns_template() {
+        let mut agent = MedicalAgent::new_template_only();
+        let ctx = make_context(2, "Minor", TriggerSource::PeriodicScan);
+        let result = agent.analyze(ctx).await;
+        assert_eq!(result.source, AnalysisSource::Template);
+        assert!(result.degrade_level >= DegradationLevel::L2TemplateWithKB);
+    }
+
+    #[tokio::test]
+    async fn test_agent_analyze_immediate_deteriorating() {
+        let mut agent = MedicalAgent::new_template_only();
+        let ctx = make_context(3, "Immediate", TriggerSource::Deterioration {
+            patient_id: 3,
+            from: "Delayed".into(),
+            to: "Immediate".into(),
+        });
+        let result = agent.analyze(ctx).await;
+        assert_eq!(result.patient_id, 3);
+        assert!(!result.text.is_empty() || result.source == AnalysisSource::Template);
+    }
+
+    #[tokio::test]
+    async fn test_agent_cooldown_caches_result() {
+        let mut agent = MedicalAgent::new_template_only();
+        let ctx = make_context(4, "Minor", TriggerSource::PeriodicScan);
+
+        let r1 = agent.analyze(ctx.clone()).await;
+        let r2 = agent.analyze(ctx).await;
+
+        assert_eq!(r1.text, r2.text);
+        assert_eq!(r1.patient_id, r2.patient_id);
+    }
+
+    #[test]
+    fn test_medical_kb_loads_agent_json() {
+        let kb = MedicalKb::load("data/agent_kb.json")
+            .expect("Should load agent KB");
+        assert!(kb.entry_count() >= 15, "Should have 15+ entries, got {}", kb.entry_count());
+
+        let vitals = AgentVitalSnapshot {
+            breathing_rate_bpm: Some(32.0),
+            heart_rate_bpm: Some(135.0),
+            breathing_confidence: 0.9,
+            heartbeat_confidence: 0.85,
+            signal_quality: 0.7,
+            motion_class: Some("present_still".into()),
+            person_count_estimate: Some(1),
+            rssi: Some(-45),
+        };
+
+        let matches = kb.match_vitals(&vitals);
+        assert!(!matches.is_empty(), "should match tachycardia or respiratory_distress");
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn make_context(patient_id: u32, triage: &str, trigger: TriggerSource) -> StructuredContext {
+        StructuredContext {
+            patient_id,
+            node_id: 1,
+            vitals_current: AgentVitalSnapshot {
+                breathing_rate_bpm: Some(18.0),
+                heart_rate_bpm: Some(80.0),
+                breathing_confidence: 0.9,
+                heartbeat_confidence: 0.85,
+                signal_quality: 0.8,
+                motion_class: Some("present_still".into()),
+                person_count_estimate: Some(1),
+                rssi: Some(-45),
+            },
+            vitals_trend_1min: TrendSummary {
+                direction: TrendDirection::Stable,
+                delta: 0.0,
+                delta_pct: 0.0,
+                anomaly_score: 1.0,
+                data_points: 10,
+            },
+            vitals_trend_5min: TrendSummary {
+                direction: TrendDirection::Stable,
+                delta: 0.0,
+                delta_pct: 0.0,
+                anomaly_score: 1.0,
+                data_points: 50,
+            },
+            triage_current: triage.to_string(),
+            triage_trajectory: vec![],
+            patient_history: None,
+            recent_alerts: vec![],
+            kb_matches: vec![],
+            triggered_by: trigger,
+            built_at_ms: 0,
+        }
     }
 }

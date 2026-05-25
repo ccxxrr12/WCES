@@ -472,6 +472,7 @@
                 <div style="margin-top:10px;display:flex;gap:6px;">
                     <button class="btn btn-ghost" style="font-size:11px;padding:6px 10px;flex:1;" onclick="showPatientModal()">+ 登记伤员</button>
                     <button class="llm-analyze-btn" id="llmAnalyzeBtn" disabled onclick="requestLlmAnalysis()" style="flex:2;margin-top:0;">🤖 AI分析</button>
+                    <button class="llm-analyze-btn" id="agentAnalyzeBtn" disabled onclick="requestAgentAnalysis()" style="flex:2;margin-top:0;background:linear-gradient(135deg,#5856D6 0%,#AF52DE 100%);">🧠 Agent</button>
                 </div>
                 <div id="patientListSection" style="display:none;margin-top:8px;">
                     <div class="section-title" style="margin-bottom:6px;">📋 已登记伤员</div>
@@ -531,6 +532,11 @@ window.addEventListener('error',function(e){
         showError('JS Error: '+(e.message||'unknown')+' (line '+(e.lineno||'?')+')');
     }
 },true);
+window.addEventListener('unhandledrejection',function(e){
+    console.error('[TRIAGE] Unhandled rejection:',e.reason);
+    if(e.reason)showError('Async error: '+(e.reason.message||e.reason));
+    e.preventDefault();
+});
 
 // ═══════════════════════════════════════════════════════════
 // GLOBAL STATE
@@ -713,7 +719,7 @@ function createFigurePool(){
         const group=new THREE.Group();
         const joints=[],bones=[],segments=[];
         for(let i=0;i<17;i++){
-            const r=i>=1&&i<=4?.04:i>=5&&i<=6?.055:.04;
+            const r=(i>=1&&i<=4)?0.04:(i>=5&&i<=6)?0.055:0.04;
             const geo=new THREE.SphereGeometry(r,16,16);
             const mat=new THREE.MeshStandardMaterial({color:i<=4?COLORS.head:COLORS.joint,emissive:i<=4?COLORS.head:COLORS.joint,emissiveIntensity:.25,metalness:.3,roughness:.3});
             const j=new THREE.Mesh(geo,mat);j.castShadow=true;j.userData.index=i;
@@ -795,7 +801,7 @@ function animate(){
         poses.push(latestData.pose_keypoints.map(k=>[k[0],k[1],k[2]]));
     }else{
         const numPeople=latestTriage?.survivors?.length?Math.min(latestTriage.survivors.length,3):1;
-        const motionScore=latestData?.classification?.motion_score??(latestData?.classification?.motion_level==='high'?.8:latestData?.classification?.motion_level==='medium'?.3:.05);
+        const motionScore=latestData?.classification?.motion_score??(latestData?.classification?.motion_level==='high'?0.8:latestData?.classification?.motion_level==='medium'?0.3:0.05);
         const breathAmp=latestData?.vital_signs?.breathing_rate_bpm?Math.sin(animationTime*latestData.vital_signs.breathing_rate_bpm/60*Math.PI*2):0;
         for(let i=0;i<numPeople;i++)poses.push(generatePose17(i,animationTime*60,motionScore,breathAmp));
     }
@@ -809,6 +815,7 @@ function onWindowResize(){
 }
 
 function dispose3D(){
+    window.removeEventListener('resize',onWindowResize);
     if(animFrameId){cancelAnimationFrame(animFrameId);animFrameId=null}
     figureGroups.forEach(g=>{
         if(!g.userData)return;
@@ -1041,6 +1048,7 @@ function connectWebSocket(){
             else if(d.type==='llm_stream')handleLlmStream(d);
             else if(d.type==='llm_analysis_complete')handleLlmComplete(d);
             else if(d.type==='llm_fallback')handleLlmFallback(d);
+            else if(d.type==='agent_analysis')handleAgentAnalysis(d);
         }catch(err){console.error('[TRIAGE] WS msg error:',err)}
     };
     ws.onclose=()=>{
@@ -1048,8 +1056,9 @@ function connectWebSocket(){
         document.getElementById('statusDot').className='status-dot offline';
         if(wsReconnectAttempts<WS_MAX_RECONNECT){
             wsReconnectAttempts++;
-            const delay=Math.min(1000*Math.pow(2,wsReconnectAttempts),30000);
-            document.getElementById('statusText').textContent=`重连 ${wsReconnectAttempts}/${WS_MAX_RECONNECT} (${(delay/1000).toFixed(0)}s)`;
+            const base=Math.min(1000*Math.pow(2,wsReconnectAttempts),30000);
+            const delay=Math.random()*base;
+            document.getElementById('statusText').textContent=`重连 ${wsReconnectAttempts}/${WS_MAX_RECONNECT} (${(delay/1000).toFixed(1)}s)`;
             setTimeout(connectWebSocket,delay);
         }else{
             document.getElementById('statusText').textContent='连接失败 · 已达最大重试';
@@ -1062,8 +1071,13 @@ function connectWebSocket(){
 // LLM ANALYSIS
 // ═══════════════════════════════════════════════════════════
 function enableAnalyzeButton(){
-    const btn=document.getElementById('llmAnalyzeBtn');if(!btn)return;
-    if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成AI分析报告'}
+    const btn=document.getElementById('llmAnalyzeBtn');
+    const agentBtn=document.getElementById('agentAnalyzeBtn');
+    if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){
+        if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);
+        if(btn){btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成AI分析报告'}
+        if(agentBtn){agentBtn.disabled=false;agentBtn.textContent=selectedPatientId?`🧠 Agent ${selectedPatientId}`:'🧠 Agent分析'}
+    }
 }
 function selectPatientForAnalysis(patientId){selectedPatientId=patientId;enableAnalyzeButton()}
 function requestLlmAnalysis(){
@@ -1071,8 +1085,16 @@ function requestLlmAnalysis(){
     const survivor=(latestTriage.survivors||[]).find(s=>s.id===selectedPatientId);if(!survivor)return;
     const btn=document.getElementById('llmAnalyzeBtn');btn.disabled=true;btn.innerHTML='<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
     llmStreamBuffer[selectedPatientId]={text:'',isStreaming:true};renderLlmStreamCard(selectedPatientId,'');
-    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'llm_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id}));
+    if(ws&&ws.readyState===WebSocket.OPEN){
+        ws.send(JSON.stringify({type:'llm_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id}));
+    }
     else generateLocalAnalysis(selectedPatientId,survivor);
+}
+
+function requestAgentAnalysis(){
+    if(!selectedPatientId||!latestTriage)return;
+    const btn=document.getElementById('agentAnalyzeBtn');if(btn){btn.disabled=true;btn.innerHTML='<span style="animation:pulse 1s infinite">⏳</span> Agent分析中...';}
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'agent_analyze_request',patient_id:selectedPatientId}));
 }
 function handleLlmStream(data){
     const pid=data.survivor_id||data.patient_id;if(!pid)return;
@@ -1082,6 +1104,36 @@ function handleLlmStream(data){
 }
 function handleLlmComplete(data){const pid=data.survivor_id||data.patient_id;if(!pid)return;llmStreamBuffer[pid]={text:'',isStreaming:false};if(data.analysis_json)renderLlmAnalysisCard(pid,data.analysis_json,data.generated_by||'llm');const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}}
 function handleLlmFallback(data){const pid=data.patient_id;if(!pid)return;renderLlmAnalysisCard(pid,data.analysis_json||data,data.generated_by||'fallback');const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}}
+
+function handleAgentAnalysis(data){
+    const pid=data.patient_id?String(data.patient_id):null;if(!pid)return;
+    renderAgentAnalysisCard(pid,data);
+    const llmBtn=document.getElementById('llmAnalyzeBtn');if(llmBtn){llmBtn.disabled=false;llmBtn.textContent='🤖 AI分析'}
+    const agentBtn=document.getElementById('agentAnalyzeBtn');if(agentBtn){agentBtn.disabled=false;agentBtn.textContent='🧠 Agent分析'}
+}
+
+function renderAgentAnalysisCard(patientId,data){
+    const container=document.getElementById('llmAnalysisContainer');
+    const sourceLabel=data.source==='llm'?'🧠 Agent LLM':data.source==='cache'?'📦 缓存回放':'📋 模板分析';
+    const sourceClass=data.source==='llm'?'llm':data.source==='cache'?'fallback':'fallback';
+    const degradeEmoji={L0FullLLM:'🌟',L1BriefLLM:'⚡',L2TemplateWithKB:'📚',L3TemplateOnly:'📋',L4CachedReplay:'📦'};
+    let html=`<div class="llm-card" id="llm-card-${patientId}"><div class="llm-card-header"><span class="patient-tag">${patientId}</span><span class="llm-badge ${sourceClass}">${sourceLabel}</span></div>`;
+    html+=`<div style="font-size:10px;color:var(--text-secondary);margin-bottom:8px;">等级: ${degradeEmoji[data.degrade_level]||'❓'} ${data.degrade_level||'unknown'}</div>`;
+    if(data.risk_adjustment){
+        const ra=data.risk_adjustment;
+        const dirEmoji=ra.direction==='escalate'?'🔺':ra.direction==='deescalate'?'🔻':'➡️';
+        const dirColor=ra.direction==='escalate'?'var(--danger-red)':ra.direction==='deescalate'?'var(--success-green)':'var(--text-secondary)';
+        html+=`<div class="llm-risk-badge ${ra.direction==='escalate'?'critical':ra.direction==='deescalate'?'low':'moderate'}">${dirEmoji} 分诊建议: ${ra.direction==='escalate'?'升级':ra.direction==='deescalate'?'降级':'维持'} (置信度: ${(ra.confidence*100).toFixed(0)}%)</div>`;
+        if(ra.reason_short)html+=`<div style="font-size:12px;color:${dirColor};margin-bottom:6px;">${escapeHtml(ra.reason_short)}</div>`;
+        if(ra.detail)html+=`<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px;">${escapeHtml(ra.detail)}</div>`;
+    }
+    if(data.text){
+        html+=`<div class="llm-section-label">📝 分析详情</div>`;
+        html+=`<div class="llm-stream-text">${escapeHtml(data.text)}</div>`;
+    }
+    html+=`<div style="margin-top:10px;font-size:9px;color:var(--text-secondary);text-align:right;">${data.generated_at_ms?new Date(data.generated_at_ms).toLocaleTimeString('zh-CN'):''}</div></div>`;
+    container.innerHTML=html;
+}
 
 function renderLlmStreamCard(patientId,text,isStreaming){
     const container=document.getElementById('llmAnalysisContainer');
@@ -1149,7 +1201,7 @@ function refreshPatientList(){
     const ids=Object.keys(registeredPatients);
     if(ids.length===0){sec.style.display='none';return}
     sec.style.display='block';
-    list.innerHTML=ids.map(id=>{const p=registeredPatients[id];return`<div class="patient-list-item${id===selectedPatientId?' active':''}" onclick="selectPatientForAnalysis('${id}')"><div><div style="font-weight:500;font-size:12px;">${id}</div><div style="font-size:10px;color:var(--text-secondary);">${p.age?p.age+'岁 ':''}${(p.pre_existing||[]).slice(0,2).join(', ')||'无病史'}</div></div><button class="btn btn-ghost" style="font-size:9px;padding:2px 6px;" onclick="event.stopPropagation();deletePatient('${id}')">✕</button></div>`}).join('');
+    list.innerHTML=ids.map(id=>{const p=registeredPatients[id];const eId=escapeHtml(id);const eAge=p.age?escapeHtml(String(p.age)):'';const eHist=escapeHtml((p.pre_existing||[]).slice(0,2).join(', ')||'无病史');return`<div class="patient-list-item${id===selectedPatientId?' active':''}" onclick="selectPatientForAnalysis('${eId}')"><div><div style="font-weight:500;font-size:12px;">${eId}</div><div style="font-size:10px;color:var(--text-secondary);">${eAge?eAge+'岁 ':''}${eHist}</div></div><button class="btn btn-ghost" style="font-size:9px;padding:2px 6px;" onclick="event.stopPropagation();deletePatient('${eId}')">✕</button></div>`}).join('');
 }
 function deletePatient(patientId){delete registeredPatients[patientId];try{localStorage.setItem('wces_patients',JSON.stringify(registeredPatients))}catch(e){}if(selectedPatientId===patientId)selectedPatientId=null;refreshPatientList();enableAnalyzeButton()}
 

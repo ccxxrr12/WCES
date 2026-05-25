@@ -82,28 +82,58 @@ load_on_startup = false         # 启动时加载 DensePose 模型 (费内存)
 model_path = "data/models/"     # .rvf 模型搜索路径
 pose_synthetic = true          # 模拟模式下生成合成骨架 (无需模型文件)
 
-# --- 端侧 LLM ---
-[server.llm]
-enabled = true                   # ✅ 已实现: LLM 智能分析引擎 (P10d)
-feature = "llm"                  # llm = 完整LLM, template-only = 仅模板
-model_format = "GGUF"            # GGUF
-model_path = "data/models/qwen2.5-0.5b-q4.gguf"
-tokenizer_path = "data/models/qwen2_tokenizer.json"
-max_tokens = 256
-temperature = 0.3
-periodic_analysis_secs = 30      # 周期分析间隔 (0=仅事件触发)
-analysis_timeout_secs = 120      # 单次推理超时
-patient_cooldown_secs = 30       # 同一伤员分析冷却
-fallback_to_template = true      # LLM 失败时回退到模板分析
+# --- 端侧 Medical Agent (Phase 4) ---
+# Coordinator 模式: RZ/G2L 信号处理 + 规则分诊 → 云端 LLM 深度分析
+# 优雅降级: 网络中断/API故障时自动回退到本地模板分析
+[server.agent]
+enabled = true                      # 启用 Medical Agent 分析
+mode = "agent"                      # agent = 云端LLM + 本地降级, template-only = 仅模板
 
-# 窗口配置
-short_window_secs = 60           # 短期趋势窗口 (1分钟)
-medium_window_secs = 300         # 中期趋势窗口 (5分钟)
-long_window_secs = 1800          # 长期基线窗口 (30分钟)
+# --- 触发与冷却 ---
+periodic_analysis_secs = 30         # 周期巡检间隔 (0=仅事件触发)
+analysis_timeout_secs = 120         # 单次分析超时 (秒)
+per_patient_cooldown_secs = 300     # 同一伤员冷却时间 (秒), 避免频繁 API 调用
+fallback_to_template = true         # LLM 失败时自动回退到模板分析
 
-# 知识库
-patient_db_path = "data/patients"        # 病历数据库 (sled)
-medical_kb_path = "data/medical_knowledge.json"  # 医学知识库
+# --- 滑窗配置 ---
+short_window_secs = 60              # 短期趋势窗口 (1分钟)
+medium_window_secs = 300            # 中期趋势窗口 (5分钟)
+long_window_secs = 1800             # 长期基线窗口 (30分钟)
+
+# --- 知识库路径 ---
+patient_db_path = "data/patients"                   # 病历数据库 (sled)
+medical_kb_path = "data/medical_knowledge.json"      # 传统疾病知识库 (8种)
+agent_kb_path = "data/agent_kb.json"                 # Agent 体征模式知识库 (16种)
+
+# --- 云端 LLM 网关 (OpenAI 兼容 API) ---
+[server.agent.gateway]
+endpoint = ""                       # 空 = 自动使用 https://api.openai.com/v1/chat/completions
+                                    # 可替换为任意 OpenAI 兼容端点 (vLLM/Ollama/LiteLLM)
+model = "gpt-4o-mini"               # 模型名: gpt-4o-mini | gpt-4o | qwen2.5-7b | deepseek-v3 等
+api_key = ""                        # API Key, 空 = 从环境变量 LLM_API_KEY 读取
+timeout_secs = 20                   # 单次 HTTP 请求超时 (秒)
+max_retries = 2                     # 失败后最大重试次数
+temperature = 0.3                   # LLM 采样温度 (0-2, 越低越确定性)
+
+# --- 熔断器 (Circuit Breaker) ---
+[server.agent.circuit_breaker]
+failure_threshold = 3               # 连续失败 N 次后打开熔断器
+open_duration_secs = 300            # 熔断器打开后恢复等待时间 (秒)
+
+# --- 降级阶梯 (Degradation Ladder) ---
+[server.agent.degradation]
+cooldown_secs = 300                 # 同一伤员重复分析冷却 (秒)
+max_cache_size = 32                 # LRU 缓存上限 (条目数)
+network_failure_threshold = 5       # 连续失败 N 次后标记网络不可达
+
+# --- 输出校验 ---
+[server.agent.validator]
+enabled = true                      # 启用安全校验
+block_medication = true             # 拦截药物建议
+block_injection = true              # 拦截注射建议
+block_dosage = true                 # 拦截剂量建议
+block_surgery = true                # 拦截手术/处方建议
+append_disclaimer = true            # 自动附加 [AI分析, 仅供参考]
 
 # --- 边缘模块 ---
 [server.edge_modules]

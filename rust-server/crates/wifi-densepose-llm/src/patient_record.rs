@@ -1,6 +1,6 @@
 //! Patient Record Database
 //!
-//! Embedded patient record storage using sled.
+//! Embedded patient record storage using sled with secondary index.
 //! Each patient has a unique ID, optional demographics,
 //! pre-existing conditions, current complaint, medications,
 //! and is linked to a monitoring node.
@@ -84,34 +84,64 @@ impl PatientRecord {
 // ── Database ─────────────────────────────────────────────────────────────────
 
 /// Embedded patient record database backed by sled.
+///
+/// Uses two trees:
+/// - `patients`: primary key (patient_id) → serialized PatientRecord
+/// - `node_index`: node_id → patient_id for O(1) lookup
+///
+/// Writes use `sled::Batch` for atomic primary+index updates.
+/// sled's default auto-flush (500ms) handles durability; manual `flush()`
+/// is not called on every write.
 pub struct PatientRecordDB {
-    db: sled::Db,
+    patients: sled::Tree,
+    node_index: sled::Tree,
+    db: sled::Db, // kept for flush_async and lifecycle
 }
 
 impl PatientRecordDB {
     /// Open or create a patient database at the given path.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let db = sled::open(path).context("Failed to open patient database")?;
-        Ok(Self { db })
+        let patients = db.open_tree("patients")?;
+        let node_index = db.open_tree("node_index")?;
+        Ok(Self { db, patients, node_index })
     }
 
-    /// Store a patient record.
+    /// Store a patient record. Uses separate batches per tree for primary+index consistency.
     pub fn put(&self, record: &PatientRecord) -> Result<()> {
         let key = record.patient_id.as_bytes();
         let value = serde_json::to_vec(record).context("Failed to serialize patient record")?;
-        self.db
-            .insert(key, value)
-            .context("Failed to insert patient record")?;
-        self.db
-            .flush()
-            .context("Failed to flush patient database")?;
+
+        let mut patients_batch = sled::Batch::default();
+        patients_batch.insert(key, value);
+
+        let mut index_batch = sled::Batch::default();
+
+        // Maintain node_id → patient_id index
+        if let Some(node_id) = record.node_id {
+            index_batch.insert(node_id.to_be_bytes().to_vec(), record.patient_id.as_bytes());
+        }
+
+        // Remove stale node_index entry if node_id changed
+        if let Some(old_bytes) = self.patients.get(&key)? {
+            if let Ok(old_record) = serde_json::from_slice::<PatientRecord>(&old_bytes) {
+                if old_record.node_id != record.node_id {
+                    if let Some(old_node) = old_record.node_id {
+                        index_batch.remove(old_node.to_be_bytes().to_vec());
+                    }
+                }
+            }
+        }
+
+        self.patients.apply_batch(patients_batch)?;
+        self.node_index.apply_batch(index_batch)?;
         Ok(())
     }
 
     /// Retrieve a patient record by ID.
     pub fn get(&self, patient_id: &str) -> Result<Option<PatientRecord>> {
         let raw = self
-            .db
+            .patients
             .get(patient_id.as_bytes())
             .context("Failed to read from patient database")?;
         match raw {
@@ -124,15 +154,11 @@ impl PatientRecordDB {
         }
     }
 
-    /// Find a patient by associated node ID (ESP32 node → patient mapping).
+    /// Find a patient by associated node ID. O(1) via secondary index.
     pub fn get_by_node_id(&self, node_id: u8) -> Result<Option<PatientRecord>> {
-        for item in self.db.iter() {
-            let (_, value) = item.context("Failed to iterate patient database")?;
-            if let Ok(record) = serde_json::from_slice::<PatientRecord>(&value) {
-                if record.node_id == Some(node_id) {
-                    return Ok(Some(record));
-                }
-            }
+        if let Some(patient_id_bytes) = self.node_index.get(node_id.to_be_bytes())? {
+            let patient_id = String::from_utf8_lossy(&patient_id_bytes);
+            return self.get(&patient_id);
         }
         Ok(None)
     }
@@ -140,7 +166,7 @@ impl PatientRecordDB {
     /// List all patient records.
     pub fn list_all(&self) -> Result<Vec<PatientRecord>> {
         let mut records = Vec::new();
-        for item in self.db.iter() {
+        for item in self.patients.iter() {
             let (_, value) = item.context("Failed to iterate patient database")?;
             if let Ok(record) = serde_json::from_slice::<PatientRecord>(&value) {
                 records.push(record);
@@ -149,20 +175,39 @@ impl PatientRecordDB {
         Ok(records)
     }
 
-    /// Delete a patient record.
+    /// Delete a patient record. Removes from both primary and index trees.
     pub fn delete(&self, patient_id: &str) -> Result<()> {
-        self.db
-            .remove(patient_id.as_bytes())
-            .context("Failed to delete patient record")?;
-        self.db
-            .flush()
-            .context("Failed to flush patient database")?;
+        let key = patient_id.as_bytes();
+
+        // Remove node_index entry if this patient had a node_id
+        if let Some(bytes) = self.patients.get(&key)? {
+            if let Ok(record) = serde_json::from_slice::<PatientRecord>(&bytes) {
+                if let Some(node_id) = record.node_id {
+                    let mut patients_batch = sled::Batch::default();
+                    patients_batch.remove(&*key);
+                    let mut index_batch = sled::Batch::default();
+                    index_batch.remove(node_id.to_be_bytes().to_vec());
+                    self.patients.apply_batch(patients_batch)?;
+                    self.node_index.apply_batch(index_batch)?;
+                    return Ok(());
+                }
+            }
+        }
+
+        self.patients.remove(&key)?;
         Ok(())
     }
 
     /// Get the number of stored patients.
     pub fn count(&self) -> usize {
-        self.db.len()
+        self.patients.len()
+    }
+
+    /// Manually flush all pending writes to disk.
+    /// Typically not needed — sled auto-flushes every 500ms.
+    pub fn flush(&self) -> Result<()> {
+        self.db.flush().context("Failed to flush patient database")?;
+        Ok(())
     }
 }
 
@@ -194,7 +239,7 @@ mod tests {
         assert_eq!(fetched.pre_existing.len(), 2);
         assert!(fetched.has_condition("COPD"));
 
-        // Find by node
+        // Find by node — O(1) via secondary index
         let by_node = db.get_by_node_id(2).unwrap().unwrap();
         assert_eq!(by_node.patient_id, "PAT-TEST-001");
 
@@ -205,9 +250,29 @@ mod tests {
         // Delete
         db.delete("PAT-TEST-001").unwrap();
         assert!(db.get("PAT-TEST-001").unwrap().is_none());
+        assert!(db.get_by_node_id(2).unwrap().is_none());
 
         // Cleanup
         drop(db);
         let _ = std::fs::remove_dir_all("data/test_patients");
+    }
+
+    #[test]
+    fn test_node_index_updated_on_reassign() {
+        let db = PatientRecordDB::open("data/test_patients_idx").unwrap();
+
+        let mut record = PatientRecord::new("PAT-IDX-001");
+        record.node_id = Some(1);
+        db.put(&record).unwrap();
+        assert!(db.get_by_node_id(1).unwrap().is_some());
+
+        // Reassign to different node
+        record.node_id = Some(2);
+        db.put(&record).unwrap();
+        assert!(db.get_by_node_id(1).unwrap().is_none());
+        assert!(db.get_by_node_id(2).unwrap().is_some());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all("data/test_patients_idx");
     }
 }

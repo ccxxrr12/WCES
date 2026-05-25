@@ -4,6 +4,8 @@
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
+use tokio::sync::Semaphore;
+use std::sync::Arc;
 use tracing::{info, warn, debug, error};
 
 use crate::types::{
@@ -15,6 +17,10 @@ use crate::signal_processing::*;
 use crate::state_ops::{smooth_and_classify, adaptive_override, smooth_vitals};
 use crate::parser::{parse_esp32_frame, parse_esp32_vitals, parse_wasm_output};
 use crate::mat_pipeline::VitalSignsInput;
+
+use wifi_densepose_llm::{
+    AgentVitalSnapshot, StructuredContext, TriggerSource, TrendSummary,
+};
 
 pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
     let addr = format!("0.0.0.0:{udp_port}");
@@ -28,6 +34,9 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
             return;
         }
     };
+
+    // Limit concurrent agent analyses to prevent unbounded task growth
+    let agent_sem = Arc::new(Semaphore::new(4));
 
     let mut buf = [0u8; 2048];
     loop {
@@ -85,7 +94,8 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                     // ═══ Phase 1: Quick write lock — state mutations ═══
                     let (features, classification, breathing_rate_hz, sub_variances,
                          _raw_motion, vitals, tick, motion_score, model_loaded,
-                         triage_update, wasm_alerts, est_persons, rssi_mean) =
+                         triage_update, wasm_alerts, est_persons, rssi_mean,
+                         prev_triage, agent_handle) =
                     {
                         let mut s = state.write().await;
                         s.source = "esp32".to_string();
@@ -132,15 +142,15 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         s.latest_vitals = vitals.clone();
 
                         // LLM analysis: push vitals into sliding windows for trend analysis
+                        // Inline — push_vitals is fast (lock+window push), no need to spawn
                         if let Some(ref engine) = s.llm_engine {
-                            let eng = engine.clone();
-                            let node_id = frame.node_id;
-                            let br = vitals.breathing_rate_bpm.unwrap_or(0.0);
-                            let hr = vitals.heart_rate_bpm.unwrap_or(0.0);
-                            let sq = vitals.signal_quality;
-                            tokio::spawn(async move {
-                                eng.push_vitals(node_id, br, hr, raw_motion as f64, sq).await;
-                            });
+                            engine.push_vitals(
+                                frame.node_id,
+                                vitals.breathing_rate_bpm.unwrap_or(0.0),
+                                vitals.heart_rate_bpm.unwrap_or(0.0),
+                                raw_motion as f64,
+                                vitals.signal_quality,
+                            ).await;
                         }
 
                         // MAT triage: compute START triage from vital signs
@@ -181,10 +191,105 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         let model_loaded = s.model_loaded;
                         let rssi_mean = features.mean_rssi;
 
+                        // Capture previous triage for agent deterioration trigger
+                        let prev_triage = s.latest_update.as_ref()
+                            .and_then(|u| u.triage_update.as_ref())
+                            .and_then(|t| t.survivors.first().map(|s| s.triage.clone()));
+                        let agent_handle = s.medical_agent.clone();
+
                         (features, classification, br_hz, variances,
                          raw_motion, vitals, tick, motion_score, model_loaded,
-                         triage_update, wasm_alerts, est_persons, rssi_mean)
+                         triage_update, wasm_alerts, est_persons, rssi_mean,
+                         prev_triage, agent_handle)
                     }; // ── write lock released ──
+
+                    // ── Agent trigger: spawn analysis on triage escalation only ──
+                    let curr_triage = triage_update.as_ref()
+                        .and_then(|t| t.survivors.first().map(|s| s.triage.clone()));
+                    if let (Some(prev), Some(curr)) = (prev_triage.clone(), curr_triage) {
+                        if is_triage_escalation(&prev, &curr) {
+                            let trigger = TriggerSource::Deterioration {
+                                patient_id: frame.node_id as u32,
+                                from: prev,
+                                to: curr.clone(),
+                            };
+
+                            let vitals_snapshot = AgentVitalSnapshot {
+                                breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
+                                heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
+                                breathing_confidence: vitals.breathing_confidence as f32,
+                                heartbeat_confidence: vitals.heartbeat_confidence as f32,
+                                signal_quality: vitals.signal_quality as f32,
+                                motion_class: Some(if motion_score > 0.6 { "active" } else if motion_score > 0.2 { "present_still" } else { "still" }.into()),
+                                person_count_estimate: Some(1),
+                                rssi: Some(rssi_mean as i16),
+                            };
+                            let alerts: Vec<String> = wasm_alerts.as_ref()
+                                .map(|a| a.iter().map(|al| al.event_name.clone()).collect())
+                                .unwrap_or_default();
+
+                            let ctx = StructuredContext {
+                                patient_id: frame.node_id as u32,
+                                node_id: frame.node_id,
+                                vitals_current: vitals_snapshot,
+                                vitals_trend_1min: TrendSummary {
+                                    direction: wifi_densepose_llm::TrendDirection::Stable,
+                                    delta: 0.0, delta_pct: 0.0,
+                                    anomaly_score: 1.0, data_points: 10,
+                                },
+                                vitals_trend_5min: TrendSummary {
+                                    direction: wifi_densepose_llm::TrendDirection::Stable,
+                                    delta: 0.0, delta_pct: 0.0,
+                                    anomaly_score: 1.0, data_points: 50,
+                                },
+                                triage_current: curr,
+                                triage_trajectory: vec![],
+                                patient_history: None,
+                                recent_alerts: alerts,
+                                kb_matches: vec![],
+                                triggered_by: trigger,
+                                built_at_ms: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as u64,
+                            };
+
+                            let agent = agent_handle.clone();
+                            let state_for_agent = state.clone();
+                            let sem = agent_sem.clone();
+                            tokio::spawn(async move {
+                                // Load-shed if already overloaded with analyses
+                                let Ok(permit) = sem.try_acquire_owned() else {
+                                    warn!("Agent overload, dropping analysis for patient {}", ctx.patient_id);
+                                    return;
+                                };
+                                let _permit = permit;
+
+                                let mut agent_guard = agent.lock().await;
+                                let result = agent_guard.analyze(ctx).await;
+                                drop(agent_guard);
+
+                                if !result.text.is_empty() {
+                                    let tx = {
+                                        let s = state_for_agent.read().await;
+                                        s.tx.clone()
+                                    };
+                                    let json = serde_json::json!({
+                                        "type": "agent_analysis",
+                                        "patient_id": result.patient_id,
+                                        "text": result.text,
+                                        "source": result.source,
+                                        "degrade_level": result.degrade_level,
+                                        "risk_adjustment": result.risk_adjustment,
+                                        "generated_at_ms": result.generated_at_ms,
+                                    });
+                                    if let Ok(json_str) = serde_json::to_string(&json) {
+                                        let _ = tx.send(json_str);
+                                    }
+                                }
+                            });
+                        }
+                    }
 
                     // ═══ Phase 2: Lock-free pure computation ═══
 
@@ -250,4 +355,17 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
             }
         }
     }
+}
+
+/// Returns true if the triage change is an escalation (worsening).
+fn is_triage_escalation(from: &str, to: &str) -> bool {
+    fn severity(t: &str) -> u8 {
+        match t {
+            "Immediate" | "Red" => 3,
+            "Delayed" | "Yellow" => 2,
+            "Minor" | "Green" => 1,
+            _ => 0,
+        }
+    }
+    severity(to) > severity(from)
 }

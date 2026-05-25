@@ -6,7 +6,10 @@ use axum::response::Json;
 use crate::SharedState;
 
 use std::sync::Arc;
-use wifi_densepose_llm::{LlmAnalysisEngine, PatientRecord};
+use wifi_densepose_llm::{
+    LlmAnalysisEngine, PatientRecord,
+    AgentVitalSnapshot, StructuredContext, TriggerSource, TrendSummary,
+};
 use crate::edge_module_engine::EdgeAlert;
 
 // ── LLM Analysis endpoints ──────────────────────────────────────────────────
@@ -124,4 +127,99 @@ pub(crate) async fn llm_status(State(state): State<SharedState>) -> Json<serde_j
         }
         None => Json(serde_json::json!({ "status": "ok", "llm": "disabled" })),
     }
+}
+
+// ── Agent endpoints (Phase 4) ──────────────────────────────────────────────
+
+/// POST /api/v1/agent/analyze — trigger MedicalAgent analysis
+pub(crate) async fn agent_analyze(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let patient_id_str = body["patient_id"].as_str().unwrap_or("1");
+    let patient_id: u32 = patient_id_str.parse().unwrap_or(1);
+
+    let (agent, vitals, triage_label, alerts, smoothed_motion) = {
+        let s = state.read().await;
+        let triage = s.latest_update.as_ref()
+            .and_then(|u| u.triage_update.as_ref())
+            .and_then(|t| t.survivors.iter()
+                .find(|surv| surv.id == patient_id_str)
+                .map(|surv| surv.triage.clone()))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let a: Vec<String> = s.latest_update.as_ref()
+            .and_then(|u| u.wasm_alerts.as_ref())
+            .map(|alerts| alerts.iter().map(|al: &EdgeAlert| al.event_name.clone()).collect())
+            .unwrap_or_default();
+        (s.medical_agent.clone(),
+         s.latest_vitals.clone(),
+         triage,
+         a,
+         s.smoothed_motion)
+    };
+
+    let vitals_snapshot = AgentVitalSnapshot {
+        breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
+        heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
+        breathing_confidence: vitals.breathing_confidence as f32,
+        heartbeat_confidence: vitals.heartbeat_confidence as f32,
+        signal_quality: vitals.signal_quality as f32,
+        motion_class: Some(if smoothed_motion > 0.6 { "active" } else if smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
+        person_count_estimate: Some(1),
+        rssi: Some(-45),
+    };
+
+    let ctx = StructuredContext {
+        patient_id,
+        node_id: 1,
+        vitals_current: vitals_snapshot,
+        vitals_trend_1min: TrendSummary {
+            direction: wifi_densepose_llm::TrendDirection::Stable,
+            delta: 0.0, delta_pct: 0.0,
+            anomaly_score: 1.0, data_points: 10,
+        },
+        vitals_trend_5min: TrendSummary {
+            direction: wifi_densepose_llm::TrendDirection::Stable,
+            delta: 0.0, delta_pct: 0.0,
+            anomaly_score: 1.0, data_points: 50,
+        },
+        triage_current: triage_label,
+        triage_trajectory: vec![],
+        patient_history: None,
+        recent_alerts: alerts,
+        kb_matches: vec![],
+        triggered_by: TriggerSource::ManualRequest { patient_id },
+        built_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    };
+
+    let mut agent_guard = agent.lock().await;
+    let result = agent_guard.analyze(ctx).await;
+    drop(agent_guard);
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "analysis": {
+            "patient_id": result.patient_id,
+            "text": result.text,
+            "source": result.source,
+            "degrade_level": result.degrade_level,
+            "risk_adjustment": result.risk_adjustment,
+            "generated_at_ms": result.generated_at_ms,
+        },
+    }))
+}
+
+/// GET /api/v1/agent/status — MedicalAgent status
+pub(crate) async fn agent_status(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let s = state.read().await;
+    let is_open = s.medical_agent.lock().await.is_breaker_open().await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "agent": {
+            "circuit_breaker_open": is_open,
+        },
+    }))
 }

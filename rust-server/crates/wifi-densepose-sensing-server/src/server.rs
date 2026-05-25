@@ -119,6 +119,9 @@ pub(crate) async fn run_server(
         .route("/api/v1/patients", post(llm_routes::llm_patient_register))
         .route("/api/v1/llm/analyze", post(llm_routes::llm_analyze))
         .route("/api/v1/llm/status", get(llm_routes::llm_status))
+        // Agent analysis endpoints (Phase 4)
+        .route("/api/v1/agent/analyze", post(llm_routes::agent_analyze))
+        .route("/api/v1/agent/status", get(llm_routes::agent_status))
         // Static UI files
         // Serve ui/lib/ from the project's actual ui/lib/ so Three.js is always found
         // (placed before the /ui catch-all so more-specific /ui/lib takes priority)

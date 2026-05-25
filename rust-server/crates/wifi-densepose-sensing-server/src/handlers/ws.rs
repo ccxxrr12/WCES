@@ -9,7 +9,9 @@ use crate::SharedState;
 use crate::types::{BoundingBox, PersonDetection, PoseKeypoint, SensingUpdate};
 use crate::signal_processing::derive_pose_from_sensing;
 
-use wifi_densepose_llm::PatientRecord;
+use wifi_densepose_llm::{
+    PatientRecord, AgentVitalSnapshot, StructuredContext, TriggerSource, TrendSummary,
+};
 use crate::edge_module_engine::EdgeAlert;
 
 // ── Sensing WebSocket handler ──────────────────────────────────────────────────
@@ -38,7 +40,10 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("WS sensing client lagged by {} messages, resuming from latest", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
             msg = socket.recv() => {
@@ -137,6 +142,88 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                             }
                                         });
                                     }
+                                }
+                                Some("agent_analyze_request") => {
+                                    let patient_id_str = msg["patient_id"].as_str().unwrap_or("1");
+                                    let patient_id: u32 = patient_id_str.parse().unwrap_or(1);
+                                    let (agent, vitals, triage_label, alerts, smoothed_motion) = {
+                                        let s = state.read().await;
+                                        let triage = s.latest_update.as_ref()
+                                            .and_then(|u| u.triage_update.as_ref())
+                                            .and_then(|t| t.survivors.iter()
+                                                .find(|surv| surv.id == patient_id_str)
+                                                .map(|surv| surv.triage.clone()))
+                                            .unwrap_or_else(|| "Unknown".to_string());
+                                        let a: Vec<String> = s.latest_update.as_ref()
+                                            .and_then(|u| u.wasm_alerts.as_ref())
+                                            .map(|alerts: &Vec<EdgeAlert>| alerts.iter().map(|al| al.event_name.clone()).collect())
+                                            .unwrap_or_default();
+                                        (s.medical_agent.clone(),
+                                         s.latest_vitals.clone(),
+                                         triage,
+                                         a,
+                                         s.smoothed_motion)
+                                    };
+
+                                    let vitals_snapshot = AgentVitalSnapshot {
+                                        breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
+                                        heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
+                                        breathing_confidence: vitals.breathing_confidence as f32,
+                                        heartbeat_confidence: vitals.heartbeat_confidence as f32,
+                                        signal_quality: vitals.signal_quality as f32,
+                                        motion_class: Some(if smoothed_motion > 0.6 { "active" } else if smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
+                                        person_count_estimate: Some(1),
+                                        rssi: Some(-45),
+                                    };
+
+                                    let ctx = StructuredContext {
+                                        patient_id,
+                                        node_id: 1,
+                                        vitals_current: vitals_snapshot,
+                                        vitals_trend_1min: TrendSummary {
+                                            direction: wifi_densepose_llm::TrendDirection::Stable,
+                                            delta: 0.0, delta_pct: 0.0,
+                                            anomaly_score: 1.0, data_points: 10,
+                                        },
+                                        vitals_trend_5min: TrendSummary {
+                                            direction: wifi_densepose_llm::TrendDirection::Stable,
+                                            delta: 0.0, delta_pct: 0.0,
+                                            anomaly_score: 1.0, data_points: 50,
+                                        },
+                                        triage_current: triage_label,
+                                        triage_trajectory: vec![],
+                                        patient_history: None,
+                                        recent_alerts: alerts,
+                                        kb_matches: vec![],
+                                        triggered_by: TriggerSource::ManualRequest { patient_id },
+                                        built_at_ms: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis() as u64,
+                                    };
+
+                                    let tx = {
+                                        let s = state.read().await;
+                                        s.tx.clone()
+                                    };
+                                    tokio::spawn(async move {
+                                        let mut agent_guard = agent.lock().await;
+                                        let result = agent_guard.analyze(ctx).await;
+                                        drop(agent_guard);
+
+                                        let json = serde_json::json!({
+                                            "type": "agent_analysis",
+                                            "patient_id": result.patient_id,
+                                            "text": result.text,
+                                            "source": result.source,
+                                            "degrade_level": result.degrade_level,
+                                            "risk_adjustment": result.risk_adjustment,
+                                            "generated_at_ms": result.generated_at_ms,
+                                        });
+                                        if let Ok(json_str) = serde_json::to_string(&json) {
+                                            let _ = tx.send(json_str);
+                                        }
+                                    });
                                 }
                                 _ => {} // ignore unknown messages
                             }
@@ -254,7 +341,10 @@ pub(crate) async fn handle_ws_pose_client(mut socket: WebSocket, state: SharedSt
                             }
                         }
                     }
-                    Err(_) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("WS pose client lagged by {} messages, resuming from latest", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
             msg = socket.recv() => {

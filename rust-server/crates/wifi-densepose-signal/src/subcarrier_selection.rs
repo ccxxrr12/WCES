@@ -207,11 +207,18 @@ pub fn mincut_subcarrier_partition(sensitivity: &[f32]) -> (Vec<usize>, Vec<usiz
         return ((0..median_idx).collect(), (median_idx..n).collect());
     }
 
-    let mc = MinCutBuilder::new()
+    let mc = match MinCutBuilder::new()
         .exact()
         .with_edges(edges)
         .build()
-        .expect("MinCutBuilder::build failed");
+    {
+        Ok(mc) => mc,
+        Err(_) => {
+            // MinCut build can fail on degenerate edge-sets; fall back to median split
+            let median_idx = n / 2;
+            return ((0..median_idx).collect(), (median_idx..n).collect());
+        }
+    };
     let (side_a, side_b) = mc.partition();
 
     // The side with higher mean sensitivity is the "sensitive" group

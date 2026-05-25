@@ -1,0 +1,260 @@
+{
+  "entries": [
+    {
+      "id": "tachycardia_001",
+      "condition": "心动过速",
+      "vital_pattern": {
+        "hr_range": [100, 180],
+        "rr_range": null,
+        "hr_trend": "Rising",
+        "rr_trend": null,
+        "motion_states": ["present_still"],
+        "edge_alert_keywords": ["arrhythmia", "cardiac"]
+      },
+      "risk_factors": ["失血性休克早期", "感染性发热", "心源性休克", "疼痛应激"],
+      "triage_implication": "心率>120且持续上升 → 考虑升级为Immediate",
+      "monitoring_notes": "密切监测心率趋势, 每5分钟记录一次, 关注血压变化",
+      "differential_diagnosis": ["低血容量性休克", "脓毒症早期", "心律失常"]
+    },
+    {
+      "id": "bradycardia_002",
+      "condition": "心动过缓",
+      "vital_pattern": {
+        "hr_range": [30, 55],
+        "rr_range": null,
+        "hr_trend": "Falling",
+        "rr_trend": null,
+        "motion_states": ["present_still", "idle"],
+        "edge_alert_keywords": ["arrhythmia", "cardiac"]
+      },
+      "risk_factors": ["心脏传导阻滞", "颅内压升高", "低体温", "药物中毒"],
+      "triage_implication": "心率<45且持续下降 → 立即评估，准备起搏",
+      "monitoring_notes": "Q5min心率监测, 关注意识状态变化, 警惕心跳骤停",
+      "differential_diagnosis": ["急性心肌梗死", "高钾血症", "药物过量"]
+    },
+    {
+      "id": "respiratory_distress_003",
+      "condition": "呼吸窘迫",
+      "vital_pattern": {
+        "hr_range": null,
+        "rr_range": [28, 60],
+        "hr_trend": "Rising",
+        "rr_trend": "Rising",
+        "motion_states": ["active", "present_still"],
+        "edge_alert_keywords": ["respiratory_distress", "apnea"]
+      },
+      "risk_factors": ["COPD", "哮喘", "肺炎", "气胸", "肺栓塞"],
+      "triage_implication": "RR>30且持续加速 → Immediate，立即气道评估",
+      "monitoring_notes": "Q5min呼吸频率+深度, SpO2趋势, 辅助呼吸肌评估",
+      "differential_diagnosis": ["COPD急性加重", "急性呼吸衰竭", "肺栓塞"]
+    },
+    {
+      "id": "respiratory_depression_004",
+      "condition": "呼吸抑制",
+      "vital_pattern": {
+        "hr_range": null,
+        "rr_range": [4, 10],
+        "hr_trend": null,
+        "rr_trend": "Falling",
+        "motion_states": ["idle", "present_still"],
+        "edge_alert_keywords": ["apnea", "respiratory"]
+      },
+      "risk_factors": ["阿片类药物", "颅内压升高", "CO2潴留末期", "镇静剂"],
+      "triage_implication": "RR<8 → Immediate，准备球囊面罩通气",
+      "monitoring_notes": "立即气道评估, Q1min呼吸监测, 准备机械通气",
+      "differential_diagnosis": ["阿片类过量", "脑干损伤", "COPD末期CO2麻醉"]
+    },
+    {
+      "id": "septic_shock_005",
+      "condition": "脓毒性休克早期",
+      "vital_pattern": {
+        "hr_range": [90, 150],
+        "rr_range": [22, 40],
+        "hr_trend": "Rising",
+        "rr_trend": "Rising",
+        "motion_states": ["present_still"],
+        "edge_alert_keywords": ["arrhythmia", "respiratory"]
+      },
+      "risk_factors": ["开放性伤口", "免疫力低下", "留置导管", "高龄"],
+      "triage_implication": "HR↑ + RR↑ 同时出现 → Immediate，液体复苏",
+      "monitoring_notes": "Q10min心率/呼吸双重趋势, 寻找感染源, 液体反应评估",
+      "differential_diagnosis": ["低血容量性休克", "心源性休克", "过敏反应"]
+    },
+    {
+      "id": "hypovolemic_shock_006",
+      "condition": "低血容量性休克",
+      "vital_pattern": {
+        "hr_range": [100, 160],
+        "rr_range": [20, 35],
+        "hr_trend": "Rising",
+        "rr_trend": "Rising",
+        "motion_states": ["idle", "present_still"],
+        "edge_alert_keywords": []
+      },
+      "risk_factors": ["活动性出血", "严重烧伤", "脱水", "挤压伤"],
+      "triage_implication": "HR>110 + 运动减少 → Immediate，立即止血补液",
+      "monitoring_notes": "Q5min心率, 出血控制确认, 意识状态评估",
+      "differential_diagnosis": ["脓毒性休克", "心源性休克", "神经源性休克"]
+    },
+    {
+      "id": "hypertensive_crisis_007",
+      "condition": "高血压危象",
+      "vital_pattern": {
+        "hr_range": [60, 120],
+        "rr_range": null,
+        "hr_trend": null,
+        "rr_trend": null,
+        "motion_states": ["present_still"],
+        "edge_alert_keywords": ["cardiac"]
+      },
+      "risk_factors": ["高血压病史", "肾病", "妊娠", "嗜铬细胞瘤"],
+      "triage_implication": "结合病史和症状, 需临床验证血压, 不可仅靠CSI",
+      "monitoring_notes": "注意: CSI无法直接测血压, 需结合临床评估",
+      "differential_diagnosis": ["主动脉夹层", "脑卒中", "急性肾损伤"]
+    },
+    {
+      "id": "cardiac_arrest_008",
+      "condition": "心跳骤停前兆",
+      "vital_pattern": {
+        "hr_range": [0, 45],
+        "rr_range": [0, 8],
+        "hr_trend": "Falling",
+        "rr_trend": "Falling",
+        "motion_states": ["idle"],
+        "edge_alert_keywords": ["arrhythmia", "cardiac", "apnea"]
+      },
+      "risk_factors": ["心脏病", "严重创伤", "电解质紊乱", "低体温"],
+      "triage_implication": "立即CPR评估 → 确认心跳骤停后启动急救",
+      "monitoring_notes": "HR持续下降+RR下降+无运动=心脏骤停高风险",
+      "differential_diagnosis": ["严重心动过缓", "心脏停搏", "设备信号丢失(需排除)"]
+    },
+    {
+      "id": "seizure_active_009",
+      "condition": "活动性癫痫",
+      "vital_pattern": {
+        "hr_range": [90, 160],
+        "rr_range": null,
+        "hr_trend": "Rising",
+        "rr_trend": null,
+        "motion_states": ["active"],
+        "edge_alert_keywords": ["seizure", "panic_motion"]
+      },
+      "risk_factors": ["癫痫病史", "脑外伤", "停药", "颅内感染"],
+      "triage_implication": "运动评分突增+HR↑ → 评估是否为癫痫发作",
+      "monitoring_notes": "记录发作持续时间, >5分钟为癫痫持续状态, 保护伤员",
+      "differential_diagnosis": ["心源性晕厥", "低血糖抽搐", "假性发作"]
+    },
+    {
+      "id": "panic_anxiety_010",
+      "condition": "急性焦虑发作",
+      "vital_pattern": {
+        "hr_range": [85, 130],
+        "rr_range": [20, 35],
+        "hr_trend": null,
+        "rr_trend": null,
+        "motion_states": ["active"],
+        "edge_alert_keywords": ["panic_motion"]
+      },
+      "risk_factors": ["PTSD", "焦虑症病史", "灾难创伤", "恐惧经历"],
+      "triage_implication": "排除器质性疾病后可降级为Delayed",
+      "monitoring_notes": "观察HR/RR是否自行回落, 安抚引导慢呼吸",
+      "differential_diagnosis": ["呼吸衰竭", "肺栓塞", "心律失常", "低血糖"]
+    },
+    {
+      "id": "traumatic_brain_011",
+      "condition": "创伤性脑损伤",
+      "vital_pattern": {
+        "hr_range": [45, 60],
+        "rr_range": null,
+        "hr_trend": "Falling",
+        "rr_trend": null,
+        "motion_states": ["idle", "present_still"],
+        "edge_alert_keywords": []
+      },
+      "risk_factors": ["头部外伤", "爆炸伤", "跌倒", "多发伤"],
+      "triage_implication": "HR下降+意识下降 → Immediate，Cushing反射",
+      "monitoring_notes": "HR下降+运动减少=颅内压升高三联征风险, 紧急CT",
+      "differential_diagnosis": ["脊髓损伤", "阿片类药物过量", "低体温"]
+    },
+    {
+      "id": "anaphylaxis_012",
+      "condition": "过敏性休克",
+      "vital_pattern": {
+        "hr_range": [100, 150],
+        "rr_range": [20, 35],
+        "hr_trend": "Rising",
+        "rr_trend": "Rising",
+        "motion_states": ["active", "present_still"],
+        "edge_alert_keywords": ["respiratory"]
+      },
+      "risk_factors": ["药物过敏史", "食物过敏", "昆虫蜇伤", "乳胶"],
+      "triage_implication": "HR↑+RR↑+可伴运动异常 → Immediate",
+      "monitoring_notes": "Q5min HR/RR趋势, 气道水肿风险, 肾上腺素准备",
+      "differential_diagnosis": ["哮喘发作", "恐慌发作", "血管性水肿"]
+    },
+    {
+      "id": "pulmonary_embolism_013",
+      "condition": "肺栓塞",
+      "vital_pattern": {
+        "hr_range": [100, 140],
+        "rr_range": [22, 40],
+        "hr_trend": "Rising",
+        "rr_trend": "Rising",
+        "motion_states": ["present_still"],
+        "edge_alert_keywords": ["respiratory", "cardiac"]
+      },
+      "risk_factors": ["长期卧床", "骨折", "手术", "恶性肿瘤", "肥胖"],
+      "triage_implication": "突发RR↑+HR↑+运动减少 → 高度警惕PE",
+      "monitoring_notes": "Q5min血氧趋势, 注意突发性特征, PE可快速恶化",
+      "differential_diagnosis": ["心肌梗死", "气胸", "肺炎"]
+    },
+    {
+      "id": "hypothermia_014",
+      "condition": "低体温症",
+      "vital_pattern": {
+        "hr_range": [30, 55],
+        "rr_range": [4, 12],
+        "hr_trend": "Falling",
+        "rr_trend": "Falling",
+        "motion_states": ["idle", "present_still"],
+        "edge_alert_keywords": []
+      },
+      "risk_factors": ["寒冷暴露", "创伤失血", "酒精中毒", "高龄/婴幼儿"],
+      "triage_implication": "HR↓+RR↓+运动↓ → 评估是否为低体温",
+      "monitoring_notes": "缓慢复温, 避免粗暴搬动, 核心体温测量确认",
+      "differential_diagnosis": ["心跳骤停(需鉴别)", "严重心动过缓", "药物中毒"]
+    },
+    {
+      "id": "hyperthermia_015",
+      "condition": "高热危象",
+      "vital_pattern": {
+        "hr_range": [100, 160],
+        "rr_range": [24, 45],
+        "hr_trend": "Rising",
+        "rr_trend": "Rising",
+        "motion_states": ["idle", "present_still"],
+        "edge_alert_keywords": ["seizure"]
+      },
+      "risk_factors": ["中暑", "感染高热", "恶性高热", "热射病"],
+      "triage_implication": "HR↑+RR↑ 持续加速 → Immediate降温处理",
+      "monitoring_notes": "Q5min HR趋势, 物理降温, 警惕热射病器官损伤",
+      "differential_diagnosis": ["脓毒症", "甲状腺危象", "恶性综合征"]
+    },
+    {
+      "id": "normal_stable_016",
+      "condition": "生命体征正常",
+      "vital_pattern": {
+        "hr_range": [55, 95],
+        "rr_range": [10, 20],
+        "hr_trend": "Stable",
+        "rr_trend": "Stable",
+        "motion_states": ["present_still", "idle"],
+        "edge_alert_keywords": []
+      },
+      "risk_factors": [],
+      "triage_implication": "无需改变当前分诊等级",
+      "monitoring_notes": "常规监护, 30分钟一次生命体征检查",
+      "differential_diagnosis": []
+    }
+  ]
+}

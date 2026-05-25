@@ -1,13 +1,8 @@
-//! LLM Analysis Engine — Coordinator
+//! Medical Analysis Engine — Coordinator
 //!
 //! Coordinates all components (PatientRecordDB, MedicalKnowledgeBase,
-//! SlidingWindow, PromptBuilder, FallbackAnalyzer, StreamingGenerator)
-//! into a unified analysis pipeline.
-//!
-//! # Features
-//!
-//! - `template-only` (default): Fallback template analysis only
-//! - `llm`: Full LLM inference via Candle + Qwen2.5-0.5B + streaming
+//! SlidingWindow, PromptBuilder, FallbackAnalyzer) into a unified
+//! analysis pipeline. LLM inference is offloaded to cloud API via the Agent.
 
 use crate::config::LlmConfig;
 use crate::fallback::{FallbackAnalyzer, FallbackContext, LlmAnalysisResult};
@@ -17,9 +12,6 @@ use crate::prompt_builder::{PromptBuilder, PromptContext};
 use crate::sliding_window::{VitalSnapshot, WindowManager};
 
 use crate::types::StreamToken;
-
-#[cfg(feature = "llm")]
-use crate::streaming::{LlmRuntime, StreamingGenerator};
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -38,10 +30,6 @@ struct EngineInner {
     last_analysis: HashMap<String, Instant>,
     /// Node ID → patient ID mapping
     node_patient_map: HashMap<u8, String>,
-
-    /// LLM runtime — available when `llm` feature is enabled and model loads.
-    #[cfg(feature = "llm")]
-    llm_runtime: Option<Arc<LlmRuntime>>,
 }
 
 /// The main LLM analysis engine.
@@ -62,36 +50,10 @@ impl LlmAnalysisEngine {
         );
 
         tracing::info!(
-            "LLM Analysis Engine: {} patients, {} knowledge entries",
+            "Medical Analysis Engine: {} patients, {} knowledge entries",
             patient_db.count(),
             knowledge_base.condition_count()
         );
-
-        #[cfg(feature = "llm")]
-        let llm_runtime = if let (Some(ref model_path), Some(ref tokenizer_path)) =
-            (&config.model_path, &config.tokenizer_path)
-        {
-            match StreamingGenerator::load(model_path, tokenizer_path, true) {
-                Ok(generator) => {
-                    tracing::info!(
-                        "LLM model loaded: {} -> vocab={}",
-                        model_path,
-                        generator.vocab_size()
-                    );
-                    Some(Arc::new(LlmRuntime::new(generator)))
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "LLM model failed to load ({}), falling back to template mode",
-                        e
-                    );
-                    None
-                }
-            }
-        } else {
-            tracing::info!("LLM model not configured, using template-only mode");
-            None
-        };
 
         Ok(Self {
             inner: Arc::new(Mutex::new(EngineInner {
@@ -101,8 +63,6 @@ impl LlmAnalysisEngine {
                 windows,
                 last_analysis: HashMap::new(),
                 node_patient_map: HashMap::new(),
-                #[cfg(feature = "llm")]
-                llm_runtime,
             })),
         })
     }
@@ -233,7 +193,7 @@ impl LlmAnalysisEngine {
         current_triage: &str,
         active_edge_alerts: &[String],
     ) -> Option<broadcast::Receiver<StreamToken>> {
-        let (ctx, prompt, _now) =
+        let (ctx, _prompt, _now) =
             self.build_analysis_context(patient_id, current_rr, current_hr,
                 current_motion, current_signal_quality, current_triage, active_edge_alerts).await?;
 
@@ -243,29 +203,6 @@ impl LlmAnalysisEngine {
             inner
                 .last_analysis
                 .insert(patient_id.to_string(), Instant::now());
-        }
-
-        #[cfg(feature = "llm")]
-        {
-            let (llm_runtime, max_new_tokens, temperature) = {
-                let inner = self.inner.lock().await;
-                (
-                    inner.llm_runtime.clone(),
-                    inner.config.max_new_tokens,
-                    inner.config.temperature,
-                )
-            }; // MutexGuard dropped before .await — prevents deadlock
-            if let Some(runtime) = llm_runtime {
-                let (rx, _handle) = runtime
-                    .spawn_generation(
-                        prompt.unwrap_or_default(),
-                        patient_id.to_string(),
-                        max_new_tokens,
-                        temperature,
-                    )
-                    .await;
-                return Some(rx);
-            }
         }
 
         // Fallback: generate template analysis and send as synthetic stream
@@ -429,10 +366,7 @@ impl LlmAnalysisEngine {
     pub async fn status(&self) -> EngineStatus {
         let inner = self.inner.lock().await;
 
-        #[cfg(feature = "llm")]
-        let llm_loaded = inner.llm_runtime.is_some();
-        #[cfg(not(feature = "llm"))]
-        let llm_loaded = false;
+        let llm_loaded = false; // LLM now via cloud API, not local Candle
 
         EngineStatus {
             patients_registered: inner.patient_db.count(),

@@ -9,6 +9,7 @@
 //! Replaces both ws_server.py and the Python HTTP server.
 
 mod adaptive_classifier;
+mod app_config;
 mod edge_module_engine;
 mod rvf_container;
 mod rvf_pipeline;
@@ -46,6 +47,13 @@ use edge_module_engine::{EdgeModuleEngine, EdgeAlert};
 
 // LLM analysis engine (competition P10d)
 use wifi_densepose_llm::LlmAnalysisEngine;
+
+// Medical Agent (Phase 4 — agent-based analysis with cloud LLM + degradation)
+use wifi_densepose_llm::{
+    MedicalAgent, MedicalKb, DegradationConfig,
+    LlmGateway, GatewayConfig,
+    AgentVitalSnapshot, StructuredContext, TriggerSource, TrendSummary,
+};
 
 // Extracted data types (was inline in main.rs, now in types.rs)
 use types::{
@@ -147,6 +155,10 @@ struct Args {
     /// Build fingerprint index from embeddings (env|activity|temporal|person)
     #[arg(long, value_name = "TYPE")]
     build_index: Option<String>,
+
+    /// Path to wces.config.toml (auto-searched if not specified)
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 /// Shared application state
@@ -246,6 +258,11 @@ pub(crate) struct AppStateInner {
     /// LLM analysis engine for AI-powered medical analysis.
     /// None if LLM initialization failed or template-only mode is forced.
     llm_engine: Option<std::sync::Arc<LlmAnalysisEngine>>,
+    // ── Medical Agent (Phase 4) ──────────────────────────────────────────
+    /// Medical agent orchestrator (routing + degradation + LLM gateway + validation).
+    medical_agent: Arc<tokio::sync::Mutex<MedicalAgent>>,
+    /// Medical knowledge base for vital-pattern matching.
+    medical_kb: MedicalKb,
 }
 
 impl AppStateInner {
@@ -306,6 +323,33 @@ async fn main() {
         .init();
 
     let args = Args::parse();
+
+    // ── Load unified config file ────────────────────────────────────────────
+    let config = {
+        let config_path = args.config.as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .or_else(app_config::find_config);
+        match config_path {
+            Some(path) => match app_config::load_config(&path) {
+                Ok(Some(cfg)) => {
+                    info!("Loaded config from {}", path);
+                    Some(cfg)
+                }
+                Ok(None) => {
+                    info!("No config file found, using defaults");
+                    None
+                }
+                Err(e) => {
+                    warn!("Failed to load config from {}: {}, using defaults", path, e);
+                    None
+                }
+            },
+            None => {
+                info!("No config file found in search paths, using defaults");
+                None
+            }
+        }
+    };
 
     // Handle --benchmark mode: run vital sign benchmark and exit
     if args.benchmark {
@@ -852,6 +896,106 @@ async fn main() {
         }
     };
 
+    // Initialize Medical KB (agent version — vital-pattern matching)
+    let medical_kb = {
+        let config_path = config.as_ref()
+            .and_then(|c| {
+                let p = c.server.agent.agent_kb_path.as_str();
+                if p.is_empty() { None } else { Some(p) }
+            });
+
+        let candidates: Vec<String> = if let Some(cp) = config_path {
+            vec![cp.to_string(), format!("crates/wifi-densepose-llm/{cp}")]
+        } else {
+            vec![
+                "crates/wifi-densepose-llm/data/agent_kb.json".to_string(),
+                "data/agent_kb.json".to_string(),
+            ]
+        };
+
+        let resolved = candidates.iter().find(|p| std::path::Path::new(p.as_str()).exists())
+            .cloned()
+            .unwrap_or_else(|| {
+                warn!("Agent knowledge base not found, using empty KB");
+                candidates[0].clone()
+            });
+
+        match MedicalKb::load(&resolved) {
+            Ok(kb) => {
+                info!("Medical Agent KB loaded from {resolved}: {} entries", kb.entry_count());
+                kb
+            }
+            Err(e) => {
+                warn!("Medical Agent KB unavailable: {e}, using empty KB");
+                MedicalKb::empty()
+            }
+        }
+    };
+
+    // Initialize MedicalAgent — config file values take precedence, env vars as fallback
+    let medical_agent = {
+        let (agent_enabled, agent_mode) = config.as_ref()
+            .map(|c| (c.server.agent.enabled, c.server.agent.mode.clone()))
+            .unwrap_or((true, "agent".to_string()));
+
+        // Build degradation config early — used by all agent constructors
+        let degradation_config = {
+            let deg = config.as_ref().map(|c| &c.server.agent.degradation);
+            DegradationConfig {
+                cooldown_secs: deg.map(|d| d.cooldown_secs).unwrap_or(300),
+                max_cache_size: deg.map(|d| d.max_cache_size).unwrap_or(32),
+                network_failure_threshold: deg.map(|d| d.network_failure_threshold).unwrap_or(5),
+            }
+        };
+
+        if !agent_enabled || agent_mode == "template-only" {
+            info!("Medical Agent: {} (mode={agent_mode})",
+                  if !agent_enabled { "disabled" } else { "template-only" });
+            MedicalAgent::new_template_only()
+        } else {
+            let gw = config.as_ref().map(|c| &c.server.agent.gateway);
+            let cb = config.as_ref().map(|c| &c.server.agent.circuit_breaker);
+
+            let endpoint = gw.and_then(|g| if g.endpoint.is_empty() { None } else { Some(g.endpoint.clone()) })
+                .or_else(|| std::env::var("LLM_ENDPOINT").ok())
+                .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".into());
+
+            let model = gw.and_then(|g| if g.model.is_empty() { None } else { Some(g.model.clone()) })
+                .or_else(|| std::env::var("LLM_MODEL").ok())
+                .unwrap_or_else(|| "gpt-4o-mini".into());
+
+            let api_key = gw.and_then(|g| if g.api_key.is_empty() { None } else { Some(g.api_key.clone()) })
+                .or_else(|| std::env::var("LLM_API_KEY").ok())
+                .unwrap_or_default();
+
+            if api_key.is_empty() {
+                info!("No API key configured, Medical Agent starting in template-only mode");
+                MedicalAgent::new_template_only()
+            } else {
+                let gateway_config = GatewayConfig {
+                    endpoint,
+                    model: model.clone(),
+                    api_key,
+                    timeout_secs: gw.map(|g| g.timeout_secs).unwrap_or(20),
+                    max_retries: gw.map(|g| g.max_retries).unwrap_or(2),
+                    temperature: gw.map(|g| g.temperature).unwrap_or(0.3),
+                    failure_threshold: cb.map(|c| c.failure_threshold).unwrap_or(3),
+                    breaker_open_secs: cb.map(|c| c.open_duration_secs).unwrap_or(300),
+                };
+                match LlmGateway::new(gateway_config) {
+                    Ok(gateway) => {
+                        info!("Medical Agent initialized with LLM gateway (model: {model})");
+                        MedicalAgent::new_with_degradation(gateway, degradation_config)
+                    }
+                    Err(e) => {
+                        warn!("Failed to create LLM gateway: {e}, falling back to template-only");
+                        MedicalAgent::new_template_only()
+                    }
+                }
+            }
+        }
+    };
+
     // Discover model and recording files on startup
     let initial_models = handlers::model_routes::scan_model_files();
     let initial_recordings = handlers::recording_routes::scan_recording_files();
@@ -911,6 +1055,8 @@ async fn main() {
             m
         }),
         llm_engine: llm_engine.clone(),
+        medical_agent: Arc::new(tokio::sync::Mutex::new(medical_agent)),
+        medical_kb,
     }));
 
     // Start background tasks based on source
@@ -962,6 +1108,116 @@ async fn main() {
                         &triage_label,
                         &alerts,
                     ).await;
+                }
+            }
+        });
+    }
+
+    // Spawn periodic Medical Agent analysis task (Phase 4)
+    {
+        let agent_enabled = config.as_ref().map(|c| c.server.agent.enabled).unwrap_or(true);
+        let periodic_secs = config.as_ref()
+            .map(|c| c.server.agent.periodic_analysis_secs)
+            .unwrap_or(30)
+            .max(5); // minimum 5s to avoid thrashing
+        let agent_state = state.clone();
+        tokio::spawn(async move {
+            if !agent_enabled || periodic_secs == 0 {
+                info!("Medical Agent periodic analysis disabled (enabled={agent_enabled}, interval={periodic_secs}s)");
+                return;
+            }
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(periodic_secs));
+            interval.tick().await; // wait 30s for first data
+            loop {
+                interval.tick().await;
+
+                // Gather current state under read lock
+                let (vitals, triage_label, alerts, smoothed_motion) = {
+                    let s = agent_state.read().await;
+                    let triage = s.latest_update.as_ref()
+                        .and_then(|u| u.triage_update.as_ref())
+                        .map(|t| t.survivors.first().map(|s| s.triage.clone()).unwrap_or_else(|| "Unknown".to_string()))
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    let a: Vec<String> = s.latest_update.as_ref()
+                        .and_then(|u| u.wasm_alerts.as_ref())
+                        .map(|alerts| alerts.iter().map(|al| al.event_name.clone()).collect())
+                        .unwrap_or_default();
+                    (s.latest_vitals.clone(), triage, a, s.smoothed_motion)
+                };
+
+                // Skip if no vitals data
+                if vitals.breathing_rate_bpm.is_none() && vitals.heart_rate_bpm.is_none() {
+                    continue;
+                }
+
+                let vitals_snapshot = AgentVitalSnapshot {
+                    breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
+                    heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
+                    breathing_confidence: vitals.breathing_confidence as f32,
+                    heartbeat_confidence: vitals.heartbeat_confidence as f32,
+                    signal_quality: vitals.signal_quality as f32,
+                    motion_class: Some(if smoothed_motion > 0.6 { "active" } else if smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
+                    person_count_estimate: Some(1),
+                    rssi: Some(-45),
+                };
+
+                let ctx = StructuredContext {
+                    patient_id: 1,
+                    node_id: 1,
+                    vitals_current: vitals_snapshot,
+                    vitals_trend_1min: TrendSummary {
+                        direction: wifi_densepose_llm::TrendDirection::Stable,
+                        delta: 0.0,
+                        delta_pct: 0.0,
+                        anomaly_score: 1.0,
+                        data_points: 10,
+                    },
+                    vitals_trend_5min: TrendSummary {
+                        direction: wifi_densepose_llm::TrendDirection::Stable,
+                        delta: 0.0,
+                        delta_pct: 0.0,
+                        anomaly_score: 1.0,
+                        data_points: 50,
+                    },
+                    triage_current: triage_label,
+                    triage_trajectory: vec![],
+                    patient_history: None,
+                    recent_alerts: alerts,
+                    kb_matches: vec![],
+                    triggered_by: TriggerSource::PeriodicScan,
+                    built_at_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                };
+
+                let agent = {
+                    let s = agent_state.read().await;
+                    s.medical_agent.clone()
+                };
+
+                let mut agent_guard = agent.lock().await;
+                let result = agent_guard.analyze(ctx).await;
+                drop(agent_guard);
+
+                // Broadcast analysis result via WebSocket
+                if !result.text.is_empty() {
+                    let tx = {
+                        let s = agent_state.read().await;
+                        s.tx.clone()
+                    };
+                    let json = serde_json::json!({
+                        "type": "agent_analysis",
+                        "patient_id": result.patient_id,
+                        "text": result.text,
+                        "source": result.source,
+                        "degrade_level": result.degrade_level,
+                        "risk_adjustment": result.risk_adjustment,
+                        "generated_at_ms": result.generated_at_ms,
+                    });
+                    if let Ok(json_str) = serde_json::to_string(&json) {
+                        let _ = tx.send(json_str);
+                    }
                 }
             }
         });

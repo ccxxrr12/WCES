@@ -2,12 +2,12 @@
 name = "wifi-densepose-llm"
 version.workspace = true
 edition.workspace = true
-description = "Edge LLM intelligent analysis engine for WCES field hospital triage"
+description = "Edge Medical Agent — Coordinator + cloud LLM API for WCES field hospital triage"
 license.workspace = true
 authors = ["rUv <ruv@ruv.net>", "WiFi-DensePose Contributors"]
 repository.workspace = true
 documentation = "https://docs.rs/wifi-densepose-llm"
-keywords = ["wifi", "llm", "triage", "edge-ai", "medical"]
+keywords = ["wifi", "agent", "triage", "edge-ai", "medical"]
 categories = ["science", "web-programming"]
 readme = "README.md"
 
@@ -33,15 +33,15 @@ sled = "0.34"
 anyhow.workspace = true
 tracing.workspace = true
 
-# LLM inference (optional - full LLM mode, pinned to 0.8.x for GGUF support)
-candle-core = { version = "0.8", optional = true }
-candle-nn = { version = "0.8", optional = true }
-candle-transformers = { version = "0.8", optional = true }
-tokenizers = { version = "0.21", optional = true }
+# Agent mode: cloud API gateway + streaming + validation
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+backoff = { version = "0.4", features = ["tokio"], optional = true }
+regex = { version = "1", optional = true }
 
 [features]
-default = ["template-only"]
-llm = ["candle-core", "candle-nn", "candle-transformers", "tokenizers"]
+default = ["agent"]
+agent = ["reqwest", "tokio-stream", "backoff", "regex"]
 template-only = []
 
 [[test]]
