@@ -93,7 +93,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
 
                     // ═══ Phase 1: Quick write lock — state mutations ═══
                     let (features, classification, breathing_rate_hz, sub_variances,
-                         _raw_motion, vitals, tick, motion_score, model_loaded,
+                         _raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
                          prev_triage, agent_handle) =
                     {
@@ -198,7 +198,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         let agent_handle = s.medical_agent.clone();
 
                         (features, classification, br_hz, variances,
-                         raw_motion, vitals, tick, motion_score, model_loaded,
+                         raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
                          prev_triage, agent_handle)
                     }; // ── write lock released ──
@@ -293,12 +293,9 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
 
                     // ═══ Phase 2: Lock-free pure computation ═══
 
-                    // DensePose skeleton (always generated for simulated source)
-                    let densepose_keypoints = if model_loaded {
-                        generate_synthetic_pose(tick, &frame.amplitudes, motion_score)
-                    } else {
-                        None
-                    };
+                    // DensePose skeleton — always generated from CSI signal heuristics.
+                    // Uses amplitude mean → scale, motion_score → animation, no ML model needed.
+                    let densepose_keypoints = generate_synthetic_pose(tick, &frame.amplitudes, motion_score);
 
                     let cls_confidence = classification.confidence;
                     let mut update = SensingUpdate {

@@ -23,7 +23,7 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
 
         // ═══ Phase 1: Quick write lock — state mutations ═══
         let (features, classification, breathing_rate_hz, sub_variances,
-             _raw_motion, vitals, tick, motion_score, model_loaded,
+             _raw_motion, vitals, tick, motion_score,
              triage_update, wasm_alerts, est_persons, frame_amplitudes,
              frame_n_sub, model_status, rssi_mean) =
         {
@@ -132,19 +132,15 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             let rssi_mean = features.mean_rssi;
 
             (features, classification, br_hz, variances,
-             raw_motion, vitals, tick, motion_score, model_loaded,
+             raw_motion, vitals, tick, motion_score,
              triage_update, wasm_alerts, est_persons, frame_amplitudes,
              frame_n_sub, model_status, rssi_mean)
         }; // ── write lock released ──
 
         // ═══ Phase 2: Lock-free pure computation ═══
 
-        // DensePose skeleton (always generated for simulated source)
-        let densepose_keypoints = if model_loaded {
-            generate_synthetic_pose(tick, &frame_amplitudes, motion_score)
-        } else {
-            None
-        };
+        // DensePose skeleton — always generated from CSI signal heuristics
+        let densepose_keypoints = generate_synthetic_pose(tick, &frame_amplitudes, motion_score);
 
         let cls_confidence = classification.confidence;
         let mut update = SensingUpdate {
