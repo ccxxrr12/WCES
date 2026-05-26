@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + Medical Agent + 代码重构 + UI 全面优化 | main.rs 3868→976 行（-75%）
+> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + Medical Agent + 代码重构 + UI 全面优化 | main.rs 3868→1232 行（-68%），拆分为 30 个模块
 
 ---
 
@@ -105,7 +105,7 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
   │                        │  • DensePose 3D 骨架生成   │
   │                        │  • Medical Agent 分析     │
   │                        │                         │
-  │                        ├─ WebSocket /ws/sensing ─►├─ Triage Dashboard
+  │                        ├─ WebSocket :8765 ─►├─ Triage Dashboard
   │                        │  SensingUpdate JSON      │  • 2D 伤员地图
   │                        │  ├─ vital_signs          │  • 生命体征卡片
   │                        │  └─ triage_update         │  • 分诊统计 + 告警
@@ -295,7 +295,7 @@ CSI 采集          UDP:5005 →
 ├── firmware/
 │   └── esp32-c5-csi-node/            ← C5 CSI 固件 (完整, 含竞赛配置)
 ├── rust-server/
-│   ├── Cargo.toml                     ← Rust workspace (9 crates)
+│   ├── Cargo.toml                     ← Rust workspace (9 crates + 1 wasm32 独立编译)
 │   └── crates/
 │       ├── wifi-densepose-core/       ← 基础类型
 │       ├── wifi-densepose-signal/     ← CSI 信号处理
@@ -305,7 +305,7 @@ CSI 采集          UDP:5005 →
 │       ├── wifi-densepose-nn/         ← ONNX 推理 (DensePose 3D 骨架)
 │       ├── wifi-densepose-mat/        ← 分诊系统 ⭐
 │       ├── wifi-densepose-sensing-server/ ← 主服务 (2026-05 重构模块化)
-│       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (976行)
+│       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (1232行)
 │       │   ├── src/lib.rs                  ← crate 入口
 │       │   ├── src/types.rs                ← 数据类型 + 常量
 │       │   ├── src/signal_processing.rs    ← 14 个纯信号处理函数
@@ -317,6 +317,7 @@ CSI 采集          UDP:5005 →
 │       │   ├── src/edge_module_engine.rs   ← 19 边缘模块引擎
 │       │   ├── src/handlers/               ← 路由处理器 (ws/routes/model/recording/llm)
 │       │   ├── src/tasks/                  ← 后台任务 (udp_receiver/simulated_data/broadcast_tick)
+│       │   ├── src/app_config.rs            ← 应用配置管理
 │       │   ├── src/rvf_container.rs        ← RVF 模型容器
 │       │   ├── src/rvf_pipeline.rs         ← RVF 推理管道
 │       │   ├── src/adaptive_classifier.rs  ← 自适应分类器
@@ -326,11 +327,19 @@ CSI 采集          UDP:5005 →
 │       │   ├── src/sona.rs                 ← SONA 配置文件
 │       │   ├── src/sparse_inference.rs     ← 稀疏推理
 │       │   ├── src/trainer.rs              ← 模型训练
-│       └── wifi-densepose-config/     ← 系统配置 (占位 crate)
-├── ui/                                ← Web 可视化 (210+ files)
+│       ├── wifi-densepose-wasm-edge/  ← WASM 边缘模块 (68 .rs, wasm32 独立编译, workspace 排除)
+│       └── wifi-densepose-config/     ← 系统配置 crate
+├── ui/                                ← Web 可视化
+│   ├── index.html                     ← 统一入口门户页
+│   ├── triage.html                    ← 分诊仪表盘 (新版)
+│   ├── app.js                         ← UI 主应用
+│   ├── style.css                      ← 全局样式
 │   ├── lib/
 │   │   ├── three.min.js               ← Three.js r140 UMD (离线可用)
 │   │   └── OrbitControls.js           ← OrbitControls r140 UMD
+│   ├── mobile/                        ← React Native Expo 移动端
+│   ├── observatory/                   ← 3D 信号观测站
+│   └── tests/                         ← 自动化测试
 ├── scripts/
 │   └── provision.py                   ← C5 烧录脚本 (固件内也有副本)
 └── docs/                              ← 竞赛设计文档
@@ -369,7 +378,7 @@ CSI 采集          UDP:5005 →
 - **全本地部署**: 核心信号处理+分诊全本地，数据不出方舱；Agent 分析可选云端 LLM 增强
 - **瑞萨 RZ/G2L SBC**: ARM64 边缘计算平台 (Cortex-A55 ×2 + M33, 1GB DDR4)
 - **模拟模式**: 无需硬件即可启动完整演示（`cargo run -- --source simulate`）
-- **代码质量**: 2026-05 完成大规模重构，消除锁竞态死锁隐患，写锁持有时间从 135 行压缩为两阶段锁，main.rs 拆分 16 模块
+- **代码质量**: 2026-05 完成大规模重构，消除锁竞态死锁隐患，写锁持有时间从 135 行压缩为两阶段锁，main.rs 拆分为 30 个模块文件
 
 ---
 
