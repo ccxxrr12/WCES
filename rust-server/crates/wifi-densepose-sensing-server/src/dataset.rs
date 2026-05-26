@@ -156,9 +156,9 @@ impl NpyReader {
 pub struct MatReader;
 
 const MI_INT8: u32 = 1;
-#[allow(dead_code)] const MI_UINT8: u32 = 2;
-#[allow(dead_code)] const MI_INT16: u32 = 3;
-#[allow(dead_code)] const MI_UINT16: u32 = 4;
+const MI_UINT8: u32 = 2;
+const MI_INT16: u32 = 3;
+const MI_UINT16: u32 = 4;
 const MI_INT32: u32 = 5;
 const MI_UINT32: u32 = 6;
 const MI_SINGLE: u32 = 7;

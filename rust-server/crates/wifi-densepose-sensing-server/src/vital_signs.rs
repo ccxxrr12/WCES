@@ -64,7 +64,6 @@ impl Default for VitalSigns {
 
 /// Stateful vital sign detector. Maintains rolling buffers of CSI amplitude
 /// data and extracts breathing and heart rate via spectral analysis.
-#[allow(dead_code)]
 pub struct VitalSignDetector {
     /// Rolling buffer of mean-amplitude samples for breathing detection.
     breathing_buffer: VecDeque<f64>,

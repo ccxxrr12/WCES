@@ -68,7 +68,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                     continue;
                 }
 
-                // ADR-040: Try WASM output packet (magic 0xC511_0004).
+                // ADR-040: Try WASM output packet (magic 0xC511_0005).
                 if let Some(wasm_output) = parse_wasm_output(&buf[..len]) {
                     debug!("WASM output from {src}: node={} module={} events={}",
                            wasm_output.node_id, wasm_output.module_id,

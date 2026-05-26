@@ -76,6 +76,7 @@ typedef struct {
 typedef struct {
     wifi_pkt_rx_ctrl_t rx_ctrl;
     uint8_t            mac[6];
+    bool               first_word_invalid; /**< C5/C6: AGC may corrupt lead I/Q pair */
     int16_t            len;     /**< Length of the I/Q buffer in bytes. */
     int8_t            *buf;     /**< Pointer to I/Q data. */
 } wifi_csi_info_t;
@@ -139,6 +140,7 @@ typedef int wifi_promiscuous_pkt_type_t;
 #define WIFI_PROMIS_FILTER_MASK_MGMT 1
 #define WIFI_PROMIS_FILTER_MASK_DATA 2
 
+/* Legacy CSI config (ESP32/S3/C3). For C5/C6, use wifi_csi_acquire_config_t instead. */
 typedef struct {
     int lltf_en;
     int htltf_en;
@@ -149,6 +151,24 @@ typedef struct {
     int shift;
 } wifi_csi_config_t;
 
+/* C5/C6 CSI config (esp_wifi_he_types.h). Used when CONFIG_IDF_TARGET_ESP32C5 is set. */
+typedef struct {
+    int enable;
+    int acquire_csi_legacy;
+    int acquire_csi_force_lltf;
+    int acquire_csi_ht20;
+    int acquire_csi_ht40;
+    int acquire_csi_vht;
+    int acquire_csi_su;
+    int acquire_csi_mu;
+    int acquire_csi_dcm;
+    int acquire_csi_beamformed;
+    int acquire_csi_he_stbc_mode;
+    int val_scale_cfg;
+    int dump_ack_en;
+    int reserved;
+} wifi_csi_acquire_config_t;
+
 typedef struct {
     uint8_t primary;
 } wifi_ap_record_t;
@@ -156,7 +176,7 @@ typedef struct {
 static inline esp_err_t esp_wifi_set_promiscuous(bool en) { (void)en; return ESP_OK; }
 static inline esp_err_t esp_wifi_set_promiscuous_rx_cb(void *cb) { (void)cb; return ESP_OK; }
 static inline esp_err_t esp_wifi_set_promiscuous_filter(wifi_promiscuous_filter_t *f) { (void)f; return ESP_OK; }
-static inline esp_err_t esp_wifi_set_csi_config(wifi_csi_config_t *c) { (void)c; return ESP_OK; }
+static inline esp_err_t esp_wifi_set_csi_config(void *c) { (void)c; return ESP_OK; }
 static inline esp_err_t esp_wifi_set_csi_rx_cb(void *cb, void *ctx) { (void)cb; (void)ctx; return ESP_OK; }
 static inline esp_err_t esp_wifi_set_csi(bool en) { (void)en; return ESP_OK; }
 static inline esp_err_t esp_wifi_set_channel(uint8_t ch, wifi_second_chan_t sc) { (void)ch; (void)sc; return ESP_OK; }

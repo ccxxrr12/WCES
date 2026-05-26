@@ -5,10 +5,8 @@
 # optimized for embedded targets including Xtensa ESP32-S3.
 #
 # Pre-download WASM3 source before building:
-#   cd firmware/esp32-csi-node/components/wasm3
-#   git clone --depth 1 https://github.com/wasm3/wasm3.git wasm3-src
-#
-# Or run: scripts/fetch-wasm3.sh
+#   cd firmware/esp32-c5-csi-node/components/wasm3
+#   git clone --depth 1 --branch v0.5.0 https://github.com/wasm3/wasm3.git wasm3-src
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -19,7 +17,9 @@ if(NOT EXISTS "${WASM3_DIR}/source/wasm3.h")
     message(STATUS "Attempting to download WASM3...")
 
     # Try downloading inside build environment.
-    set(WASM3_URL "https://github.com/nicholasgasior/wasm3/archive/refs/heads/main.tar.gz")
+    # Use the official wasm3 repository (tagged release for reproducibility).
+    # If ESP32-specific patches are required, replace with the appropriate fork.
+    set(WASM3_URL "https://github.com/wasm3/wasm3/archive/refs/tags/v0.5.0.tar.gz")
     set(WASM3_ARCHIVE "${CMAKE_CURRENT_BINARY_DIR}/wasm3.tar.gz")
 
     file(DOWNLOAD "${WASM3_URL}" "${WASM3_ARCHIVE}"
@@ -40,7 +40,8 @@ if(NOT EXISTS "${WASM3_DIR}/source/wasm3.h")
 
     if(NOT EXISTS "${WASM3_DIR}/source/wasm3.h")
         message(WARNING "WASM3 source not available. Building WITHOUT WASM Tier 3 support.\n"
-                        "To enable: git clone --depth 1 https://github.com/wasm3/wasm3.git "
+                        "To enable: cd components/wasm3 && "
+                        "git clone --depth 1 --branch v0.5.0 https://github.com/wasm3/wasm3.git "
                         "${WASM3_DIR}")
         # Register empty component so ESP-IDF doesn't error.
         idf_component_register()
@@ -56,7 +57,7 @@ idf_component_register(
     INCLUDE_DIRS "${WASM3_DIR}/source"
 )
 
-# WASM3 configuration for ESP32-S3 Xtensa target.
+# WASM3 configuration for ESP32-C5 / ESP32-S3 target.
 target_compile_definitions(${COMPONENT_LIB} PUBLIC
     d_m3HasFloat=1                   # Enable float support (needed for DSP)
     d_m3Use32BitSlots=1              # 32-bit value slots (saves RAM on ESP32)

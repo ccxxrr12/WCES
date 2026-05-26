@@ -15,7 +15,7 @@
 | 子载波数 (40MHz) | 114 | 484 (HE) |
 | CSI 配置结构体 | `.lltf_en` / `.htltf_en` 等 (旧 API) | `.acquire_csi_*` (新 API, IDF v5.4+) |
 | SRAM | 512KB | 400KB |
-| GPIO | 45 | 22 |
+| GPIO | 45 | 29 (flash模块保留16-22) |
 | 频段 | 2.4GHz | 2.4GHz + 5GHz |
 | 工具链 | xtensa-esp-elf | riscv32-esp-elf |
 | ESP-IDF 最低版本 | v5.0 | **v5.4+** (推荐 v5.5+) |

@@ -1,14 +1,37 @@
 # ESP32-C5 移植完整审计报告
 
-> 审计日期：2026-05-06 | 审计范围：Rader_WIFI 项目全量代码
+> 审计日期：2026-05-06 (初始) | 2026-05-26 (深度复审)
+> 审计范围：Rader_WIFI 项目全量代码 + ESP-IDF v5.5 官方文档对照
 
 ---
 
 ## 一、审计结论
 **移植已完成 100%。所有 P0/P1/P2/P3 问题已全部修复，脚本/CI/文档/VS Code 已全部更新。**
 
+2026-05-26 深度复审发现并修复了3个新问题：CSI配置类型纠正、GPIO范围修正、测试存根补全。
+
 可进入编译验证阶段：用 IDF v5.5+ 环境 `idf.py set-target esp32c5 && idf.py build`。
 ---
+
+## 1.1 2026-05-26 深度复审新增修复 (3项)
+
+| # | 文件 | 问题 | 修复 |
+|---|------|------|------|
+| 17 | `csi_collector.c` | C5路径用 `wifi_csi_config_t` 初始化 `wifi_csi_acquire_config_t` 字段（类型不匹配） | 改为显式使用 `wifi_csi_acquire_config_t` (来自 `esp_wifi_he_types.h`) |
+| 18 | `Kconfig.projbuild`, `sdkconfig.defaults` | GPIO范围写"C5: 0-21"，实际C5有29个GPIO (0-28) | 全部修正为0-28，注明flash模块保留16-22 |
+| 19 | `test/stubs/esp_stubs.h` | `wifi_csi_info_t` stub缺失 `first_word_invalid`；无 C5 的 `wifi_csi_acquire_config_t` 存根 | 添加缺失字段 + 新增 C5 config 存根 |
+
+### ESP32-C5 关键规格核验 (对照官方文档)
+
+| 项目 | 官方规格 | 本项目状态 |
+|------|---------|:--:|
+| GPIO 总数 | 29 (GPIO0-28) | ✅ 已修正 |
+| Flash 模块 GPIO | 16-22 被 SPI flash 占用 | ✅ 已标注 |
+| CSI 配置类型 | `wifi_csi_acquire_config_t` | ✅ 已修正 |
+| CSI 回调类型 | `wifi_csi_info_t` (所有芯片相同) | ✅ 正确 |
+| 最小 IDF 版本 | v5.5 | ✅ CMakeLists 强制检查 |
+| C5 AX 5GHz 带宽 | 仅 20MHz (HT40 不支持) | ⚠️ 已知硬件限制 |
+| WASM3 RISC-V | 支持 (RV32) | ✅ 已确认 |
 
 ## 二、已完成的修复（16 项）
 | # | 文件 | 问题 | 修复 |
@@ -16,7 +39,7 @@
 | 1 | `sdkconfig.defaults` | `CONFIG_ESP_WIFI_ENABLE_WIFI6=y` 不存在 | 已删除（WiFi 6 由 C5 target 隐式启用） |
 | 2 | `sdkconfig.defaults` | 缺少 IDF v5.5+ 版本说明 | 已添加注释 |
 | 3 | `csi_collector.c` | `wifi_csi_config_t` 结构体字段不兼容 | 已添加 `#if CONFIG_IDF_TARGET_ESP32C5` 条件编译 |
-| 4 | `csi_collector.h` | `CSI_MAX_FRAME_SIZE=2068` 不够 WiFi 6 用 | 已增大至 4116（适配 484 子载波、4 天线） |
+| 4 | `csi_collector.h` | `CSI_MAX_FRAME_SIZE=2068` 不够 WiFi 6 用 | 已增大至 4116（预留 HE 高子载波数场景、4 天线） |
 | 5 | `main.c` | 日志标识为 "ESP32-S3" | 已改为 "ESP32-C5" |
 | 6 | `Kconfig.projbuild` | 显示 GPIO(38/47/48) C5 不存在 | 已重置 C5 范围(0-21)+默认关闭显示 |
 | 7 | `build_firmware_c5.ps1` | 工具链路径为 Xtensa | 已改为 RISC-V 工具链 |
@@ -44,7 +67,7 @@
 #define EDGE_MAX_SUBCARRIERS  128   /**< Max subcarriers per frame. */
 ```
 
-**问题：** C5 WiFi 6 20MHz 有 242 子载波，40MHz 有 484 子载波。当前的 128 只有 C5 实际的一半不到，会导致 edge_processing 只处理前 128 个子载波，丢失大量数据。
+**问题：** C5 WiFi 6 HE20 有 242 子载波；C6 HE40 可达 484 子载波。当前的 128 不够用，会导致 edge_processing 只处理前 128 个子载波，丢失大量数据。
 
 **修复：**
 ```c

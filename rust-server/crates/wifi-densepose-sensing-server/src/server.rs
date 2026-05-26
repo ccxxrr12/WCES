@@ -48,15 +48,13 @@ pub(crate) async fn run_server(
     }
 
     // ── HTTP server (serves UI + full DensePose-compatible REST API) ──────────
-    let ui_path = args.ui_path.clone();
 
-    // Compute absolute path to project-root/ui/lib so Three.js is always reachable
-    // even when --ui-path points to docs/triage-ui instead of ui/.
-    let project_ui_lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // UI files are served from project-root/ui/
+    let project_ui_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()   // wifi-densepose-sensing-server/
         .parent().unwrap()   // crates/
         .parent().unwrap()   // rust-server/
-        .join("ui").join("lib");
+        .join("ui");
 
     let http_app = Router::new()
         .route("/", get(routes::info_page))
@@ -122,11 +120,8 @@ pub(crate) async fn run_server(
         // Agent analysis endpoints (Phase 4)
         .route("/api/v1/agent/analyze", post(llm_routes::agent_analyze))
         .route("/api/v1/agent/status", get(llm_routes::agent_status))
-        // Static UI files
-        // Serve ui/lib/ from the project's actual ui/lib/ so Three.js is always found
-        // (placed before the /ui catch-all so more-specific /ui/lib takes priority)
-        .nest_service("/ui/lib", ServeDir::new(&project_ui_lib))
-        .nest_service("/ui", ServeDir::new(&ui_path))
+        // Static UI files — served from project-root/ui/
+        .nest_service("/ui", ServeDir::new(&project_ui_root))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache, no-store, must-revalidate"),
@@ -134,11 +129,27 @@ pub(crate) async fn run_server(
         .with_state(state.clone());
 
     let http_addr = SocketAddr::from((bind_ip, args.http_port));
-    let http_listener = tokio::net::TcpListener::bind(http_addr).await
-        .expect("Failed to bind HTTP port");
+    let http_listener = match tokio::net::TcpListener::bind(http_addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            error!("Failed to bind HTTP {http_addr}: {e}");
+            if cfg!(target_os = "windows") && (e.raw_os_error() == Some(10013)) {
+                error!("  Port {} may be in Windows reserved range (Hyper-V/NAT).", args.http_port);
+                error!("  Check: netsh interface ipv4 show excludedportrange protocol=tcp");
+                error!("  Fix: use a different port, e.g. --http-port 3000");
+                error!("  Or: net stop winnat && net start winnat (admin required, resets excluded ranges)");
+            }
+            std::process::exit(1);
+        }
+    };
     info!("HTTP server listening on {http_addr}");
-    info!("  Control Center:  http://{bind_ip}:{}/ui/index.html", args.http_port);
-    info!("  Triage Dashboard: http://{bind_ip}:{}/ui/triage.html", args.http_port);
+    if bind_ip.is_unspecified() {
+        info!("  Triage Dashboard: http://localhost:{}/ui/triage.html", args.http_port);
+        info!("  Control Center:  http://localhost:{}/ui/index.html", args.http_port);
+    } else {
+        info!("  Triage Dashboard: http://{bind_ip}:{}/ui/triage.html", args.http_port);
+        info!("  Control Center:  http://{bind_ip}:{}/ui/index.html", args.http_port);
+    }
 
     // ── Run the HTTP server with graceful shutdown ────────────────────────────
     let shutdown_state = state.clone();

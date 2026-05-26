@@ -359,7 +359,7 @@ static void csi_rx_cb(void *recv_buf, wifi_csi_info_t *info)
 ## ✅ 推荐方案：ESP32-C5 × 3 + 瑞萨 RZ/G2L
 
 ```
-从节点：ESP32-C5 × 3（WiFi 6，484 子载波，2.4/5GHz 双频）
+从节点：ESP32-C5 × 3（WiFi 6，242 子载波 HE20，2.4/5GHz 双频）
 主节点：瑞萨 RZ/G2L（运行推理 + 医疗检测 + UI）
 
 连接方式：
@@ -367,7 +367,7 @@ ESP32-C5 → UDP 5005 → 瑞萨 RZ/G2L
 ```
 
 **优点：**
-- ✅ **WiFi 6 高分辨率** — 484 子载波，4× 传统 S3 方案
+- ✅ **WiFi 6 高分辨率** — 242 子载波 (HE20)，4× 传统 WiFi 4 方案
 - ✅ **双频支持** — 2.4GHz + 5GHz 同时工作
 - ✅ **固件已完成** — `firmware/esp32-c5-csi-node/` 竞赛配置就绪
 - ✅ **成本可控** — C5 单价约 ¥68

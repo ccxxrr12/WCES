@@ -310,14 +310,10 @@ pub(crate) async fn info_page() -> Html<String> {
          <h1>WCES — WiFi CSI 应急感知系统</h1>\
          <p>Rust + Axum + Tokio | 瑞萨 RZ/G2L + ESP32-C5 ×3</p>\
          <div class='section'><h3>Web 仪表盘</h3><ul>\
-         <li><a href='/ui/index.html'><strong>/ui/index.html</strong></a>\
-         <span class='tag'>控制中心</span></li>\
          <li><a href='/ui/triage.html'><strong>/ui/triage.html</strong></a>\
          <span class='tag'>分诊仪表盘 (竞赛核心)</span></li>\
-         <li><a href='/ui/observatory.html'>/ui/observatory.html</a>\
-         <span class='tag'>观测台</span></li>\
-         <li><a href='/ui/viz.html'>/ui/viz.html</a>\
-         <span class='tag'>3D 骨架可视化</span></li>\
+         <li><a href='/ui/index.html'><strong>/ui/index.html</strong></a>\
+         <span class='tag'>控制中心</span></li>\
          </ul></div>\
          <div class='section'><h3>API 端点</h3><ul>\
          <li><a href='/health'>/health</a> — 服务健康检查</li>\

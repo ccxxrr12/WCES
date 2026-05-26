@@ -47,7 +47,14 @@ echo -e "${CYAN}[2/5] 检查端口占用...${NC}"
 
 kill_port() {
     local port=$1
-    local pid=$(lsof -ti :$port 2>/dev/null || true)
+    local pid=""
+    if command -v lsof > /dev/null 2>&1; then
+        pid=$(lsof -ti :$port 2>/dev/null || true)
+    elif command -v fuser > /dev/null 2>&1; then
+        pid=$(fuser $port/tcp 2>/dev/null || true)
+    elif command -v ss > /dev/null 2>&1; then
+        pid=$(ss -tlnp "sport = :$port" 2>/dev/null | grep -oP 'pid=\K\d+' | head -1 || true)
+    fi
     if [ -n "$pid" ]; then
         echo "  端口 $port 被占用 (PID: $pid), 释放中..."
         kill -9 $pid 2>/dev/null || true
@@ -81,7 +88,7 @@ SERVER_PID=$!
 echo -e "  ${GREEN}✓${NC} Server PID: $SERVER_PID"
 
 # ── 4. 验证服务 ──────────────────────────────────
-echo -e "${CYAN}[4/5] 验证服务...${NC}"
+echo -e "${CYAN}[5/5] 验证服务...${NC}"
 sleep 2
 
 check_http() {
@@ -93,18 +100,38 @@ check_http() {
 }
 
 check_ws() {
-    if lsof -i :$WS_PORT > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} WebSocket 服务 (端口 $WS_PORT)"
+    if command -v ss > /dev/null 2>&1; then
+        if ss -tln "sport = :$WS_PORT" 2>/dev/null | grep -q ":$WS_PORT"; then
+            echo -e "  ${GREEN}✓${NC} WebSocket 服务 (端口 $WS_PORT)"
+        else
+            echo -e "  ${YELLOW}⚠${NC} WebSocket 端口未就绪"
+        fi
+    elif command -v lsof > /dev/null 2>&1; then
+        if lsof -i :$WS_PORT > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} WebSocket 服务 (端口 $WS_PORT)"
+        else
+            echo -e "  ${YELLOW}⚠${NC} WebSocket 端口未就绪"
+        fi
     else
-        echo -e "  ${YELLOW}⚠${NC} WebSocket 端口未就绪"
+        echo -e "  ${YELLOW}⚠${NC} WebSocket 端口状态无法检测 (缺少 ss/lsof)"
     fi
 }
 
 check_udp() {
-    if lsof -i :$UDP_PORT > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} UDP CSI 接收 (端口 $UDP_PORT)"
+    if command -v ss > /dev/null 2>&1; then
+        if ss -uln "sport = :$UDP_PORT" 2>/dev/null | grep -q ":$UDP_PORT"; then
+            echo -e "  ${GREEN}✓${NC} UDP CSI 接收 (端口 $UDP_PORT)"
+        else
+            echo -e "  ${YELLOW}⚠${NC} UDP 端口未就绪 (等待 ESP32 节点发送数据)"
+        fi
+    elif command -v lsof > /dev/null 2>&1; then
+        if lsof -i :$UDP_PORT > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} UDP CSI 接收 (端口 $UDP_PORT)"
+        else
+            echo -e "  ${YELLOW}⚠${NC} UDP 端口未就绪 (等待 ESP32 节点发送数据)"
+        fi
     else
-        echo -e "  ${YELLOW}⚠${NC} UDP 端口未就绪 (等待 ESP32 节点发送数据)"
+        echo -e "  ${YELLOW}⚠${NC} UDP 端口状态无法检测 (缺少 ss/lsof), 等待数据..."
     fi
 }
 

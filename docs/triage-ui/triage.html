@@ -283,35 +283,35 @@
         .btn-ghost{background:var(--bg-tertiary);color:var(--text-primary)}
         .btn-ghost:hover{background:var(--separator)}
 
-        /* LLM Card */
-        .llm-card{background:var(--bg-tertiary);border-radius:14px;padding:14px;margin-bottom:10px;border:.5px solid var(--separator);transition:all .3s}
-        .llm-card.streaming{border-color:var(--primary-blue);box-shadow:0 0 20px rgba(0,122,255,.15)}
-        .llm-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-        .llm-card-header .patient-tag{font-size:11px;font-weight:500;color:var(--primary-blue);background:rgba(0,122,255,.12);padding:3px 8px;border-radius:5px}
-        .llm-badge{font-size:10px;padding:3px 8px;border-radius:5px;font-weight:500}
-        .llm-badge.llm{background:rgba(94,92,230,.15);color:#5E5CE6}
-        .llm-badge.fallback{background:rgba(142,142,147,.15);color:var(--gray)}
-        .llm-badge.generating{background:rgba(0,122,255,.15);color:var(--primary-blue);animation:pulse 1.5s infinite}
-        .llm-stream-text{font-size:12px;line-height:1.5;color:var(--text-primary);max-height:240px;overflow-y:auto;padding:10px;background:var(--bg-secondary);border-radius:8px;white-space:pre-wrap;word-break:break-word}
-        .llm-stream-text .typing-cursor::after{content:'▊';animation:blink 1s step-end infinite;color:var(--primary-blue)}
+        /* Agent Card */
+        .agent-card{background:var(--bg-tertiary);border-radius:14px;padding:14px;margin-bottom:10px;border:.5px solid var(--separator);transition:all .3s}
+        .agent-card.streaming{border-color:var(--primary-blue);box-shadow:0 0 20px rgba(0,122,255,.15)}
+        .agent-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+        .agent-card-header .patient-tag{font-size:11px;font-weight:500;color:var(--primary-blue);background:rgba(0,122,255,.12);padding:3px 8px;border-radius:5px}
+        .agent-badge{font-size:10px;padding:3px 8px;border-radius:5px;font-weight:500}
+        .agent-badge.agent{background:rgba(94,92,230,.15);color:#5E5CE6}
+        .agent-badge.fallback{background:rgba(142,142,147,.15);color:var(--gray)}
+        .agent-badge.generating{background:rgba(0,122,255,.15);color:var(--primary-blue);animation:pulse 1.5s infinite}
+        .agent-stream-text{font-size:12px;line-height:1.5;color:var(--text-primary);max-height:240px;overflow-y:auto;padding:10px;background:var(--bg-secondary);border-radius:8px;white-space:pre-wrap;word-break:break-word}
+        .agent-stream-text .typing-cursor::after{content:'▊';animation:blink 1s step-end infinite;color:var(--primary-blue)}
         @keyframes blink{50%{opacity:0}}
-        .llm-risk-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:16px;font-size:11px;font-weight:600;margin-bottom:10px}
-        .llm-risk-badge.critical{background:rgba(255,59,48,.15);color:var(--danger-red)}
-        .llm-risk-badge.high{background:rgba(255,149,0,.15);color:var(--warning-orange)}
-        .llm-risk-badge.moderate{background:rgba(0,122,255,.15);color:var(--primary-blue)}
-        .llm-risk-badge.low{background:rgba(52,199,89,.15);color:var(--success-green)}
-        .llm-section-label{font-size:10px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px;margin:10px 0 4px}
-        .llm-rec-item{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:.5px solid var(--separator)}
-        .llm-rec-item:last-child{border-bottom:none}
-        .llm-rec-num{width:20px;height:20px;border-radius:50%;background:var(--primary-blue);color:white;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
-        .llm-rec-text{font-size:12px;line-height:1.4}
-        .llm-triage-opinion{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:12px;margin:6px 0}
-        .llm-triage-opinion.agrees{background:rgba(52,199,89,.1);border:1px solid rgba(52,199,89,.2)}
-        .llm-triage-opinion.disagrees{background:rgba(255,149,0,.1);border:1px solid rgba(255,149,0,.2)}
-        .llm-analyze-btn{width:100%;padding:10px;background:linear-gradient(135deg,var(--primary-blue) 0%,#5856D6 100%);color:white;border:none;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px}
-        .llm-analyze-btn:hover{transform:scale(1.02)}
-        .llm-analyze-btn:active{transform:scale(.98)}
-        .llm-analyze-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+        .agent-risk-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:16px;font-size:11px;font-weight:600;margin-bottom:10px}
+        .agent-risk-badge.critical{background:rgba(255,59,48,.15);color:var(--danger-red)}
+        .agent-risk-badge.high{background:rgba(255,149,0,.15);color:var(--warning-orange)}
+        .agent-risk-badge.moderate{background:rgba(0,122,255,.15);color:var(--primary-blue)}
+        .agent-risk-badge.low{background:rgba(52,199,89,.15);color:var(--success-green)}
+        .agent-section-label{font-size:10px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px;margin:10px 0 4px}
+        .agent-rec-item{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:.5px solid var(--separator)}
+        .agent-rec-item:last-child{border-bottom:none}
+        .agent-rec-num{width:20px;height:20px;border-radius:50%;background:var(--primary-blue);color:white;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
+        .agent-rec-text{font-size:12px;line-height:1.4}
+        .agent-triage-opinion{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:12px;margin:6px 0}
+        .agent-triage-opinion.agrees{background:rgba(52,199,89,.1);border:1px solid rgba(52,199,89,.2)}
+        .agent-triage-opinion.disagrees{background:rgba(255,149,0,.1);border:1px solid rgba(255,149,0,.2)}
+        .agent-analyze-btn{width:100%;padding:10px;background:linear-gradient(135deg,var(--primary-blue) 0%,#5856D6 100%);color:white;border:none;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px}
+        .agent-analyze-btn:hover{transform:scale(1.02)}
+        .agent-analyze-btn:active{transform:scale(.98)}
+        .agent-analyze-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
         .patient-list-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:all .2s;font-size:12px}
         .patient-list-item:hover{background:var(--separator)}
         .patient-list-item.active{border:1px solid var(--primary-blue)}
@@ -459,19 +459,19 @@
             </div>
         </div>
 
-        <!-- LLM AI (collapsible) -->
+        <!-- Agent AI (collapsible) -->
         <div class="sidebar-section">
-            <div class="section-header collapsible" onclick="toggleSection('llmBody','llmToggle')">
-                <span class="section-title">🧠 AI 辅助分析</span>
-                <span class="section-toggle open" id="llmToggle">▶</span>
+            <div class="section-header collapsible" onclick="toggleSection('agentBody','agentToggle')">
+                <span class="section-title">🧠 Agent 辅助分析</span>
+                <span class="section-toggle open" id="agentToggle">▶</span>
             </div>
-            <div class="section-body" id="llmBody">
-                <div id="llmAnalysisContainer">
-                    <div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击伤员或登记后进行AI分析</div></div>
+            <div class="section-body" id="agentBody">
+                <div id="agentAnalysisContainer">
+                    <div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击伤员或登记后进行Agent分析</div></div>
                 </div>
                 <div style="margin-top:10px;display:flex;gap:6px;">
                     <button class="btn btn-ghost" style="font-size:11px;padding:6px 10px;flex:1;" onclick="showPatientModal()">+ 登记伤员</button>
-                    <button class="llm-analyze-btn" id="llmAnalyzeBtn" disabled onclick="requestLlmAnalysis()" style="flex:2;margin-top:0;">🤖 AI分析</button>
+                    <button class="agent-analyze-btn" id="agentAnalyzeBtn" disabled onclick="requestAgentAnalysis()" style="flex:2;margin-top:0;">🤖 Agent分析</button>
                 </div>
                 <div id="patientListSection" style="display:none;margin-top:8px;">
                     <div class="section-title" style="margin-bottom:6px;">📋 已登记伤员</div>
@@ -537,7 +537,7 @@ window.addEventListener('error',function(e){
 // ═══════════════════════════════════════════════════════════
 const NODES = [{id:1,x:350,y:120,label:'C5 #1'},{id:2,x:120,y:420,label:'C5 #2'},{id:3,x:580,y:420,label:'C5 #3'}];
 let latestTriage=null, latestData=null, showHeatmap=false, ws=null, currentView='map';
-let selectedPatientId=null, registeredPatients={}, llmStreamBuffer={};
+let selectedPatientId=null, registeredPatients={}, agentStreamBuffer={};
 let lastRenderStamp=0; const MIN_RENDER_MS=150;
 let wsReconnectAttempts=0; const WS_MAX_RECONNECT=10;
 let mapResizeObserver=null, animFrameId=null;
@@ -938,7 +938,7 @@ function renderFromServer(){
         let newWasmHtml;
         if(latestData&&latestData.wasm_alerts&&latestData.wasm_alerts.length>0){
             const icons={gait:'🚶',loitering:'⏳',vibration:'🏗️',ltl:'⚡',meta_adapt:'🧠',sparse_recovery:'🔧',vital_trend:'💓',attractor:'🌀',coherence:'📶',resp_distress:'🫁',confined_space:'🚧',panic_motion:'🏃',sleep_apnea:'😴',cardiac:'❤️',seizure:'⚡',intrusion:'🔒',occupancy:'👥',mincut:'🆔',weapon_detect:'🔪'};
-            newWasmHtml=latestData.wasm_alerts.slice(0,12).map(a=>`<div class="wasm-alert ${a.severity}"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${a.module}">[${a.module}]</span><span>${a.event_name}</span><span class="wasm-value">${a.value.toFixed(1)}</span></div>`).join('');
+            newWasmHtml=latestData.wasm_alerts.slice(0,12).map(a=>`<div class="wasm-alert ${a.severity}"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${a.module}">[${a.module}]</span><span>${a.event_name}</span><span class="wasm-value">${a.value.toFixed(0)}</span></div>`).join('');
         }else{
             newWasmHtml='<div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>';
         }
@@ -946,18 +946,19 @@ function renderFromServer(){
             _lastWasmHtml=newWasmHtml;
             document.getElementById('wasmAlertsList').innerHTML=newWasmHtml;
         }
+        // Canvas draws (expensive) — only inside throttle
+        drawSparklines();
+        if(currentView==='map')drawMap();
     }
 
+    // Vitals text + history — always update, cheap
     if(latestData&&latestData.vital_signs){
         const br=latestData.vital_signs.breathing_rate_bpm,hr=latestData.vital_signs.heart_rate_bpm;
         document.getElementById('currentBreathing').textContent=br?.toFixed(0)??'--';
         document.getElementById('currentHeart').textContent=hr?.toFixed(0)??'--';
-        // Push to history
         breathingHistory.push(br??null);breathingHistory.shift();
         heartHistory.push(hr??null);heartHistory.shift();
-        drawSparklines();
     }
-    if(currentView==='map')drawMap();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -984,11 +985,11 @@ function openEhr(survivor){
     html+='<div class="ehr-section"><h3>🫀 生命体征趋势</h3>';
     html+=`<canvas id="ehrVitalTrend" class="ehr-vital-trend"></canvas></div>`;
 
-    html+='<div class="ehr-section"><h3>🤖 AI 分析</h3>';
-    const llmCard=document.getElementById('llm-card-'+survivor.id);
-    if(llmCard)html+=llmCard.outerHTML;
-    else{html+='<div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击 AI 分析按钮生成报告</div></div>'}
-    html+='<button class="llm-analyze-btn" onclick="selectedPatientId=\''+survivor.id+'\';requestLlmAnalysis()">🤖 分析此伤员</button>';
+    html+='<div class="ehr-section"><h3>🤖 Agent 分析</h3>';
+    const agentCard=document.getElementById('agent-card-'+survivor.id);
+    if(agentCard)html+=agentCard.outerHTML;
+    else{html+='<div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击 Agent 分析按钮生成报告</div></div>'}
+    html+='<button class="agent-analyze-btn" onclick="selectedPatientId=\''+survivor.id+'\';requestAgentAnalysis()">🤖 Agent 分析此伤员</button>';
     html+='</div>';
 
     document.getElementById('ehrBody').innerHTML=html;
@@ -1038,9 +1039,9 @@ function connectWebSocket(){
         try{
             const d=JSON.parse(e.data);
             if(d.type==='sensing_update')handleUpdate(d);
-            else if(d.type==='llm_stream')handleLlmStream(d);
-            else if(d.type==='llm_analysis_complete')handleLlmComplete(d);
-            else if(d.type==='llm_fallback')handleLlmFallback(d);
+            else if(d.type==='agent_stream')handleAgentStream(d);
+            else if(d.type==='agent_analysis_complete')handleAgentComplete(d);
+            else if(d.type==='agent_fallback')handleAgentFallback(d);
         }catch(err){console.error('[TRIAGE] WS msg error:',err)}
     };
     ws.onclose=()=>{
@@ -1059,49 +1060,49 @@ function connectWebSocket(){
 }
 
 // ═══════════════════════════════════════════════════════════
-// LLM ANALYSIS
+// AGENT ANALYSIS
 // ═══════════════════════════════════════════════════════════
 function enableAnalyzeButton(){
-    const btn=document.getElementById('llmAnalyzeBtn');if(!btn)return;
-    if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成AI分析报告'}
+    const btn=document.getElementById('agentAnalyzeBtn');if(!btn)return;
+    if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成Agent分析报告'}
 }
 function selectPatientForAnalysis(patientId){selectedPatientId=patientId;enableAnalyzeButton()}
-function requestLlmAnalysis(){
+function requestAgentAnalysis(){
     if(!selectedPatientId||!latestTriage)return;
     const survivor=(latestTriage.survivors||[]).find(s=>s.id===selectedPatientId);if(!survivor)return;
-    const btn=document.getElementById('llmAnalyzeBtn');btn.disabled=true;btn.innerHTML='<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
-    llmStreamBuffer[selectedPatientId]={text:'',isStreaming:true};renderLlmStreamCard(selectedPatientId,'');
-    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'llm_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id}));
+    const btn=document.getElementById('agentAnalyzeBtn');btn.disabled=true;btn.innerHTML='<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
+    agentStreamBuffer[selectedPatientId]={text:'',isStreaming:true};renderAgentStreamCard(selectedPatientId,'');
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'agent_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id}));
     else generateLocalAnalysis(selectedPatientId,survivor);
 }
-function handleLlmStream(data){
+function handleAgentStream(data){
     const pid=data.survivor_id||data.patient_id;if(!pid)return;
-    if(!llmStreamBuffer[pid])llmStreamBuffer[pid]={text:'',isStreaming:true};
-    if(data.is_complete){llmStreamBuffer[pid].isStreaming=false;return}
-    llmStreamBuffer[pid].text+=data.text||'';renderLlmStreamCard(pid,llmStreamBuffer[pid].text,true);
+    if(!agentStreamBuffer[pid])agentStreamBuffer[pid]={text:'',isStreaming:true};
+    if(data.is_complete){agentStreamBuffer[pid].isStreaming=false;return}
+    agentStreamBuffer[pid].text+=data.text||'';renderAgentStreamCard(pid,agentStreamBuffer[pid].text,true);
 }
-function handleLlmComplete(data){const pid=data.survivor_id||data.patient_id;if(!pid)return;llmStreamBuffer[pid]={text:'',isStreaming:false};if(data.analysis_json)renderLlmAnalysisCard(pid,data.analysis_json,data.generated_by||'llm');const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}}
-function handleLlmFallback(data){const pid=data.patient_id;if(!pid)return;renderLlmAnalysisCard(pid,data.analysis_json||data,data.generated_by||'fallback');const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}}
+function handleAgentComplete(data){const pid=data.survivor_id||data.patient_id;if(!pid)return;agentStreamBuffer[pid]={text:'',isStreaming:false};if(data.analysis_json)renderAgentAnalysisCard(pid,data.analysis_json,data.generated_by||'agent');const btn=document.getElementById('agentAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成Agent分析报告'}}
+function handleAgentFallback(data){const pid=data.patient_id;if(!pid)return;renderAgentAnalysisCard(pid,data.analysis_json||data,data.generated_by||'fallback');const btn=document.getElementById('agentAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成Agent分析报告'}}
 
-function renderLlmStreamCard(patientId,text,isStreaming){
-    const container=document.getElementById('llmAnalysisContainer');
-    let card=document.getElementById('llm-card-'+patientId);
-    if(!card){card=document.createElement('div');card.id='llm-card-'+patientId;card.className='llm-card streaming';container.innerHTML='';container.appendChild(card)}
-    card.innerHTML=`<div class="llm-card-header"><span class="patient-tag">${patientId}</span><span class="llm-badge generating">⚡ 生成中...</span></div><div class="llm-stream-text${isStreaming?' typing-cursor':''}">${escapeHtml(text)}</div>`;
+function renderAgentStreamCard(patientId,text,isStreaming){
+    const container=document.getElementById('agentAnalysisContainer');
+    let card=document.getElementById('agent-card-'+patientId);
+    if(!card){card=document.createElement('div');card.id='agent-card-'+patientId;card.className='agent-card streaming';container.innerHTML='';container.appendChild(card)}
+    card.innerHTML=`<div class="agent-card-header"><span class="patient-tag">${patientId}</span><span class="agent-badge generating">⚡ 生成中...</span></div><div class="agent-stream-text${isStreaming?' typing-cursor':''}">${escapeHtml(text)}</div>`;
 }
-function renderLlmAnalysisCard(patientId,analysis,generatedBy){
-    const container=document.getElementById('llmAnalysisContainer'),a=analysis;
-    const isLlm=generatedBy==='llm',badgeClass=isLlm?'llm':'fallback',badgeText=isLlm?'🤖 LLM分析':'📋 模板分析';
+function renderAgentAnalysisCard(patientId,analysis,generatedBy){
+    const container=document.getElementById('agentAnalysisContainer'),a=analysis;
+    const isAgent=generatedBy==='agent',badgeClass=isAgent?'agent':'fallback',badgeText=isAgent?'🤖 Agent分析':'📋 模板分析';
     const riskLevel=a.risk_assessment?.overall_level||'moderate',riskEmoji={critical:'🔴',high:'🟠',moderate:'🟡',low:'🟢'}[riskLevel]||'⚪';
-    let html=`<div class="llm-card" id="llm-card-${patientId}"><div class="llm-card-header"><span class="patient-tag">${patientId}</span><span class="llm-badge ${badgeClass}">${badgeText}</span></div>`;
-    html+=`<div class="llm-risk-badge ${riskLevel}">${riskEmoji} 综合风险评估: ${riskLevel.toUpperCase()}</div>`;
+    let html=`<div class="agent-card" id="agent-card-${patientId}"><div class="agent-card-header"><span class="patient-tag">${patientId}</span><span class="agent-badge ${badgeClass}">${badgeText}</span></div>`;
+    html+=`<div class="agent-risk-badge ${riskLevel}">${riskEmoji} 综合风险评估: ${riskLevel.toUpperCase()}</div>`;
     if(a.risk_assessment?.primary_concern)html+=`<div style="font-size:13px;font-weight:500;margin-bottom:3px;">⚠️ ${escapeHtml(a.risk_assessment.primary_concern)}</div>`;
     if(a.risk_assessment?.deteriorating)html+=`<div style="font-size:11px;color:var(--danger-red);margin-bottom:6px;">📈 ${escapeHtml(a.risk_assessment.deterioration_evidence||'存在恶化趋势')}</div>`;
-    if(a.condition_match?.most_likely&&a.condition_match.most_likely!=='无明确模式匹配'){html+=`<div class="llm-section-label">🔬 体征模式匹配</div><div style="font-size:12px;margin-bottom:3px;"><strong>${escapeHtml(a.condition_match.most_likely)}</strong><span style="color:var(--text-secondary);font-size:10px;"> (置信度: ${a.condition_match.confidence||'medium'})</span></div>`;}
-    if(a.triage_opinion){const agrees=a.triage_opinion.agrees_with_start!==false;html+=`<div class="llm-triage-opinion ${agrees?'agrees':'disagrees'}">${agrees?'✅':'⚠️'} ${escapeHtml(a.triage_opinion.reason||'')}</div>`;}
-    if(a.history_relevance?.relevant_conditions?.length){html+=`<div class="llm-section-label">📋 病史关联</div><div style="font-size:11px;color:var(--text-secondary);">${escapeHtml(a.history_relevance.impact_on_assessment||'')}</div>`;}
-    if(a.recommendations?.length){html+=`<div class="llm-section-label">💊 处置建议</div>`;a.recommendations.slice(0,5).forEach((rec,i)=>{html+=`<div class="llm-rec-item"><div class="llm-rec-num">${i+1}</div><div class="llm-rec-text">${escapeHtml(rec)}</div></div>`});}
-    if(a.monitoring_priority?.length){html+=`<div class="llm-section-label">👁️ 优先监测</div><div style="font-size:11px;color:var(--text-secondary);">${a.monitoring_priority.map(m=>'• '+escapeHtml(m)).join('<br>')}</div>`;}
+    if(a.condition_match?.most_likely&&a.condition_match.most_likely!=='无明确模式匹配'){html+=`<div class="agent-section-label">🔬 体征模式匹配</div><div style="font-size:12px;margin-bottom:3px;"><strong>${escapeHtml(a.condition_match.most_likely)}</strong><span style="color:var(--text-secondary);font-size:10px;"> (置信度: ${a.condition_match.confidence||'medium'})</span></div>`;}
+    if(a.triage_opinion){const agrees=a.triage_opinion.agrees_with_start!==false;html+=`<div class="agent-triage-opinion ${agrees?'agrees':'disagrees'}">${agrees?'✅':'⚠️'} ${escapeHtml(a.triage_opinion.reason||'')}</div>`;}
+    if(a.history_relevance?.relevant_conditions?.length){html+=`<div class="agent-section-label">📋 病史关联</div><div style="font-size:11px;color:var(--text-secondary);">${escapeHtml(a.history_relevance.impact_on_assessment||'')}</div>`;}
+    if(a.recommendations?.length){html+=`<div class="agent-section-label">💊 处置建议</div>`;a.recommendations.slice(0,5).forEach((rec,i)=>{html+=`<div class="agent-rec-item"><div class="agent-rec-num">${i+1}</div><div class="agent-rec-text">${escapeHtml(rec)}</div></div>`});}
+    if(a.monitoring_priority?.length){html+=`<div class="agent-section-label">👁️ 优先监测</div><div style="font-size:11px;color:var(--text-secondary);">${a.monitoring_priority.map(m=>'• '+escapeHtml(m)).join('<br>')}</div>`;}
     html+=`<div style="margin-top:10px;font-size:9px;color:var(--text-secondary);text-align:right;">${a.generated_at?new Date(a.generated_at).toLocaleTimeString('zh-CN'):''}${a.analysis_time_ms?' · '+a.analysis_time_ms+'ms':''}</div></div>`;
     container.innerHTML=html;
 }
@@ -1113,15 +1114,15 @@ function generateLocalAnalysis(patientId,survivor){
     const riskLevel=survivor.triage_color==='red'?'critical':survivor.triage_color==='yellow'?'high':survivor.triage_color==='green'?'low':'moderate';
     const triageName={red:'Immediate',yellow:'Delayed',green:'Minor',black:'Deceased'}[survivor.triage_color]||'';
     const d=survivor.is_deteriorating||false;
-    renderLlmAnalysisCard(patientId,{patient_id:patientId,generated_at:new Date().toISOString(),generated_by:'local_fallback',analysis_time_ms:0,
+    renderAgentAnalysisCard(patientId,{patient_id:patientId,generated_at:new Date().toISOString(),generated_by:'local_fallback',analysis_time_ms:0,
         risk_assessment:{overall_level:riskLevel,primary_concern:d?'检测到恶化趋势，需立即关注':'当前体征在分诊等级对应范围内',deteriorating:d,deterioration_evidence:d?'伤员标记为恶化状态':'无明显恶化证据'},
         condition_match:{most_likely:'基于分诊等级评估',confidence:'medium',differential:['需连接服务端获取详细分析']},
         triage_opinion:{agrees_with_start:true,suggested_level:triageName,reason:'认可START分诊判断 (离线模式)'},
         trend_analysis:{respiratory:rr?`呼吸率 ${rr.toFixed(1)} 次/分`:'无呼吸数据',cardiac:hr?`心率 ${hr.toFixed(0)} BPM`:'无心率数据',combined:'离线模式，趋势数据需连接服务端'},
         history_relevance:{relevant_conditions:pi.pre_existing||[],impact_on_assessment:pi.pre_existing?`既往病史: ${Array.isArray(pi.pre_existing)?pi.pre_existing.join('、'):pi.pre_existing}`:'无既往病史记录'},
-        recommendations:['连接服务端获取完整AI分析',d?'⚠️ 关注恶化趋势，准备干预':'定期生命体征监测',riskLevel==='critical'?'建议立即转送红色区域':'按分诊等级处理'],
+        recommendations:['连接服务端获取完整Agent分析',d?'⚠️ 关注恶化趋势，准备干预':'定期生命体征监测',riskLevel==='critical'?'建议立即转送红色区域':'按分诊等级处理'],
         monitoring_priority:['呼吸频率','心率','运动状态']},'fallback');
-    const btn=document.getElementById('llmAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成AI分析报告'}
+    const btn=document.getElementById('agentAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成Agent分析报告'}
 }
 
 // ═══════════════════════════════════════════════════════════

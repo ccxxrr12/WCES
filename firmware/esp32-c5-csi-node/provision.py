@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ESP32-S3 CSI Node Provisioning Script
+ESP32-C5 CSI Node Provisioning Script
 
 Writes WiFi credentials and aggregator target to the ESP32's NVS partition
 so users can configure a pre-built firmware binary without recompiling.
@@ -139,7 +139,7 @@ def flash_nvs(port, baud, nvs_bin):
     try:
         cmd = [
             sys.executable, "-m", "esptool",
-            "--chip", "esp32s3",
+            "--chip", "esp32c5",
             "--port", port,
             "--baud", str(baud),
             "write_flash",
@@ -154,7 +154,7 @@ def flash_nvs(port, baud, nvs_bin):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Provision ESP32-S3 CSI Node with WiFi and aggregator settings",
+        description="Provision ESP32-C5 CSI Node with WiFi and aggregator settings",
         epilog="Example: python provision.py --port COM7 --ssid MyWiFi --password secret --target-ip 192.168.1.20",
     )
     parser.add_argument("--port", required=True, help="Serial port (e.g. COM7, /dev/ttyUSB0)")
@@ -286,7 +286,7 @@ def main():
         with open(out, "wb") as f:
             f.write(nvs_bin)
         print(f"NVS binary saved to {out} ({len(nvs_bin)} bytes)")
-        print(f"Flash manually: python -m esptool --chip esp32s3 --port {args.port} "
+        print(f"Flash manually: python -m esptool --chip esp32c5 --port {args.port} "
               f"write_flash 0x9000 {out}")
         return
 

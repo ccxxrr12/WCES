@@ -39,13 +39,13 @@ pub(crate) fn parse_esp32_vitals(buf: &[u8]) -> Option<Esp32VitalsPacket> {
     })
 }
 
-/// Parse a WASM output packet (magic 0xC511_0004).
+/// Parse a WASM output packet (magic 0xC511_0005).
 pub(crate) fn parse_wasm_output(buf: &[u8]) -> Option<WasmOutputPacket> {
     if buf.len() < 8 {
         return None;
     }
     let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    if magic != 0xC511_0004 {
+    if magic != 0xC511_0005 {
         return None;
     }
 

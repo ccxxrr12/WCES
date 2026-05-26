@@ -252,7 +252,6 @@ impl Default for SparseConfig {
     fn default() -> Self { Self { hot_threshold: 0.5, quant_mode: QuantMode::Int8Symmetric, profile_frames: 100 } }
 }
 
-#[allow(dead_code)]
 struct ModelLayer {
     name: String,
     weights: Vec<Vec<f32>>,

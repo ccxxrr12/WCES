@@ -30,18 +30,31 @@
 
 static const char *TAG = "disp_hal";
 
-/* ---- QSPI Pin Definitions (Waveshare board) ---- */
-#define DISP_QSPI_CS       12
-#define DISP_QSPI_CLK      11
-#define DISP_QSPI_D0       4
-#define DISP_QSPI_D1       5
-#define DISP_QSPI_D2       6
-#define DISP_QSPI_D3       7
+/* ---- QSPI Pin Definitions ---- */
+/* Defaults from Kconfig; override in menuconfig → ESP32-S3-Touch-AMOLED Settings */
+#ifndef DISP_QSPI_CS
+#define DISP_QSPI_CS       CONFIG_DISPLAY_QSPI_CS
+#endif
+#ifndef DISP_QSPI_CLK
+#define DISP_QSPI_CLK      CONFIG_DISPLAY_QSPI_CLK
+#endif
+#ifndef DISP_QSPI_D0
+#define DISP_QSPI_D0       CONFIG_DISPLAY_QSPI_D0
+#endif
+#ifndef DISP_QSPI_D1
+#define DISP_QSPI_D1       CONFIG_DISPLAY_QSPI_D1
+#endif
+#ifndef DISP_QSPI_D2
+#define DISP_QSPI_D2       CONFIG_DISPLAY_QSPI_D2
+#endif
+#ifndef DISP_QSPI_D3
+#define DISP_QSPI_D3       CONFIG_DISPLAY_QSPI_D3
+#endif
 
 /* ---- I2C (shared: touch + TCA9554 expander) ---- */
-#define I2C_SDA             15
-#define I2C_SCL             14
-#define TOUCH_INT_PIN       21
+#define I2C_SDA             CONFIG_DISPLAY_TOUCH_SDA
+#define I2C_SCL             CONFIG_DISPLAY_TOUCH_SCL
+#define TOUCH_INT_PIN       CONFIG_DISPLAY_TOUCH_INT
 #define I2C_MASTER_NUM      I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ  400000
 

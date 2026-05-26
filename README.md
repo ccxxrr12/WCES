@@ -1,8 +1,8 @@
-﻿# WCES — 基于WIFI CSI感知与端侧LLM的方舱生命体征感知与监护系统
+﻿# WCES — 基于WiFi CSI感知与端侧Agent的方舱生命体征感知与监护系统
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + 端侧 LLM + 代码重构 + UI 全面优化 | main.rs 3868→976 行（-75%）
+> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + Medical Agent + 代码重构 + UI 全面优化 | main.rs 3868→976 行（-75%）
 
 ---
 
@@ -102,7 +102,8 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
   │                        │    分诊 + 伤员追踪      │
   │                        │  • WiFi 三角定位         │
   │                        │  • 告警生成              │
-  │                        │  • ONNX DensePose (可选) │
+  │                        │  • DensePose 3D 骨架生成   │
+  │                        │  • Medical Agent 分析     │
   │                        │                         │
   │                        ├─ WebSocket /ws/sensing ─►├─ Triage Dashboard
   │                        │  SensingUpdate JSON      │  • 2D 伤员地图
@@ -120,7 +121,7 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
 
 | 功能 | 实现 | 状态 |
 |------|------|:--:|
-| WiFi CSI 采集 | ESP32-C5 固件 (WiFi 6, 484 子载波, 2.4/5GHz) | ✅ |
+| WiFi CSI 采集 | ESP32-C5 固件 (WiFi 6, HT40 114子载波, 2.4/5GHz) | ✅ |
 | 呼吸率检测 | FFT 频域分析 (0.1-0.5Hz → 6-30 BPM) | ✅ |
 | 心率检测 | 相位方差频谱 (0.8-2.0Hz → 40-120 BPM) | ✅ |
 | 人体存在检测 | CSI 振幅方差 + 自适应阈值 + 5帧消抖 | ✅ |
@@ -135,9 +136,9 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
 | **实时告警** | 自动生成 + 优先级排序 + 时间戳 | ✅ |
 | **分诊仪表盘** | Canvas 2D 伤员地图 + 热力图 + 3D 骨架 + 生命体征趋势图 + EHR 面板 + 暗色/亮色主题 | ✅ |
 | 3D 骨架重建 | Three.js 胶囊几何体蒙皮骨架 + ONNX DensePose (可选按钮) | ✅ |
-| 19 个医疗 WASM 模块 | 步态/心律失常/呼吸窘迫/癫痫/徘徊/振动/LTL守卫/元学习/稀疏恢复等 | ✅ |
+| 19 个边缘模块 | 步态/心律失常/呼吸窘迫/癫痫/徘徊/振动/LTL守卫/元学习/稀疏恢复等，原生 Rust 编译 | ✅ |
 | 模拟运行模式 | 正弦波合成 CSI，完整数据流通，无需硬件 | ✅ |
-| **端侧 LLM** | 生命体征→自然语言伤病报告 (Qwen2.5-0.5B / Candle) | ✅ |
+| **Medical Agent** | 云端 LLM 深度分析 + 本地模板降级 (Coordinator 模式) | ✅ |
 | **统一入口页** | 暗色/亮色主题门户，6 张应用卡片 + 实时系统状态检测 | ✅ |
 
 ---
@@ -148,12 +149,12 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
 
 | 模块 | 功能 | 文件 |
 |------|------|------|
-| CSI 采集 | ESP-IDF `esp_wifi_set_csi_rx_cb()` 回调，WiFi 6 484 子载波，2.4/5GHz 双频 | `csi_collector.c` |
+| CSI 采集 | ESP-IDF `esp_wifi_set_csi_rx_cb()` 回调，WiFi 6 HT40 114子载波，2.4/5GHz 双频 | `csi_collector.c` |
 | ADR-018 序列化 | 20 字节头 + IQ 数据对，Magic `0xC511_0001` | `csi_collector.c` |
 | UDP 发送 | lwIP socket → 主节点 UDP:5005，含 ENOMEM 退避保护 | `stream_sender.c` |
 | 通道跳跃 | 定时器驱动 ch1/6/11 多频段切换 | `csi_collector.c` |
 | 边缘预处理 | 子载波选择 + 幅度归一化 | `edge_processing.c` |
-| WASM 热加载 | 19 个医疗模块 OTA，无需重烧固件 | `wasm_runtime.c` |
+| WASM 热加载 | 最多 4 个 WASM 模块 OTA 热加载 (ESP32 Tier 3 运行时) | `wasm_runtime.c` |
 | 竞赛配置 | `sdkconfig.defaults.competition` 专用 | 固件根目录 |
 
 ### 第 2 层：CSI 帧解析（服务端入口）
@@ -230,7 +231,7 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
 
 **算法等价**：每个模块的核心逻辑（ring buffer、阈值检测、debounce、Lyapunov 指数）
 与原 WASM 实现完全一致。量产后 ESP32 固件烧录 `.wasm` 二进制，
-服务端通过 UDP `magic 0xC511_0004` 接收 WASM 输出包，
+服务端通过 UDP `magic 0xC511_0005` 接收 WASM 输出包，
 `EdgeAlert` 格式兼容，无需修改 triage.html。
 
 ---
@@ -300,10 +301,10 @@ CSI 采集          UDP:5005 →
 │       ├── wifi-densepose-signal/     ← CSI 信号处理
 │       ├── wifi-densepose-vitals/     ← 生命体征提取
 │       ├── wifi-densepose-hardware/   ← CSI 帧解析
-│       ├── wifi-densepose-llm/        ← 端侧 LLM 分析引擎 ⭐
-│       ├── wifi-densepose-nn/         ← ONNX 推理 (可选)
+│       ├── wifi-densepose-llm/        ← Medical Agent 分析引擎 ⭐
+│       ├── wifi-densepose-nn/         ← ONNX 推理 (DensePose 3D 骨架)
 │       ├── wifi-densepose-mat/        ← 分诊系统 ⭐
-│       ├── wifi-densepose-sensing-server/ ← 主服务 (含 MAT 集成, 2026-05 重构模块化)
+│       ├── wifi-densepose-sensing-server/ ← 主服务 (2026-05 重构模块化)
 │       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (976行)
 │       │   ├── src/lib.rs                  ← crate 入口
 │       │   ├── src/types.rs                ← 数据类型 + 常量
@@ -322,13 +323,10 @@ CSI 采集          UDP:5005 →
 │       │   ├── src/dataset.rs              ← 数据集管理
 │       │   ├── src/embedding.rs            ← 嵌入层
 │       │   ├── src/graph_transformer.rs    ← 图神经网络
-│       │   ├── src/model_manager.rs        ← 模型管理
-│       │   ├── src/recording.rs            ← 数据录制
 │       │   ├── src/sona.rs                 ← SONA 配置文件
 │       │   ├── src/sparse_inference.rs     ← 稀疏推理
 │       │   ├── src/trainer.rs              ← 模型训练
-│       │   └── src/training_api.rs         ← 训练 API
-│       └── wifi-densepose-config/     ← 系统配置
+│       └── wifi-densepose-config/     ← 系统配置 (占位 crate)
 ├── ui/                                ← Web 可视化 (210+ files)
 │   ├── lib/
 │   │   ├── three.min.js               ← Three.js r140 UMD (离线可用)
@@ -343,8 +341,10 @@ CSI 采集          UDP:5005 →
     ├── 竞赛差距分析.md                 ← 需求 vs 能力对比
     ├── 竞赛准备清单.md                 ← PPT/视频/展板等材料清单
     ├── ML架构详解.md                   ← CSI→姿态 ML 架构
-    ├── 端侧LLM方案设计.md              ← LLM 伤病报告方案
-    ├── 端侧LLM技术文档.md              ← LLM 接口/技术文档
+    ├── 端侧Agent开发计划.md             ← Medical Agent 开发计划
+    ├── 端侧Agent技术文档.md             ← Agent 架构/接口/技术文档
+    ├── 端侧LLM方案设计.md              ← (历史) LLM 伤病报告方案
+    ├── 端侧LLM技术文档.md              ← (历史) LLM 接口/技术文档
     ├── 项目完整分析报告.md             ← 项目完整分析
     ├── ESP32-C5 移植审计报告.md        ← 39 处修改审计
     ├── ESP32-C5 移植指南.md            ← C5 移植指南
@@ -362,11 +362,11 @@ CSI 采集          UDP:5005 →
 ## 技术亮点
 
 - **WiFi 6 CSI**: ESP32-C5 484 子载波，4× 传统 S3 方案精度
-- **端侧 LLM**（已集成）: 生命体征→自然语言伤病报告 (Qwen2.5-0.5B / Candle)，支持流式输出
-- **Rust 高性能**: 54,000 帧/秒信号处理管道，比 Python 快 810 倍
+- **Medical Agent**（已集成）: 云端 LLM 深度分析 + 本地模板降级 + 熔断保护，支持流式输出
+- **Rust 高性能**: 全异步 Tokio 运行时，零拷贝解析，比 Python 方案快数十倍
 - **START 分诊**: 标准战场分诊协议，自动伤员优先级评估
 - **端到端打通**: CSI 采集→信号处理→生命体征→分诊→追踪→可视化，完整管道
-- **全本地部署**: 数据不出方舱，隐私安全，无互联网依赖
+- **全本地部署**: 核心信号处理+分诊全本地，数据不出方舱；Agent 分析可选云端 LLM 增强
 - **瑞萨 RZ/G2L SBC**: ARM64 边缘计算平台 (Cortex-A55 ×2 + M33, 1GB DDR4)
 - **模拟模式**: 无需硬件即可启动完整演示（`cargo run -- --source simulate`）
 - **代码质量**: 2026-05 完成大规模重构，消除锁竞态死锁隐患，写锁持有时间从 135 行压缩为两阶段锁，main.rs 拆分 16 模块
@@ -385,7 +385,8 @@ CSI 采集          UDP:5005 →
 | `docs/ESP32-C5 移植指南.md` | C5 移植完整指南 |
 | `docs/固件官方文档审计报告.md` | 固件 vs 官方 API 对照审计 |
 | `docs/瑞萨 RZ_G2L 移植计划.md` | RZ/G2L 主控移植计划 |
-| `docs/端侧LLM方案设计.md` | 端侧 LLM 伤病报告方案设计 |
+| `docs/端侧Agent开发计划.md` | Medical Agent 开发计划 |
+| `docs/端侧Agent技术文档.md` | Agent 架构/接口/技术文档 |
 | `docs/项目全览.md` | 全项目技术全览（本文档详细版） |
 | `docs/API_REFERENCE.md` | WebSocket 数据接口完整文档 |
 | `docs/目录审计报告.md` | 目录完整性审计 |

@@ -1,10 +1,15 @@
 /**
  * @file power_mgmt.c
- * @brief Power management for battery-powered ESP32-C5/S3 CSI nodes.
+ * @brief Power management for battery-powered ESP32-C5 CSI nodes.
  *
- * Uses ESP-IDF's automatic light sleep with WiFi power save mode.
- * In light sleep, WiFi maintains association but suspends CSI collection.
- * The duty cycle controls how often the device wakes for CSI bursts.
+ * Uses ESP-IDF's automatic light sleep with WiFi modem sleep (WIFI_PS_MIN_MODEM).
+ * The duty_cycle_pct parameter is logged but the actual duty cycling is delegated
+ * to ESP-IDF's tickless idle / automatic light sleep — there is no manual timer-based
+ * duty cycle loop. Statistics (s_active_ms, s_sleep_ms, s_wake_count) track runtime
+ * but are not actively updated without CONFIG_PM_ENABLE + light sleep active.
+ *
+ * For competition demo: power saving is secondary to CSI data quality.
+ * Set duty_cycle_pct=100 (or omit the call) to keep the radio always-on.
  */
 
 #include "power_mgmt.h"

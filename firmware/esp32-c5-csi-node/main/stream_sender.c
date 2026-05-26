@@ -53,6 +53,9 @@ static int sender_init_internal(const char *ip, uint16_t port)
     return 0;
 }
 
+/* Deprecated: use stream_sender_init_with(ip, port) instead.
+ * Kept for backwards compatibility with legacy callers that rely on Kconfig defaults. */
+int stream_sender_init(void) __attribute__((deprecated));
 int stream_sender_init(void)
 {
     return sender_init_internal(CONFIG_CSI_TARGET_IP, CONFIG_CSI_TARGET_PORT);

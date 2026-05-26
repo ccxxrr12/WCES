@@ -3,8 +3,8 @@
  * @brief CSI data collection and ADR-018 binary frame serialization.
  *
  * Supports ESP32-C5 (WiFi 6), ESP32-C6, ESP32-C3, ESP32-S3, ESP32.
- * The ESP-IDF CSI API (esp_wifi_set_csi_rx_cb, esp_wifi_set_csi_config,
- * wifi_csi_info_t) is identical across all supported chips.
+ * CSI callback (esp_wifi_set_csi_rx_cb) and wifi_csi_info_t are identical across chips.
+ * CSI config struct differs: wifi_csi_acquire_config_t (C5/C6) vs wifi_csi_config_t (S3/C3).
  *
  * ESP32-C5 differences:
  *   - WiFi 6 (802.11ax) provides HE-LTF for higher resolution CSI.
@@ -132,7 +132,10 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
     } else if (channel >= 36 && channel <= 177) {
         freq_mhz = 5000 + channel * 5;
     } else if (channel >= 1 && channel <= 233) {
-        /* WiFi 6E 6 GHz band (ESP32-C5 supports this). */
+        /* WiFi 6E 6 GHz band (ESP32-C5). Channel numbers overlap 2.4 GHz
+         * (1-13 matched both ranges). Since 2.4 GHz is checked first, 6 GHz
+         * channels 1-13 are unreachable here. To fix: add a band parameter or
+         * use a non-overlapping channel encoding (e.g. 6 GHz as 256+ch). */
         freq_mhz = 5950 + channel * 5;
     } else {
         freq_mhz = 0;
@@ -277,14 +280,13 @@ void csi_collector_init(void)
     ESP_LOGI(TAG, "Promiscuous mode enabled for CSI capture");
 
     /* CSI configuration.
-     * NOTE: wifi_csi_config_t has DIFFERENT fields on C5/C6/C61 vs S3/C3/ESP32.
-     * C5/C6/C61 use .acquire_csi_* (ESP-IDF v5.4+ new API).
-     * S3/C3/ESP32 use .lltf_en / .htltf_en etc. (legacy API).
+     * C5/C6/C61: wifi_csi_acquire_config_t (esp_wifi_he_types.h, ESP-IDF v5.4+).
+     * S3/C3/ESP32: wifi_csi_config_t (esp_wifi_types.h, legacy API).
      * Reference: https://github.com/espressif/esp-csi/blob/master/examples/get-started/csi_recv/main/app_main.c */
 #if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61 || \
     (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0))
     /* C5/C6/C61: New CSI config API (ESP-IDF v5.4+) */
-    wifi_csi_config_t csi_config = {
+    wifi_csi_acquire_config_t csi_config = {
         .enable                   = true,
         .acquire_csi_legacy       = true,   /* L-LTF (legacy) */
         .acquire_csi_ht20         = true,   /* HT-LTF 20MHz */
@@ -428,21 +430,19 @@ void csi_collector_start_hop_timer(void)
              (unsigned long)s_dwell_ms, (unsigned)s_hop_count);
 }
 
-/* ---- ADR-029: NDP frame injection stub ---- */
+/* ---- ADR-029: NDP frame injection (stub — sends minimal null-data placeholder) ----
+ *
+ * NOTE: This sends a hardcoded 24-byte null-data frame, NOT a true 802.11 NDP
+ * (which would be preamble-only, ~24 us airtime, no MAC payload).
+ *
+ * For competition demo purposes the stub is sufficient; the API is wired up so
+ * a proper NDP can be substituted after the competition without changing callers.
+ *
+ * To implement a real NDP: use esp_wifi_80211_tx() with WIFI_PKT_MGMT and a
+ * properly constructed preamble-only frame per IEEE 802.11ax 26.5.2. */
 
 esp_err_t csi_inject_ndp_frame(void)
 {
-    /*
-     * TODO: Construct a proper 802.11 Null Data Packet frame.
-     *
-     * A real NDP is preamble-only (~24 us airtime, no payload) and is the
-     * sensing-first TX mechanism described in ADR-029. For now we send a
-     * minimal null-data frame as a placeholder so the API is wired up.
-     *
-     * Frame structure (IEEE 802.11 Null Data):
-     *   FC (2) | Duration (2) | Addr1 (6) | Addr2 (6) | Addr3 (6) | SeqCtl (2)
-     *   = 24 bytes total, no body, no FCS (hardware appends FCS).
-     */
     uint8_t ndp_frame[24];
     memset(ndp_frame, 0, sizeof(ndp_frame));
 

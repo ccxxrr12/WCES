@@ -1,9 +1,13 @@
 /**
  * @file display_hal.h
- * @brief ADR-045: RM67162 QSPI AMOLED + CST816S touch HAL.
+ * @brief ADR-045: SH8601 QSPI AMOLED + FT3168 touch HAL.
  *
- * Hardware abstraction for the LilyGO T-Display-S3 AMOLED panel.
+ * Hardware abstraction for the Waveshare ESP32-S3-Touch-AMOLED-1.8 panel.
+ * Uses TCA9554 I/O expander for display power/reset control.
  * Probes hardware at boot; returns ESP_ERR_NOT_FOUND if absent.
+ *
+ * NOTE: This HAL targets ESP32-S3 Waveshare boards. For ESP32-C5, pin
+ * assignments must be verified against the actual wiring.
  */
 
 #ifndef DISPLAY_HAL_H
@@ -18,10 +22,10 @@ extern "C" {
 #endif
 
 /**
- * Probe and initialize the RM67162 QSPI AMOLED panel.
+ * Probe and initialize the SH8601 QSPI AMOLED panel.
  *
- * Configures QSPI bus, sends panel init sequence, and fills
- * the screen with dark background to confirm it works.
+ * Initializes I2C bus, configures TCA9554 I/O expander for power/reset,
+ * sets up QSPI bus, sends SH8601 init sequence, and draws a test pattern.
  * Returns ESP_ERR_NOT_FOUND if the panel does not respond.
  *
  * @return ESP_OK on success, ESP_ERR_NOT_FOUND if no display detected.
@@ -42,7 +46,7 @@ void display_hal_draw(int x_start, int y_start, int x_end, int y_end,
                       const void *color_data);
 
 /**
- * Probe and initialize the CST816S capacitive touch controller.
+ * Probe and initialize the FT3168 capacitive touch controller.
  *
  * @return ESP_OK on success, ESP_ERR_NOT_FOUND if no touch IC detected.
  */
@@ -51,8 +55,8 @@ esp_err_t display_hal_init_touch(void);
 /**
  * Read touch point (non-blocking).
  *
- * @param[out] x  Touch X coordinate (0..535).
- * @param[out] y  Touch Y coordinate (0..239).
+ * @param[out] x  Touch X coordinate (0..367).
+ * @param[out] y  Touch Y coordinate (0..447).
  * @return true if touch is active, false if released.
  */
 bool display_hal_touch_read(uint16_t *x, uint16_t *y);

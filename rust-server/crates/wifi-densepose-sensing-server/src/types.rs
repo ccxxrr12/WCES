@@ -34,7 +34,6 @@ pub const BR_DEAD_BAND: f64 = 0.5;
 
 /// ADR-018 ESP32 CSI binary frame header (20 bytes)
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Esp32Frame {
     pub magic: u32,
     pub node_id: u8,
@@ -166,7 +165,7 @@ pub struct WasmEvent {
     pub value: f32,
 }
 
-/// Decoded WASM output packet from ESP32 Tier 3 runtime (ADR-040, magic 0xC511_0004).
+/// Decoded WASM output packet from ESP32 Tier 3 runtime (ADR-040, magic 0xC511_0005).
 #[derive(Debug, Clone, Serialize)]
 pub struct WasmOutputPacket {
     pub node_id: u8,

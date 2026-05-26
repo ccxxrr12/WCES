@@ -90,7 +90,7 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                         }
                                     }
                                 }
-                                Some("llm_analyze_request") => {
+                                Some("agent_analyze_request") => {
                                     let patient_id = msg["patient_id"].as_str().unwrap_or("UNKNOWN");
                                     let engine = {
                                         let s = state.read().await;
@@ -130,7 +130,7 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                             ).await {
                                                 while let Ok(token) = rx.recv().await {
                                                     let json = serde_json::json!({
-                                                        "type": if token.is_complete { "llm_analysis_complete" } else { "llm_stream" },
+                                                        "type": if token.is_complete { "agent_analysis_complete" } else { "agent_stream" },
                                                         "patient_id": token.survivor_id,
                                                         "text": token.text,
                                                         "token_index": token.token_index,

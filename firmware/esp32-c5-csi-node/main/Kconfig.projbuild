@@ -118,80 +118,80 @@ menu "AMOLED Display (ADR-045)"
 
     config DISPLAY_QSPI_CS
         int "QSPI CS GPIO"
-        default 6
+        default 12
         depends on DISPLAY_ENABLE
         help
-            QSPI CS GPIO (C5: valid range 0-21)
+            QSPI CS GPIO (ESP32-C5: valid GPIO 0-28; flash modules reserve 16-22)
 
     config DISPLAY_QSPI_CLK
         int "QSPI CLK GPIO"
-        default 7
+        default 11
         depends on DISPLAY_ENABLE
         help
-            QSPI CLK GPIO (C5: valid range 0-21)
+            QSPI CLK GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_QSPI_D0
         int "QSPI D0 GPIO"
-        default 18
+        default 4
         depends on DISPLAY_ENABLE
         help
-            QSPI D0 GPIO (C5: valid range 0-21)
+            QSPI D0 GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_QSPI_D1
         int "QSPI D1 GPIO"
         default 5
         depends on DISPLAY_ENABLE
         help
-            QSPI D1 GPIO (C5: valid range 0-21)
+            QSPI D1 GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_QSPI_D2
         int "QSPI D2 GPIO"
-        default 3
+        default 6
         depends on DISPLAY_ENABLE
         help
-            QSPI D2 GPIO (C5: valid range 0-21)
+            QSPI D2 GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_QSPI_D3
         int "QSPI D3 GPIO"
-        default 4
+        default 7
         depends on DISPLAY_ENABLE
         help
-            QSPI D3 GPIO (C5: valid range 0-21)
+            QSPI D3 GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_TOUCH_SDA
         int "Touch I2C SDA GPIO"
-        default 8
+        default 15
         depends on DISPLAY_ENABLE
         help
-            Touch I2C SDA GPIO (C5: valid range 0-21)
+            Touch I2C SDA GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_TOUCH_SCL
         int "Touch I2C SCL GPIO"
-        default 9
+        default 14
         depends on DISPLAY_ENABLE
         help
-            Touch I2C SCL GPIO (C5: valid range 0-21)
+            Touch I2C SCL GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_TOUCH_INT
         int "Touch INT GPIO"
-        default 10
+        default 21
         depends on DISPLAY_ENABLE
         help
-            Touch INT GPIO (C5: valid range 0-21)
+            Touch INT GPIO             (ESP32-C5: valid GPIO 0-28)
 
     config DISPLAY_TOUCH_RST
         int "Touch RST GPIO"
-        default 11
+        default -1
         depends on DISPLAY_ENABLE
         help
-            Touch RST GPIO (C5: valid range 0-21)
+            Touch RST GPIO (-1 = not used; TCA9554 handles reset via I2C)
 
     config DISPLAY_BL_PIN
         int "Backlight PWM GPIO"
-        default 12
+        default -1
         depends on DISPLAY_ENABLE
         help
-            Backlight PWM GPIO (C5: valid range 0-21)
+            Backlight PWM GPIO (-1 = not used; SH8601 brightness via MIPI DCS)
 
 endmenu
 

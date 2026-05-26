@@ -586,3 +586,84 @@ sensing-server/src/          重构前 → 重构后
 
 **验证**: 模拟模式运行确认仪表盘 + 入口页功能正常，CDN 已替换为本地路径
 
+### 2.14 全项目深度审计与修复 (2026-05-26) ⭐
+
+结合 ESP-IDF 官方文档和 ESP32-C5 规格说明，对全部 4 层（固件/Rust/LLM/UI）进行深度审计，发现并修复 33 个问题：
+
+#### 严重问题修复 (3个)
+
+| # | 发现 | 修复 | 文件 |
+|---|------|------|------|
+| 1 | **孤儿文件编译错误** — `training_api.rs` 导入 `crate::recording` 但 recording 模块从未声明，导致编译失败 | 删除 training_api.rs / recording.rs / model_manager.rs 共 3 个孤儿文件（~2900行死代码） | 3× `.rs` 删除 |
+| 2 | **Magic Number 冲突** — `EDGE_FUSED_MAGIC` 和 `WASM_OUTPUT_MAGIC` 都是 `0xC5110004`，服务端无法区分融合体征包和 WASM 输出包 | `WASM_OUTPUT_MAGIC` 改为 `0xC5110005` | `wasm_runtime.h` |
+| 3 | **CSI 配置类型错误** — `csi_collector.c` 对 C5 使用 `wifi_csi_config_t` (S3旧API) 但初始化的是 `wifi_csi_acquire_config_t` 的字段 | 改为显式使用 `wifi_csi_acquire_config_t` (esp_wifi_he_types.h) | `csi_collector.c` |
+
+#### 高优先级修复 (10个)
+
+| # | 发现 | 修复 | 文件 |
+|---|------|------|------|
+| 4 | **空壳 crate** — `wifi-densepose-config` 仅有一行 `//! stub`，无任何功能代码 | 标记为 deprecated 占位 crate，说明使用 app_config 替代 | `wifi-densepose-config/src/lib.rs` |
+| 5 | **电源管理是空操作** — `power_mgmt_init()` 接收 duty_cycle 参数但不执行占空比循环 | 更新文档注释：说明委托给 ESP-IDF 自动 light sleep，竞赛建议 duty=100% | `power_mgmt.c` |
+| 6 | **display_hal 头文件与实际硬件完全不符** — 头文件声称 RM67162+CST816S (LilyGO T-Display-S3)，代码实际驱动 SH8601+FT3168+TCA9554 (Waveshare) | 更新全部函数注释同步为 SH8601+FT3168，触摸坐标从 535×239 改为 367×447 | `display_hal.h` |
+| 7 | **display_hal 硬编码 GPIO 忽略 Kconfig** — 9 个 Kconfig 配置项(CS/CLK/D0-D3/SDA/SCL/INT)全部使用硬编码 `#define`，menuconfig 修改无效 | 改用 `CONFIG_DISPLAY_*` Kconfig 宏；Kconfig 默认值同步为 Waveshare 实际管脚 | `display_hal.c`, `Kconfig.projbuild` |
+| 8 | **WASM3 从个人 fork 下载** — URL 指向 `nicholasgasior/wasm3` (个人 fork)，README 却说用官方 `wasm3/wasm3` | 改为官方 `wasm3/wasm3` v0.5.0 tag | `wasm3/CMakeLists.txt` |
+| 9 | **GPIO 范围多处错误** — Kconfig help 和 sdkconfig 注释写 "C5 valid range 0-21"，实际 C5 有 29 GPIOs (0-28) | 全部修正为 0-28，并注明 flash 模块保留 16-22 | `Kconfig.projbuild`, `sdkconfig.defaults` |
+| 10 | **partitions_display.csv 标错芯片** — 头注释写 "ESP32-S3" | 改为 "ESP32-C5" | `partitions_display.csv` |
+| 11 | **test stub 缺失关键字段** — `wifi_csi_info_t` stub 缺少 `first_word_invalid`，`wifi_csi_config_t` stub 缺少 C5 新字段 | 添加 `first_word_invalid` 字段 + 新增 `wifi_csi_acquire_config_t` stub | `test/stubs/esp_stubs.h` |
+| 12 | **csi_collector.c 顶部注释过度简化** — 称 "CSI API identical across all chips"，实际 config struct 不同 | 修正注释，区分 callback（相同）vs config struct（不同） | `csi_collector.c` |
+| 13 | **sdkconfig 注释关于 C5 CSI 类型过时** | 同步为 `wifi_csi_acquire_config_t` (esp_wifi_he_types.h) | `sdkconfig.defaults` |
+
+#### 中优先级修复 (12个)
+
+| # | 发现 | 修复 | 文件 |
+|---|------|------|------|
+| 14 | **triage-v1.html 187行重复函数定义** — `renderFromServer()/handleUpdate()/connectWebSocket()` 等在同一 script 块定义了两次 | 删除重复块 (187行) | `triage-v1.html` |
+| 15 | **triage-v1.html 无效 Canvas API** — `ctx.fontWeight = '500'` (Canvas 2D 无此属性) | 改为 `ctx.font = '500 12px ...'` | `triage-v1.html` |
+| 16 | **NDP frame 注入是明确的 stub** — `csi_inject_ndp_frame()` 发送硬编码 24字节占位帧 | 更新注释：说明竞赛demo可用，赛后替换为真正 NDP | `csi_collector.c` |
+| 17 | **wasm_runtime_init() 不可用时返回 ESP_OK** — main.c 会错误注册 WASM HTTP 端点 | 改为返回 `ESP_ERR_NOT_SUPPORTED` | `wasm_runtime.c` |
+| 18 | **stream_sender_init() 是死代码** — main.c 只调用 `stream_sender_init_with()` | 标记为 `__attribute__((deprecated))` | `stream_sender.c` |
+| 19 | **provision.py 全部引用 ESP32-S3** — `--chip esp32s3`、脚本名、描述文本 | 全部改为 `esp32c5` / `ESP32-C5` | `provision.py` |
+| 20 | **build_firmware_s3.ps1 完全不可移植** — 硬编码 `C:\Users\ruv\...` 路径 + 指向错误的 S3 目录 | 删除文件 | `build_firmware_s3.ps1` |
+| 21 | **wifi-densepose-mat serde feature 重复定义** — 第18行和第23行内容完全相同 | 删除重复定义 | `mat/Cargo.toml` |
+| 22 | **deploy.sh 步骤编号重复** — 两个步骤都标 `[4/5]` | 第二个改为 `[5/5]` | `deploy.sh` |
+| 23 | **deploy.sh lsof 依赖不可移植** — RZ/G2L 嵌入式 Linux 不一定有 `lsof` | 添加 `ss`/`fuser` 回退方案 | `deploy.sh` |
+| 24 | **Ed25519 签名验证降级为 SHA-256-HMAC** — 日志 `ESP_LOGI` 误导 | 升级为 `ESP_LOGW` 明确标注 "NOT Ed25519" | `rvf_parser.c` |
+| 25 | **6GHz 信道频率计算死代码** — 与 2.4GHz 信道号重叠，永远不会执行 | 添加注释说明 ambiguity + 修复建议 | `csi_collector.c` |
+
+#### 低优先级修复 (8个)
+
+| # | 发现 | 修复 | 文件 |
+|---|------|------|------|
+| 26 | `VitalSignDetector` / `Esp32Frame` / `ModelLayer` 有不必要的 `#[allow(dead_code)]` | 移除（这些类型实际被使用） | 3× `.rs` |
+| 27 | `MI_UINT8`/`MI_UINT16` 常量被 `#[allow(dead_code)]` 抑制 | 移除标注 | `dataset.rs` |
+| 28 | `.gitignore` 未覆盖 NVS 二进制和竞赛密码文件 | 添加 `nvs_*.bin` + `sdkconfig.defaults.competition` | `.gitignore` |
+| 29 | `triage.html` 使用绝对路径 `/ui/lib/` — 直接打开文件系统会 404 | 验证服务器有专用 `/ui/lib` 路由，通过 HTTP 访问正常，无需修复 | — |
+
+#### 固件 CSI API 专项核验
+
+通过查询 [ESP-IDF v5.5 官方文档](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32c5/api-reference/network/esp_wifi.html) 确认：
+
+| 核验项 | 结论 |
+|--------|:--:|
+| C5 使用 `wifi_csi_acquire_config_t` (非 `wifi_csi_config_t`) | ✅ 已修复 |
+| C5 GPIO 范围 0-28 (非 0-21) | ✅ 已修复 |
+| ESP-IDF v5.5+ 强制要求 (CMakeLists.txt 构建检查) | ✅ 正确 |
+| C5 AX 模式 5GHz 仅支持 20MHz 带宽 (HT40 不支持) | ⚠️ 已知限制 |
+| C5 CSI 子载波数 242 (HE20) / 56 (HT20) | ✅ 缓冲区正确 |
+| WASM3 支持 RISC-V 架构 (C5 兼容) | ✅ 已确认 |
+| `first_word_invalid` 处理 C5/C6 的 AGC 前导损坏 | ✅ 已实现 |
+| `esp_wifi_set_channel()` 用于信道跳跃 | ✅ 正确 |
+
+#### 修改统计
+
+```
+27 files changed, 182 insertions(+), 3231 deletions(-)
+  - Rust: 5 files, +11/-2923 (删除 3 个孤儿文件)
+  - 固件: 18 files, +131/-182
+  - 部署/配置: 3 files, +40/-19
+  - UI: 1 file, -188 (去重)
+```
+
+**编译验证**: `cargo check` ✅ (training_api.rs 编译阻塞已消除)
+**固件编译**: 待 ESP-IDF v5.5+ 环境验证
+

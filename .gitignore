@@ -30,3 +30,10 @@ ui/package-lock.json
 
 # macOS
 *.pem
+
+# Pre-provisioned NVS binaries (contain WiFi credentials, do not commit)
+firmware/**/nvs_config.bin
+firmware/**/nvs_wifi.bin
+
+# Competition config with plaintext credentials
+firmware/**/sdkconfig.defaults.competition

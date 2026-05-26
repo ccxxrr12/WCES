@@ -814,8 +814,8 @@ static const char *TAG = "wasm_rt";
 
 esp_err_t wasm_runtime_init(void)
 {
-    ESP_LOGW(TAG, "WASM Tier 3 disabled (WASM3 not available)");
-    return ESP_OK;
+    ESP_LOGW(TAG, "WASM Tier 3 unavailable (WASM3 not built — check CONFIG_WASM_ENABLE)");
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t wasm_runtime_load(const uint8_t *binary, uint32_t size, uint8_t *out_id)

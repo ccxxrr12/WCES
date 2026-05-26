@@ -17,7 +17,7 @@ CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 
 # Enable CSI (Channel State Information) in WiFi driver
-# C5 uses the NEW CSI config struct (acquire_csi_*) — different from S3 (lltf_en etc).
+# C5 uses wifi_csi_acquire_config_t (esp_wifi_he_types.h) — different from S3 (wifi_csi_config_t).
 # See esp-csi example: examples/get-started/csi_recv/main/app_main.c
 CONFIG_ESP_WIFI_CSI_ENABLED=y
 
@@ -36,6 +36,7 @@ CONFIG_LWIP_SO_RCVBUF=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
 
 # C5: Disable display by default (GPIO pins differ from S3)
-# C5 has only 22 GPIOs (0-21). S3 display pins 38, 47, 48 don't exist on C5.
+# C5 has 29 GPIOs (0-28). Flash modules (WROOM-1) reserve GPIO16-22 for SPI flash.
+# S3 display pins 38, 47, 48 don't exist on C5.
 # To enable display on C5, reassign these pins in Kconfig and rebuild.
 # CONFIG_DISPLAY_ENABLE is not set

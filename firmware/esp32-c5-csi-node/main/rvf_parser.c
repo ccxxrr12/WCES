@@ -234,6 +234,7 @@ esp_err_t rvf_verify_signature(const rvf_parsed_t *parsed, const uint8_t *data,
         return ESP_ERR_INVALID_CRC;
     }
 
-    ESP_LOGI(TAG, "Signature verified (SHA-256-HMAC keyed integrity)");
+    ESP_LOGW(TAG, "Signature verified (SHA-256-HMAC integrity check — NOT Ed25519). "
+             "For full Ed25519, enable CONFIG_MBEDTLS_EDDSA_C (ESP-IDF >=5.3) or link TweetNaCl.");
     return ESP_OK;
 }
