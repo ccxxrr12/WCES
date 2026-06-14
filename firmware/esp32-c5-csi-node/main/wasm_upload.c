@@ -18,6 +18,8 @@
 
 #include "sdkconfig.h"
 #include "wasm_upload.h"
+#include "psk_auth.h"
+#include "ota_update.h"
 
 #if defined(CONFIG_WASM_ENABLE)
 
@@ -31,6 +33,51 @@
 #include "esp_heap_caps.h"
 
 static const char *TAG = "wasm_upload";
+
+/** Cached PSK for WASM upload auth — NVS namespace/key are in psk_auth.h. */
+static char s_wasm_psk[PSK_AUTH_MAX_LEN] = {0};
+static bool s_wasm_psk_loaded = false;
+
+/** Load PSK from ota_update's cached copy (ADR-050 single source of truth).
+ *  ota_update_init() handles NVS read + auto-generation once at boot;
+ *  we simply pull the shared key from RAM — no duplicate NVS I/O. */
+static void wasm_ensure_psk_loaded(void)
+{
+    if (s_wasm_psk_loaded) return;
+    s_wasm_psk_loaded = true;
+
+    const char *ota_key = ota_psk_get();
+    if (ota_key[0] != '\0') {
+        strncpy(s_wasm_psk, ota_key, PSK_AUTH_MAX_LEN - 1);
+        s_wasm_psk[PSK_AUTH_MAX_LEN - 1] = '\0';
+    }
+}
+
+/** Constant-time PSK authentication check for WASM upload. */
+static bool wasm_check_auth(httpd_req_t *req)
+{
+    wasm_ensure_psk_loaded();
+
+    if (s_wasm_psk[0] == '\0') {
+        ESP_LOGE(TAG, "WASM upload auth rejected: no PSK provisioned");
+        return false;
+    }
+
+    return psk_verify_bearer(req, s_wasm_psk);
+}
+
+/** Require authentication for a mutating WASM operation.
+ *  Sends 403 on failure; returns ESP_OK if authenticated. */
+static esp_err_t wasm_auth_or_reject(httpd_req_t *req, const char *action)
+{
+    if (!wasm_check_auth(req)) {
+        ESP_LOGW(TAG, "WASM %s rejected: authentication failed", action);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+                            "Authentication required. Use: Authorization: Bearer <psk>");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
 
 /* Max upload size: RVF overhead + max WASM binary. */
 #define MAX_UPLOAD_SIZE (RVF_HEADER_SIZE + RVF_MANIFEST_SIZE + \
@@ -84,6 +131,10 @@ static uint8_t *receive_body(httpd_req_t *req, int *out_len)
 
 static esp_err_t wasm_upload_handler(httpd_req_t *req)
 {
+    /* ADR-050: Authenticate before accepting WASM upload. */
+    esp_err_t auth_err = wasm_auth_or_reject(req, "upload");
+    if (auth_err != ESP_OK) return auth_err;
+
     int total = 0;
     uint8_t *buf = receive_body(req, &total);
     if (buf == NULL) return ESP_FAIL;
@@ -92,11 +143,9 @@ static esp_err_t wasm_upload_handler(httpd_req_t *req)
 
     uint8_t module_id = 0;
     esp_err_t err;
-    const char *format = "raw";
 
     if (rvf_is_rvf(buf, (uint32_t)total)) {
         /* ── RVF path ── */
-        format = "rvf";
         rvf_parsed_t parsed;
         err = rvf_parse(buf, (uint32_t)total, &parsed);
         if (err != ESP_OK) {
@@ -181,7 +230,6 @@ static esp_err_t wasm_upload_handler(httpd_req_t *req)
                             "Use RVF container with signature, or set CONFIG_WASM_SKIP_SIGNATURE for dev.");
         return ESP_FAIL;
 #else
-        format = "raw";
         err = wasm_runtime_load(buf, (uint32_t)total, &module_id);
         free(buf);
 
@@ -210,7 +258,6 @@ static esp_err_t wasm_upload_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    (void)format;
 }
 
 /* ======================================================================
@@ -287,6 +334,9 @@ static int parse_module_id_from_uri(const char *uri, const char *prefix)
 
 static esp_err_t wasm_start_handler(httpd_req_t *req)
 {
+    esp_err_t auth_err = wasm_auth_or_reject(req, "start");
+    if (auth_err != ESP_OK) return auth_err;
+
     int id = parse_module_id_from_uri(req->uri, "/wasm/start/");
     if (id < 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid module ID");
@@ -313,6 +363,9 @@ static esp_err_t wasm_start_handler(httpd_req_t *req)
 
 static esp_err_t wasm_stop_handler(httpd_req_t *req)
 {
+    esp_err_t auth_err = wasm_auth_or_reject(req, "stop");
+    if (auth_err != ESP_OK) return auth_err;
+
     int id = parse_module_id_from_uri(req->uri, "/wasm/stop/");
     if (id < 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid module ID");
@@ -339,6 +392,9 @@ static esp_err_t wasm_stop_handler(httpd_req_t *req)
 
 static esp_err_t wasm_delete_handler(httpd_req_t *req)
 {
+    esp_err_t auth_err = wasm_auth_or_reject(req, "delete");
+    if (auth_err != ESP_OK) return auth_err;
+
     int id = parse_module_id_from_uri(req->uri, "/wasm/");
     if (id < 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid module ID");

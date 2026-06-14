@@ -30,8 +30,8 @@ fn fabsf(x: f32) -> f32 { x.abs() }
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/// Analysis window (seconds at 1 Hz timer).  20 seconds captures ~20-40 steps
-/// at normal walking cadence.
+/// Analysis window (frames at 1 Hz timer).  60 frames captures ~60-120 steps
+/// at normal walking cadence (1-2 steps/sec).
 const GAIT_WINDOW: usize = 60;
 
 /// Step detection: minimum phase variance peak-to-trough ratio.
@@ -150,6 +150,11 @@ impl GaitAnalyzer {
         variance: f32,
         motion_energy: f32,
     ) -> &[(i32, f32)] {
+        // NaN guard: reject frames with NaN inputs.
+        if variance != variance || motion_energy != motion_energy {
+            return unsafe { &EVENTS[..n] };
+        }
+
         self.frame_count += 1;
         self.ticks_since_step += 1;
 

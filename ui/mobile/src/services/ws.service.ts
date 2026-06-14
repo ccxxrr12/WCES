@@ -19,7 +19,10 @@ class WsService {
   connect(url: string): void {
     this.targetUrl = url;
     this.active = true;
-    this.reconnectAttempt = 0;
+    // Do NOT reset reconnectAttempt here — scheduleReconnect() increments
+    // it BEFORE calling connect() via setTimeout. Resetting it makes the
+    // exponential backoff dead code. Only reset on successful connection
+    // (see socket.onopen).
 
     if (!url) {
       this.handleStatusChange('simulated');
@@ -48,6 +51,13 @@ class WsService {
         try {
           const raw = typeof evt.data === 'string' ? evt.data : JSON.stringify(evt.data);
           const frame = JSON.parse(raw) as SensingFrame;
+          // Basic field validation: ensure required fields exist
+          if (frame == null || typeof frame !== 'object') {
+            return;
+          }
+          if (!('msg_type' in frame) && !('type' in frame)) {
+            return;
+          }
           this.listeners.forEach((listener) => listener(frame));
         } catch {
           // ignore malformed frames
@@ -83,6 +93,9 @@ class WsService {
       this.ws.close(1000, 'client disconnect');
       this.ws = null;
     }
+    // Reset so a fresh connect() gets a clean retry budget.
+    // (connect() itself must not reset — auto-reconnect needs the counter.)
+    this.reconnectAttempt = 0;
     this.handleStatusChange('disconnected');
   }
 

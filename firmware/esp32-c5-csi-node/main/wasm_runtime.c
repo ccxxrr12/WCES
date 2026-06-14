@@ -495,8 +495,13 @@ esp_err_t wasm_runtime_load(const uint8_t *wasm_data, uint32_t wasm_len,
     /* Create WASM3 runtime. */
     slot->runtime = m3_NewRuntime(s_env, WASM_STACK_SIZE, NULL);
     if (slot->runtime == NULL) {
-        free(slot->binary);
-        slot->binary = NULL;
+        if (slot->binary && slot->binary != slot->arena) {
+            free(slot->binary);
+        }
+        uint8_t *arena_save = slot->arena;
+        memset(slot, 0, sizeof(wasm_slot_t));
+        slot->state = WASM_MODULE_EMPTY;
+        slot->arena = arena_save;
         xSemaphoreGive(s_mutex);
         ESP_LOGE(TAG, "Failed to create WASM3 runtime for slot %d", slot_id);
         return ESP_ERR_NO_MEM;
@@ -508,8 +513,13 @@ esp_err_t wasm_runtime_load(const uint8_t *wasm_data, uint32_t wasm_len,
     if (result) {
         ESP_LOGE(TAG, "WASM parse error (slot %d): %s", slot_id, result);
         m3_FreeRuntime(slot->runtime);
-        free(slot->binary);
+        if (slot->binary && slot->binary != slot->arena) {
+            free(slot->binary);
+        }
+        uint8_t *arena_save = slot->arena;
         memset(slot, 0, sizeof(wasm_slot_t));
+        slot->state = WASM_MODULE_EMPTY;
+        slot->arena = arena_save;
         xSemaphoreGive(s_mutex);
         return ESP_ERR_INVALID_STATE;
     }
@@ -519,8 +529,13 @@ esp_err_t wasm_runtime_load(const uint8_t *wasm_data, uint32_t wasm_len,
     if (result) {
         ESP_LOGE(TAG, "WASM load error (slot %d): %s", slot_id, result);
         m3_FreeRuntime(slot->runtime);
-        free(slot->binary);
+        if (slot->binary && slot->binary != slot->arena) {
+            free(slot->binary);
+        }
+        uint8_t *arena_save = slot->arena;
         memset(slot, 0, sizeof(wasm_slot_t));
+        slot->state = WASM_MODULE_EMPTY;
+        slot->arena = arena_save;
         xSemaphoreGive(s_mutex);
         return ESP_ERR_INVALID_STATE;
     }
@@ -530,8 +545,13 @@ esp_err_t wasm_runtime_load(const uint8_t *wasm_data, uint32_t wasm_len,
     if (result) {
         ESP_LOGE(TAG, "WASM link error (slot %d): %s", slot_id, result);
         m3_FreeRuntime(slot->runtime);
-        free(slot->binary);
+        if (slot->binary && slot->binary != slot->arena) {
+            free(slot->binary);
+        }
+        uint8_t *arena_save = slot->arena;
         memset(slot, 0, sizeof(wasm_slot_t));
+        slot->state = WASM_MODULE_EMPTY;
+        slot->arena = arena_save;
         xSemaphoreGive(s_mutex);
         return ESP_ERR_INVALID_STATE;
     }
@@ -725,6 +745,11 @@ void wasm_runtime_on_frame(const float *phases, const float *amplitudes,
 
 void wasm_runtime_on_timer(void)
 {
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGW(TAG, "on_timer: failed to acquire mutex, skipping tick");
+        return;
+    }
+
     for (uint8_t i = 0; i < WASM_MAX_MODULES; i++) {
         wasm_slot_t *slot = &s_slots[i];
         if (slot->state != WASM_MODULE_RUNNING || slot->fn_on_timer == NULL) {
@@ -744,6 +769,8 @@ void wasm_runtime_on_timer(void)
             send_wasm_output(i);
         }
     }
+
+    xSemaphoreGive(s_mutex);
 }
 
 void wasm_runtime_get_info(wasm_module_info_t *info, uint8_t *count)

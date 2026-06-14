@@ -161,6 +161,11 @@ impl SeizureDetector {
         motion_energy: f32,
         presence: i32,
     ) -> &[(i32, f32)] {
+        // NaN guard: reject frames with NaN inputs.
+        if motion_energy != motion_energy || amplitude != amplitude {
+            return unsafe { &EVENTS[..n] };
+        }
+
         self.frame_count += 1;
 
         // Push into ring buffers.

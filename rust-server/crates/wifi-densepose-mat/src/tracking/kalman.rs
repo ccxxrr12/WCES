@@ -79,6 +79,14 @@ impl KalmanState {
     ///        └ dt³/2·I₃   dt²  ·I₃ ┘
     /// ```
     pub fn predict(&mut self, dt_secs: f64) {
+        // Skip invalid dt: NaN, Inf, negative, zero, or unreasonably large.
+        // is_finite() catches NaN and ±Inf which would otherwise pass the
+        // ordered comparisons (IEEE 754: NaN <= 0.0 and NaN > 60.0 are both
+        // false) and silently corrupt the Kalman state.
+        if !dt_secs.is_finite() || dt_secs <= 0.0 || dt_secs > 60.0 {
+            return;
+        }
+
         // --- state propagation: x ← F · x ---
         // For i in 0..3: x[i] += dt * x[i+3]
         for i in 0..3 {
@@ -109,7 +117,7 @@ impl KalmanState {
     /// Innovation cov: S = H·P·Hᵀ + R   (3×3, R = σ_obs² · I₃)
     /// Kalman gain:   K = P·Hᵀ · S⁻¹   (6×3)
     /// State update:  x ← x + K·y
-    /// Cov update:    P ← (I₆ − K·H)·P
+    /// Cov update:    P ← (I₆ − K·H)·P·(I₆ − K·H)ᵀ + K·R·Kᵀ  (Joseph form)
     pub fn update(&mut self, observation: Vec3) {
         // H·x = first three elements of x
         let hx: Vec3 = [self.x[0], self.x[1], self.x[2]];
@@ -143,7 +151,7 @@ impl KalmanState {
         let kv = mat6x3_mul_vec3(&k, y);
         self.x = vec6_add(self.x, kv);
 
-        // P ← (I₆ − K·H) · P
+        // P ← (I₆ − K·H) · P · (I₆ − K·H)ᵀ + K · R · Kᵀ  (Joseph form)
         // K·H is a 6×6 matrix; since H = [I₃|0₃], (K·H)ᵢⱼ = K[i][j] for j<3, else 0.
         let mut kh = [[0.0f64; 6]; 6];
         for i in 0..6 {
@@ -152,7 +160,27 @@ impl KalmanState {
             }
         }
         let i_minus_kh = mat6_sub(&mat6_identity(), &kh);
-        self.p = mat6_mul(&i_minus_kh, &self.p);
+        let i_minus_kh_t = mat6_transpose(&i_minus_kh);
+
+        // (I-KH) · P
+        let ikh_p = mat6_mul(&i_minus_kh, &self.p);
+        // (I-KH) · P · (I-KH)ᵀ
+        let ikh_p_ikh_t = mat6_mul(&ikh_p, &i_minus_kh_t);
+
+        // R = obs_noise_var · I₃
+        let r: Mat3 = [
+            [self.obs_noise_var, 0.0, 0.0],
+            [0.0, self.obs_noise_var, 0.0],
+            [0.0, 0.0, self.obs_noise_var],
+        ];
+
+        // K · R  (6×3)
+        let kr = mat6x3_mul_mat3(&k, &r);
+        // (K · R) · Kᵀ  (6×6)
+        let kr_kt = mat6x3_mul_mat3x3_transpose(&kr, &k);
+
+        // P = (I-KH)·P·(I-KH)ᵀ + K·R·Kᵀ
+        self.p = mat6_add(&ikh_p_ikh_t, &kr_kt);
     }
 
     /// Squared Mahalanobis distance of `observation` to the predicted measurement.
@@ -364,6 +392,20 @@ fn mat6x3_mul_mat3(a: &[[f64; 3]; 6], b: &Mat3) -> [[f64; 3]; 6] {
         for j in 0..3 {
             for k in 0..3 {
                 out[i][j] += a[i][k] * b[k][j];
+            }
+        }
+    }
+    out
+}
+
+/// Multiply a 6×3 matrix by the transpose of a 6×3 matrix, yielding a 6×6 matrix.
+/// Computes C = A · Bᵀ where A is 6×3 and B is 6×3, so C is 6×6.
+fn mat6x3_mul_mat3x3_transpose(a: &[[f64; 3]; 6], b: &[[f64; 3]; 6]) -> Mat6 {
+    let mut out = [[0.0f64; 6]; 6];
+    for i in 0..6 {
+        for j in 0..6 {
+            for k in 0..3 {
+                out[i][j] += a[i][k] * b[j][k];
             }
         }
     }

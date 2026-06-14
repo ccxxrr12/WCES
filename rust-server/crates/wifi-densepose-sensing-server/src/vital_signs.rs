@@ -230,6 +230,10 @@ impl VitalSignDetector {
         }
 
         // Compute FFT magnitude spectrum
+        // NOTE: The magnitudes are unnormalized (not divided by N). This does not
+        // affect the peak_ratio calculation below because both peak_mag and band_mean
+        // are scaled by the same constant factor (1/N), which cancels out in the ratio.
+        // If absolute magnitude values were needed, each bin should be divided by fft_len.
         let spectrum = fft_magnitude(&signal);
 
         // Frequency resolution

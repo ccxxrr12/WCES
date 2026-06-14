@@ -6,6 +6,7 @@
     <title>WCES - 方舱生命体征监测系统</title>
     <script src="/ui/lib/three.min.js"></script>
     <script src="/ui/lib/OrbitControls.js"></script>
+    <script src="/ui/js/triage-common.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
 
@@ -913,10 +914,10 @@ function renderFromServer(){
             newSurvivorHtml='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
         }else{
             newSurvivorHtml=latestTriage.survivors.map((s,idx)=>`
-                <div class="survivor-card ${s.triage_color}" onclick="openEhr(latestTriage.survivors[${idx}])">
+                <div class="survivor-card ${escapeHtml(s.triage_color)}" onclick="openEhr(latestTriage.survivors[${idx}])">
                     <div class="survivor-header">
-                        <div class="survivor-id"><div class="survivor-avatar">${s.id.substring(5,7)}</div><div class="survivor-info"><h3>${s.id}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${s.estimated_age}</p></div></div>
-                        <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}<span class="triage-badge ${s.triage_color}">${s.triage}</span></div>
+                        <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(s.id.substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p></div></div>
+                        <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
                     </div>
                     <div class="vitals-row">
                         <div class="vital-item"><div class="vital-icon breathing">🫁</div><div class="vital-data"><div class="vital-value">${s.breathing_rate?.toFixed(1)??'--'}</div><div class="vital-unit">呼吸/分</div></div></div>
@@ -934,7 +935,7 @@ function renderFromServer(){
         if(!latestTriage.alerts||latestTriage.alerts.length===0){
             newAlertHtml='<div class="empty-state"><div class="empty-icon">🔔</div><div class="empty-text">暂无告警</div></div>';
         }else{
-            newAlertHtml=latestTriage.alerts.slice(0,10).map(a=>`<div class="alert-item prio${a.priority}"><div class="alert-icon">${a.priority===1?'🚨':'⚠️'}</div><div class="alert-content"><div class="alert-title">${a.survivor_id.substring(0,8)}: ${a.message}</div><div class="alert-time">${a.time}</div></div></div>`).join('');
+            newAlertHtml=latestTriage.alerts.slice(0,10).map(a=>`<div class="alert-item prio${a.priority}"><div class="alert-icon">${a.priority===1?'🚨':'⚠️'}</div><div class="alert-content"><div class="alert-title">${escapeHtml(a.survivor_id.substring(0,8))}: ${escapeHtml(a.message)}</div><div class="alert-time">${a.time}</div></div></div>`).join('');
         }
         if(_lastAlertHtml!==newAlertHtml){
             _lastAlertHtml=newAlertHtml;
@@ -945,7 +946,7 @@ function renderFromServer(){
         let newWasmHtml;
         if(latestData&&latestData.wasm_alerts&&latestData.wasm_alerts.length>0){
             const icons={gait:'🚶',loitering:'⏳',vibration:'🏗️',ltl:'⚡',meta_adapt:'🧠',sparse_recovery:'🔧',vital_trend:'💓',attractor:'🌀',coherence:'📶',resp_distress:'🫁',confined_space:'🚧',panic_motion:'🏃',sleep_apnea:'😴',cardiac:'❤️',seizure:'⚡',intrusion:'🔒',occupancy:'👥',mincut:'🆔',weapon_detect:'🔪'};
-            newWasmHtml=latestData.wasm_alerts.slice(0,12).map(a=>`<div class="wasm-alert ${a.severity}"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${a.module}">[${a.module}]</span><span>${a.event_name}</span><span class="wasm-value">${a.value.toFixed(1)}</span></div>`).join('');
+            newWasmHtml=latestData.wasm_alerts.slice(0,12).map(a=>`<div class="wasm-alert ${escapeHtml(a.severity)}"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${escapeHtml(a.module)}">[${escapeHtml(a.module)}]</span><span>${escapeHtml(a.event_name)}</span><span class="wasm-value">${a.value.toFixed(1)}</span></div>`).join('');
         }else{
             newWasmHtml='<div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>';
         }
@@ -977,15 +978,15 @@ function openEhr(survivor){
     const patientInfo=registeredPatients[survivor.id]||{};
     let html='<div class="ehr-section">';
     html+=`<h3>📋 基本信息</h3>`;
-    html+=`<div class="ehr-info-row"><span class="label">ID</span><span>${survivor.id}</span></div>`;
-    html+=`<div class="ehr-info-row"><span class="label">分诊等级</span><span>${triageColors[survivor.triage_color]||survivor.triage}</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">ID</span><span>${escapeHtml(survivor.id)}</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">分诊等级</span><span>${triageColors[survivor.triage_color]||escapeHtml(survivor.triage)}</span></div>`;
     html+=`<div class="ehr-info-row"><span class="label">追踪时间</span><span>${survivor.tracked_seconds?.toFixed(0)??0}s</span></div>`;
     html+=`<div class="ehr-info-row"><span class="label">关联节点</span><span>ESP32-C5 #${survivor.node_id}</span></div>`;
-    html+=`<div class="ehr-info-row"><span class="label">估计年龄</span><span>${survivor.estimated_age||'--'}</span></div>`;
+    html+=`<div class="ehr-info-row"><span class="label">估计年龄</span><span>${escapeHtml(survivor.estimated_age)||'--'}</span></div>`;
     html+=`<div class="ehr-info-row"><span class="label">恶化状态</span><span style="color:${survivor.is_deteriorating?'var(--danger-red)':'var(--success-green)'}">${survivor.is_deteriorating?'⚠ 是':'否'}</span></div>`;
-    if(patientInfo.age)html+=`<div class="ehr-info-row"><span class="label">登记年龄</span><span>${patientInfo.age}岁 / ${patientInfo.gender||'未知'}</span></div>`;
-    if(patientInfo.pre_existing?.length)html+=`<div class="ehr-info-row"><span class="label">既往病史</span><span>${patientInfo.pre_existing.join(', ')}</span></div>`;
-    if(patientInfo.chief_complaint)html+=`<div class="ehr-info-row"><span class="label">主诉</span><span>${patientInfo.chief_complaint}</span></div>`;
+    if(patientInfo.age!=null)html+=`<div class="ehr-info-row"><span class="label">登记年龄</span><span>${patientInfo.age}岁 / ${escapeHtml(patientInfo.gender||'未知')}</span></div>`;
+    if(patientInfo.pre_existing?.length)html+=`<div class="ehr-info-row"><span class="label">既往病史</span><span>${escapeHtml(patientInfo.pre_existing.join(', '))}</span></div>`;
+    if(patientInfo.chief_complaint)html+=`<div class="ehr-info-row"><span class="label">主诉</span><span>${escapeHtml(patientInfo.chief_complaint)}</span></div>`;
     html+='</div>';
 
     html+='<div class="ehr-section"><h3>🫀 生命体征趋势</h3>';
@@ -995,10 +996,13 @@ function openEhr(survivor){
     const llmCard=document.getElementById('llm-card-'+survivor.id);
     if(llmCard)html+=llmCard.outerHTML;
     else{html+='<div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击 AI 分析按钮生成报告</div></div>'}
-    html+='<button class="llm-analyze-btn" onclick="selectedPatientId=\''+survivor.id+'\';requestLlmAnalysis()">🤖 分析此伤员</button>';
+    html+=`<button class="llm-analyze-btn" data-patient-id="${escapeHtml(survivor.id)}">🤖 分析此伤员</button>`;
     html+='</div>';
 
     document.getElementById('ehrBody').innerHTML=html;
+    // Bind click handler (replaces inline onclick to avoid XSS via patient ID)
+    var llmBtn=document.getElementById('ehrBody').querySelector('.llm-analyze-btn');
+    if(llmBtn){llmBtn.addEventListener('click',function(){selectedPatientId=this.getAttribute('data-patient-id');requestLlmAnalysis()})}
     panel.classList.add('open');overlay.classList.add('active');
 
     // Draw EHR vital trend
@@ -1158,7 +1162,7 @@ function renderLlmAnalysisCard(patientId,analysis,generatedBy){
     container.innerHTML=html;
 }
 
-function escapeHtml(str){if(!str)return'';const div=document.createElement('div');div.textContent=str;return div.innerHTML}
+/* escapeHtml() — defined in /ui/js/triage-common.js (shared) */
 
 function generateLocalAnalysis(patientId,survivor){
     const pi=registeredPatients[patientId]||{},rr=survivor.breathing_rate,hr=survivor.heart_rate;

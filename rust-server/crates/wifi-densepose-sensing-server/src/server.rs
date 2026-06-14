@@ -8,7 +8,9 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use axum::http::HeaderValue;
+use axum::http::{HeaderMap, StatusCode, HeaderValue};
+use axum::middleware::{self, Next};
+use axum::extract::Request;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{info, warn, error};
@@ -18,6 +20,73 @@ use crate::rvf_container::{RvfBuilder, VitalSignConfig};
 use crate::Args;
 use crate::SharedState;
 use wifi_densepose_sensing_server::graph_transformer;
+
+/// Constant-time byte-slice comparison — prevents timing side-channels
+/// from leaking the API key byte-by-byte through early-exit string equality.
+/// Iterates all bytes of the longer slice; uses XOR accumulation.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        // Still iterate max_len to avoid leaking length via timing.
+        let max_len = a.len().max(b.len());
+        let mut result: u8 = 1; // non-zero = mismatch (length differs)
+        for i in 0..max_len {
+            let ab = a.get(i).copied().unwrap_or(0);
+            let bb = b.get(i).copied().unwrap_or(0);
+            result |= ab ^ bb;
+        }
+        return result == 0; // always false when lengths differ
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (&x, &y)| acc | (x ^ y))
+        == 0
+}
+
+/// API Key authentication middleware.
+///
+/// If the `WCES_API_KEY` environment variable is set, all write operations
+/// (POST/DELETE) require the `X-API-Key` header to match. GET, OPTIONS
+/// (CORS preflight), and health/UI paths are always allowed. If the env var
+/// is not set, a warning is logged on startup and all requests are allowed
+/// through.
+///
+/// The API key is read once and cached in a `std::sync::LazyLock` to avoid
+/// per-request syscall overhead.
+async fn api_key_auth(
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Result<axum::response::Response, StatusCode> {
+    use axum::http::Method;
+    use std::sync::LazyLock;
+
+    static API_KEY: LazyLock<Option<String>> =
+        LazyLock::new(|| std::env::var("WCES_API_KEY").ok());
+
+    let path = request.uri().path();
+    let method = request.method();
+
+    // Always allow health checks, UI, root
+    if path.starts_with("/api/v1/health") || path.starts_with("/ui") || path == "/" || path == "/health" {
+        return Ok(next.run(request).await);
+    }
+    // Always allow GET (read-only) and OPTIONS (CORS preflight)
+    if method == Method::GET || method == Method::OPTIONS {
+        return Ok(next.run(request).await);
+    }
+
+    // For write operations (POST/DELETE), check API key if configured
+    if let Some(expected) = &*API_KEY {
+        let matched = headers.get("X-API-Key")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| constant_time_eq(s.as_bytes(), expected.as_bytes()))
+            .unwrap_or(false);
+        if !matched {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+    Ok(next.run(request).await)
+}
 
 /// Set up the WebSocket and HTTP servers, bind them to their ports,
 /// serve with graceful shutdown, and save RVF on exit if configured.
@@ -126,6 +195,7 @@ pub(crate) async fn run_server(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache, no-store, must-revalidate"),
         ))
+        .layer(middleware::from_fn(api_key_auth))
         .with_state(state.clone());
 
     let http_addr = SocketAddr::from((bind_ip, args.http_port));
@@ -143,6 +213,11 @@ pub(crate) async fn run_server(
         }
     };
     info!("HTTP server listening on {http_addr}");
+    if std::env::var("WCES_API_KEY").is_ok() {
+        info!("  API key authentication enabled (WCES_API_KEY is set)");
+    } else {
+        warn!("  WCES_API_KEY not set — write endpoints are unauthenticated");
+    }
     if bind_ip.is_unspecified() {
         info!("  Triage Dashboard: http://localhost:{}/ui/triage.html", args.http_port);
         info!("  Control Center:  http://localhost:{}/ui/index.html", args.http_port);

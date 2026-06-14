@@ -70,6 +70,10 @@ static inline bool ring_pop(edge_ring_slot_t *out)
         return false;  /* Empty. */
     }
 
+    /* Acquire barrier: ensure we read the producer's slot data after
+     * observing the updated head. */
+    __sync_synchronize();
+
     memcpy(out, &s_ring.slots[s_ring.tail], sizeof(edge_ring_slot_t));
 
     __sync_synchronize();
@@ -136,7 +140,22 @@ static inline float unwrap_phase(float prev, float curr)
     float diff = curr - prev;
     if (diff > M_PI)       diff -= 2.0f * M_PI;
     else if (diff < -M_PI) diff += 2.0f * M_PI;
-    return prev + diff;
+    float result = prev + diff;
+    /* Prevent floating-point drift: wrap back to [-π, π] periodically.
+     * Use a two-step correction: fmodf brings magnitude below 2π, then
+     * shift into the canonical [-π, π] range. This handles both positive
+     * and negative accumulated drift symmetrically. */
+    if (result > 100.0f * M_PI || result < -100.0f * M_PI) {
+        result = fmodf(result, 2.0f * M_PI);
+        /* Shift into [-π, π]: fmodf preserves sign of dividend, so
+         * positive result is in [0, 2π) and negative in (-2π, 0]. */
+        if (result > M_PI) {
+            result -= 2.0f * M_PI;
+        } else if (result < -M_PI) {
+            result += 2.0f * M_PI;
+        }
+    }
+    return result;
 }
 
 /* ======================================================================
@@ -278,6 +297,7 @@ static float s_person_hr_filt[EDGE_MAX_PERSONS][EDGE_PHASE_HISTORY_LEN];
 /** Latest vitals packet (thread-safe via volatile copy). */
 static volatile edge_vitals_pkt_t s_latest_pkt;
 static volatile bool s_pkt_valid;
+static portMUX_TYPE s_vitals_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 /* ======================================================================
  * Top-K Subcarrier Selection
@@ -570,9 +590,11 @@ static void send_vitals_packet(void)
     pkt.presence_score = s_presence_score;
     pkt.timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
 
-    /* Update thread-safe copy. */
+    /* Update thread-safe copy — lock both writer and reader. */
+    taskENTER_CRITICAL(&s_vitals_spinlock);
     s_latest_pkt = pkt;
     s_pkt_valid = true;
+    taskEXIT_CRITICAL(&s_vitals_spinlock);
 
     /* ADR-063: If mmWave is active, send fused 48-byte packet instead. */
     mmwave_state_t mw;
@@ -644,7 +666,10 @@ static void process_frame(const edge_ring_slot_t *slot)
     const float sample_rate = 20.0f;
 
     /* --- Step 1-2: Phase extraction + unwrapping per subcarrier --- */
-    float phases[EDGE_MAX_SUBCARRIERS];
+    /* Static allocation: 512 floats = 2048 bytes each. Stack would
+     * overflow the 8 KB task stack on C5 40 MHz HE (484 subcarriers)
+     * when combined with caller/callee frames. */
+    static float phases[EDGE_MAX_SUBCARRIERS];
     for (uint16_t sc = 0; sc < n_subcarriers; sc++) {
         float raw_phase = extract_phase(slot->iq_data, sc);
 
@@ -799,16 +824,16 @@ static void process_frame(const edge_ring_slot_t *slot)
 
     /* --- Step 14 (ADR-040): Dispatch to WASM modules --- */
     if (s_cfg.tier >= 2 && s_pkt_valid) {
-        /* Extract amplitudes from I/Q for WASM host API. */
-        float amplitudes[EDGE_MAX_SUBCARRIERS];
+        /* Static allocation to avoid stack overflow (same rationale as phases[]). */
+        static float amplitudes[EDGE_MAX_SUBCARRIERS];
         for (uint16_t sc = 0; sc < n_subcarriers; sc++) {
             int8_t i_val = (int8_t)slot->iq_data[sc * 2];
             int8_t q_val = (int8_t)slot->iq_data[sc * 2 + 1];
             amplitudes[sc] = sqrtf((float)(i_val * i_val + q_val * q_val));
         }
 
-        /* Build variance array from Welford state. */
-        float variances[EDGE_MAX_SUBCARRIERS];
+        /* Build variance array from Welford state (static to avoid stack overflow). */
+        static float variances[EDGE_MAX_SUBCARRIERS];
         for (uint16_t sc = 0; sc < n_subcarriers; sc++) {
             variances[sc] = (float)welford_variance(&s_subcarrier_var[sc]);
         }
@@ -860,7 +885,9 @@ bool edge_enqueue_csi(const uint8_t *iq_data, uint16_t iq_len,
 bool edge_get_vitals(edge_vitals_pkt_t *pkt)
 {
     if (!s_pkt_valid || pkt == NULL) return false;
+    taskENTER_CRITICAL(&s_vitals_spinlock);
     memcpy(pkt, (const void *)&s_latest_pkt, sizeof(edge_vitals_pkt_t));
+    taskEXIT_CRITICAL(&s_vitals_spinlock);
     return true;
 }
 
@@ -900,6 +927,24 @@ esp_err_t edge_processing_init(const edge_config_t *cfg)
 
     /* Store config. */
     s_cfg = *cfg;
+
+    /* Validate configuration bounds. */
+    if (s_cfg.vital_interval_ms < 100) {
+        ESP_LOGW(TAG, "vital_interval_ms=%u too low, clamping to 100ms "
+                 "(prevents UDP socket flood)", s_cfg.vital_interval_ms);
+        s_cfg.vital_interval_ms = 100;
+    }
+    if (s_cfg.vital_interval_ms > 60000) {
+        s_cfg.vital_interval_ms = 60000;
+    }
+    if (s_cfg.top_k_count < 1 || s_cfg.top_k_count > EDGE_TOP_K) {
+        ESP_LOGW(TAG, "top_k_count=%u out of range [1,%u], clamping",
+                 s_cfg.top_k_count, (unsigned)EDGE_TOP_K);
+        s_cfg.top_k_count = (s_cfg.top_k_count < 1) ? 1 : EDGE_TOP_K;
+    }
+    if (s_cfg.presence_thresh < 0.0f) {
+        s_cfg.presence_thresh = 0.0f;  /* 0 = auto-calibrate */
+    }
 
     ESP_LOGI(TAG, "Initializing edge processing (tier=%u, top_k=%u, "
              "vital_interval=%ums, presence_thresh=%.3f)",

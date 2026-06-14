@@ -265,6 +265,14 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                                 };
                                 let _permit = permit;
 
+                                // DESIGN NOTE: The Mutex lock is held across the `.await` call
+                                // in `agent_guard.analyze(ctx).await`. This is a known trade-off:
+                                // MedicalAgent::analyze requires &mut self, so the lock must be
+                                // held for the entire analysis duration. The Semaphore above
+                                // (max 4 concurrent analyses) bounds the contention. A future
+                                // improvement would be to refactor MedicalAgent to use an
+                                // internal channel (mpsc) so that the lock is only held for
+                                // dispatching the request, not for the entire LLM round-trip.
                                 let mut agent_guard = agent.lock().await;
                                 let result = agent_guard.analyze(ctx).await;
                                 drop(agent_guard);

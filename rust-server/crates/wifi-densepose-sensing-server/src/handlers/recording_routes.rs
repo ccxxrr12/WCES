@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use tracing::{info, warn, debug};
 
 use crate::SharedState;
+use super::path_util::sanitize_path_segment;
 
 // ── Recording Endpoints ─────────────────────────────────────────────────────
 
@@ -37,8 +38,17 @@ pub(crate) async fn start_recording(
             format!("rec_{}", chrono_timestamp())
         });
 
+    // Sanitize: prevent path traversal
+    let safe_id = match sanitize_path_segment(&id) {
+        Ok(s) => s,
+        Err(_) => return Json(serde_json::json!({
+            "error": "invalid recording id",
+            "success": false,
+        })),
+    };
+
     // Create the recording file
-    let rec_path = PathBuf::from("data/recordings").join(format!("{}.jsonl", id));
+    let rec_path = PathBuf::from("data/recordings").join(format!("{}.jsonl", safe_id));
     let file = match std::fs::File::create(&rec_path) {
         Ok(f) => f,
         Err(e) => {
@@ -71,11 +81,15 @@ pub(crate) async fn start_recording(
 
     let rec_id = id.clone();
 
+    // Clone SharedState for the writer task to update on error.
+    let writer_state = state.clone();
+
     // Spawn writer task in background
     tokio::spawn(async move {
         use std::io::Write;
         let mut writer = std::io::BufWriter::new(file);
         let mut frame_count: u64 = 0;
+        let mut write_error: Option<String> = None;
         loop {
             tokio::select! {
                 result = rx.recv() => {
@@ -83,6 +97,7 @@ pub(crate) async fn start_recording(
                         Ok(frame_json) => {
                             if writeln!(writer, "{}", frame_json).is_err() {
                                 warn!("Recording {rec_id}: write error, stopping");
+                                write_error = Some("disk write error".into());
                                 break;
                             }
                             frame_count += 1;
@@ -109,7 +124,30 @@ pub(crate) async fn start_recording(
             }
         }
         let _ = writer.flush();
-        info!("Recording {rec_id} finished: {frame_count} frames written");
+
+        // If writer errored, mark the recording as failed in shared state
+        // so that stop_recording returns accurate status instead of silently
+        // reporting "completed" for a truncated file.
+        if let Some(ref err_msg) = write_error {
+            if let Ok(mut s) = writer_state.write().await {
+                if s.recording_active && s.recording_current_id.as_deref() == Some(&rec_id) {
+                    s.recording_active = false;
+                    s.recording_start_time = None;
+                    s.recording_current_id = None;
+                    s.recording_stop_tx = None;
+                    for rec in s.recordings.iter_mut() {
+                        if rec.get("id").and_then(|v| v.as_str()) == Some(rec_id.as_str()) {
+                            rec["status"] = serde_json::json!("failed");
+                            rec["error"] = serde_json::json!(err_msg);
+                            rec["frames"] = serde_json::json!(frame_count);
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("Recording {rec_id} finished: {frame_count} frames written{}",
+              if write_error.is_some() { " (with errors)" } else { "" });
     });
 
     info!("Recording started: {id}");
@@ -136,10 +174,14 @@ pub(crate) async fn stop_recording(State(state): State<SharedState>) -> Json<ser
     s.recording_active = false;
     s.recording_start_time = None;
 
-    // Update the recording entry status
+    // Update the recording entry status.
+    // Do NOT overwrite "failed" — the writer task may have crashed due to
+    // disk error before we signalled it to stop.
     for rec in s.recordings.iter_mut() {
         if rec.get("id").and_then(|v| v.as_str()) == Some(rec_id.as_str()) {
-            rec["status"] = serde_json::json!("completed");
+            if rec.get("status").and_then(|v| v.as_str()) != Some("failed") {
+                rec["status"] = serde_json::json!("completed");
+            }
             rec["duration_secs"] = serde_json::json!(duration_secs);
         }
     }
@@ -158,13 +200,10 @@ pub(crate) async fn delete_recording(
     Path(id): Path<String>,
 ) -> Json<serde_json::Value> {
     // ADR-050: Sanitize path to prevent directory traversal
-    let safe_id = std::path::Path::new(&id)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or("");
-    if safe_id.is_empty() || safe_id != id {
-        return Json(serde_json::json!({ "error": "invalid recording id", "success": false }));
-    }
+    let safe_id = match sanitize_path_segment(&id) {
+        Ok(s) => s,
+        Err(_) => return Json(serde_json::json!({ "error": "invalid recording id", "success": false })),
+    };
     let path = PathBuf::from("data/recordings").join(format!("{}.jsonl", safe_id));
     if path.exists() {
         if let Err(e) = std::fs::remove_file(&path) {
@@ -173,10 +212,10 @@ pub(crate) async fn delete_recording(
         }
         let mut s = state.write().await;
         s.recordings.retain(|r| {
-            r.get("id").and_then(|v| v.as_str()) != Some(id.as_str())
+            r.get("id").and_then(|v| v.as_str()) != Some(safe_id)
         });
-        info!("Recording deleted: {id}");
-        Json(serde_json::json!({ "success": true, "deleted": id }))
+        info!("Recording deleted: {safe_id}");
+        Json(serde_json::json!({ "success": true, "deleted": safe_id }))
     } else {
         Json(serde_json::json!({ "error": "recording not found", "success": false }))
     }

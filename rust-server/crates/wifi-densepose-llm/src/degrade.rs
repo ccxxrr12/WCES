@@ -13,11 +13,19 @@ pub struct DegradationConfig {
     pub cooldown_secs: u64,
     pub max_cache_size: usize,
     pub network_failure_threshold: u8,
+    /// Maximum age of a cached analysis result before it is considered stale.
+    /// Must be <= cooldown_secs to avoid the L4CachedReplay mismatch window.
+    pub cache_ttl_secs: u64,
 }
 
 impl Default for DegradationConfig {
     fn default() -> Self {
-        Self { cooldown_secs: 300, max_cache_size: 32, network_failure_threshold: 5 }
+        Self {
+            cooldown_secs: 300,
+            max_cache_size: 32,
+            network_failure_threshold: 5,
+            cache_ttl_secs: 120,
+        }
     }
 }
 
@@ -27,7 +35,7 @@ pub struct DegradationManager {
     pub(crate) circuit_breaker_open: bool,
     pub(crate) consecutive_failures: u8,
     pub(crate) cooldowns: HashMap<u32, Instant>,
-    pub(crate) analysis_cache: Vec<(u32, AnalysisResult)>,
+    pub(crate) analysis_cache: Vec<(u32, AnalysisResult, Instant)>,
 }
 
 impl DegradationManager {
@@ -35,7 +43,18 @@ impl DegradationManager {
         Self::with_config(DegradationConfig::default())
     }
 
-    pub fn with_config(config: DegradationConfig) -> Self {
+    pub fn with_config(mut config: DegradationConfig) -> Self {
+        // Enforce the documented invariant: cache TTL must not exceed cooldown,
+        // otherwise the L4CachedReplay logic is silently broken.
+        // Clamp + warn in release builds (not just debug_assert! which evaporates).
+        if config.cache_ttl_secs > config.cooldown_secs {
+            tracing::warn!(
+                "cache_ttl_secs ({}) exceeds cooldown_secs ({}) — clamping TTL to cooldown. \
+                 Fix [server.agent.degradation] in wces.config.toml",
+                config.cache_ttl_secs, config.cooldown_secs
+            );
+            config.cache_ttl_secs = config.cooldown_secs;
+        }
         Self {
             config,
             network_reachable: true,
@@ -46,12 +65,27 @@ impl DegradationManager {
         }
     }
 
+    /// Whether a non-expired cache entry exists for the given patient.
+    fn has_valid_cache(&self, patient_id: u32) -> bool {
+        let ttl = self.config.cache_ttl_secs;
+        self.analysis_cache.iter().any(|(id, _, cached_at)| {
+            *id == patient_id && cached_at.elapsed().as_secs() <= ttl
+        })
+    }
+
     /// Assess degradation level before each analysis request.
     pub fn assess(&mut self, patient_id: u32) -> DegradationLevel {
-        // 1. Check cooldown cache
+        // 0. Evict expired cooldown entries to prevent unbounded memory growth.
+        //    Runs inline on assess() calls (periodic, not per-frame) — a
+        //    dedicated reaper timer would be overkill for the expected scale.
+        let cooldown = self.config.cooldown_secs;
+        self.cooldowns.retain(|_, t| t.elapsed().as_secs() < cooldown);
+
+        // 1. Check cooldown cache — must be in cooldown AND have a
+        //    non-expired cache entry to return L4CachedReplay.
         if let Some(last) = self.cooldowns.get(&patient_id) {
             if last.elapsed().as_secs() < self.config.cooldown_secs {
-                if self.analysis_cache.iter().any(|(id, _)| *id == patient_id) {
+                if self.has_valid_cache(patient_id) {
                     return DegradationLevel::L4CachedReplay;
                 }
             }
@@ -74,11 +108,11 @@ impl DegradationManager {
     /// Record a completed analysis.
     pub fn on_analysis_complete(&mut self, patient_id: u32, result: AnalysisResult) {
         self.cooldowns.insert(patient_id, Instant::now());
-        self.analysis_cache.retain(|(id, _)| *id != patient_id);
+        self.analysis_cache.retain(|(id, _, _)| *id != patient_id);
         if self.analysis_cache.len() >= self.config.max_cache_size {
             self.analysis_cache.remove(0);
         }
-        self.analysis_cache.push((patient_id, result));
+        self.analysis_cache.push((patient_id, result, Instant::now()));
     }
 
     /// Update network status.
@@ -103,12 +137,20 @@ impl DegradationManager {
     }
 
     /// Look up cached result for a patient.
+    /// Returns None if the cache entry is older than cache_ttl_secs.
     pub fn get_cached(&self, patient_id: u32) -> Option<&AnalysisResult> {
+        let ttl = self.config.cache_ttl_secs;
         self.analysis_cache
             .iter()
             .rev()
-            .find(|(id, _)| *id == patient_id)
-            .map(|(_, r)| r)
+            .find(|(id, _, _)| *id == patient_id)
+            .and_then(|(_, result, cached_at)| {
+                if cached_at.elapsed().as_secs() <= ttl {
+                    Some(result)
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -212,7 +254,7 @@ mod tests {
         // Oldest entries should be evicted
         assert!(dm.get_cached(0).is_none());
         assert!(dm.get_cached(4).is_none());
-        // Recent entries should exist
+        // Recent entries should exist (within TTL)
         assert!(dm.get_cached((cap + 4) as u32).is_some());
     }
 
@@ -228,6 +270,16 @@ mod tests {
 
         let cached = dm.get_cached(1).expect("should have cached");
         assert_eq!(cached.text, "updated analysis");
+    }
+
+    #[test]
+    fn test_cache_expires_after_ttl() {
+        let mut dm = DegradationManager::new();
+        dm.on_analysis_complete(1, make_result(1));
+        // Manually backdate the cache entry timestamp
+        dm.analysis_cache[0].2 = Instant::now() - std::time::Duration::from_secs(121);
+        // Cache should be expired
+        assert!(dm.get_cached(1).is_none());
     }
 
     #[test]

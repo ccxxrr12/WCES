@@ -30,4 +30,11 @@ esp_err_t ota_update_init(void);
  */
 esp_err_t ota_update_init_ex(void **out_server);
 
+/**
+ * Get the cached PSK (loaded or auto-generated at boot).
+ * Returns "" if no key is provisioned.
+ * Used by wasm_upload.c as fallback when NVS read fails.
+ */
+const char *ota_psk_get(void);
+
 #endif /* OTA_UPDATE_H */

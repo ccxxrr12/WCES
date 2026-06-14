@@ -628,6 +628,9 @@ pub extern "C" fn on_frame(n_subcarriers: i32) {
         unsafe {
             phases[i] = host_get_phase(i as i32);
             amps[i] = host_get_amplitude(i as i32);
+            // NaN/Inf guard
+            if phases[i] != phases[i] || phases[i].is_infinite() { phases[i] = 0.0; }
+            if amps[i] != amps[i] || amps[i].is_infinite() { amps[i] = 0.0; }
         }
     }
 
@@ -654,6 +657,8 @@ pub extern "C" fn on_timer() {
     // Periodic summary.
     let state = unsafe { &*core::ptr::addr_of!(STATE) };
     let motion = unsafe { host_get_motion_energy() };
+    // NaN/Inf guard
+    let motion = if motion != motion || motion.is_infinite() { 0.0 } else { motion };
     emit(event_types::CUSTOM_METRIC, motion);
 
     if state.frame_count % 100 == 0 {

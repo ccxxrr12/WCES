@@ -7,6 +7,7 @@ use axum::response::Json;
 use tracing::{info, warn};
 
 use crate::SharedState;
+use super::path_util::sanitize_path_segment;
 
 // ── Model Management Endpoints ──────────────────────────────────────────────
 
@@ -73,13 +74,10 @@ pub(crate) async fn delete_model(
     Path(id): Path<String>,
 ) -> Json<serde_json::Value> {
     // ADR-050: Sanitize path to prevent directory traversal
-    let safe_id = std::path::Path::new(&id)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or("");
-    if safe_id.is_empty() || safe_id != id {
-        return Json(serde_json::json!({ "error": "invalid model id", "success": false }));
-    }
+    let safe_id = match sanitize_path_segment(&id) {
+        Ok(s) => s,
+        Err(_) => return Json(serde_json::json!({ "error": "invalid model id", "success": false })),
+    };
     let path = PathBuf::from("data/models").join(format!("{}.rvf", safe_id));
     if path.exists() {
         if let Err(e) = std::fs::remove_file(&path) {
@@ -88,15 +86,15 @@ pub(crate) async fn delete_model(
         }
         // If this was the active model, unload it
         let mut s = state.write().await;
-        if s.active_model_id.as_deref() == Some(id.as_str()) {
+        if s.active_model_id.as_deref() == Some(safe_id) {
             s.active_model_id = None;
             s.model_loaded = false;
         }
         s.discovered_models.retain(|m| {
-            m.get("id").and_then(|v| v.as_str()) != Some(id.as_str())
+            m.get("id").and_then(|v| v.as_str()) != Some(safe_id)
         });
-        info!("Model deleted: {id}");
-        Json(serde_json::json!({ "success": true, "deleted": id }))
+        info!("Model deleted: {safe_id}");
+        Json(serde_json::json!({ "success": true, "deleted": safe_id }))
     } else {
         Json(serde_json::json!({ "error": "model not found", "success": false }))
     }

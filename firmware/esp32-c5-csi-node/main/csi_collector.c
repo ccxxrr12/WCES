@@ -60,6 +60,10 @@ static uint32_t s_rate_skip = 0;
 #define CSI_MIN_SEND_INTERVAL_US  (20 * 1000)
 static int64_t s_last_send_us = 0;
 
+/** Wi-Fi band detected at init time. Used to disambiguate 6 GHz channel
+ *  numbers (1-233) from 2.4 GHz (1-13) since they overlap. */
+static wifi_band_t s_wifi_band = WIFI_BAND_2G;
+
 /* ---- ADR-029: Channel-hop state ---- */
 
 /** Channel hop table (populated from NVS at boot or via set_hop_table). */
@@ -103,14 +107,14 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
     /* ADR-060: C5/C6/C61 may report first_word_invalid when AGC corrupts lead I/Q. */
     uint16_t iq_offset = 0;
 #if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
-    if (info->first_word_invalid) {
+    if (info->first_word_invalid && info->len > 2) {
         iq_offset = 2;  /* Skip first invalid I/Q pair. */
     }
 #endif
-    uint16_t iq_len = (uint16_t)info->len - iq_offset;
-    if (iq_len < 2) {
+    if (info->len <= 0 || (uint16_t)info->len < iq_offset + 2) {
         return 0;  /* Not enough data after skipping invalid word. */
     }
+    uint16_t iq_len = (uint16_t)info->len - iq_offset;
     uint16_t n_subcarriers = iq_len / (2 * n_antennas);
 
     size_t frame_size = CSI_HEADER_SIZE + iq_len;
@@ -119,26 +123,36 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
         return 0;
     }
 
-    /* Derive frequency from channel number.
-     * 2.4 GHz: ch 1-13 → 2412-2472 MHz, ch 14 → 2484 MHz.
-     * 5 GHz:   ch 36-177 → 5180-5885 MHz.
-     * 6 GHz:   ch 1-233 (UNII-5~8) → 5955-7115 MHz (C5 WiFi 6E). */
-    uint8_t channel = info->rx_ctrl.channel;
-    uint32_t freq_mhz;
-    if (channel >= 1 && channel <= 13) {
-        freq_mhz = 2412 + (channel - 1) * 5;
-    } else if (channel == 14) {
-        freq_mhz = 2484;
-    } else if (channel >= 36 && channel <= 177) {
-        freq_mhz = 5000 + channel * 5;
-    } else if (channel >= 1 && channel <= 233) {
-        /* WiFi 6E 6 GHz band (ESP32-C5). Channel numbers overlap 2.4 GHz
-         * (1-13 matched both ranges). Since 2.4 GHz is checked first, 6 GHz
-         * channels 1-13 are unreachable here. To fix: add a band parameter or
-         * use a non-overlapping channel encoding (e.g. 6 GHz as 256+ch). */
-        freq_mhz = 5950 + channel * 5;
-    } else {
-        freq_mhz = 0;
+    /* Derive centre frequency from channel number and band.
+     * Uses a compact descriptor table to avoid a long if-else chain.
+     * Adding a new band (e.g. WiFi 7) only requires one new table row. */
+    static const struct {
+        wifi_band_t band;
+        uint8_t    lo, hi;
+        uint32_t   base_mhz;
+        bool       ch_minus_one;  /* 2.4 GHz uses (ch-1)*5, others use ch*5 */
+        bool       fixed_freq;    /* channel 14: use base_mhz directly, no ch*5 term */
+    } BAND_TABLE[] = {
+        { WIFI_BAND_6G,   1, 233, 5950, false, false },
+        { WIFI_BAND_2G,   1,  13, 2412, true,  false },
+        { WIFI_BAND_2G,  14,  14, 2484, false, true  },  /* Japan ch14 = 2484 MHz fixed */
+        { WIFI_BAND_5G,  36, 177, 5000, false, false },
+    };
+
+    uint8_t  channel  = info->rx_ctrl.channel;
+    uint32_t freq_mhz = 0;
+
+    for (size_t i = 0; i < sizeof(BAND_TABLE) / sizeof(BAND_TABLE[0]); i++) {
+        if (s_wifi_band == BAND_TABLE[i].band
+            && channel >= BAND_TABLE[i].lo && channel <= BAND_TABLE[i].hi) {
+            if (BAND_TABLE[i].fixed_freq) {
+                freq_mhz = BAND_TABLE[i].base_mhz;
+            } else {
+                freq_mhz = BAND_TABLE[i].base_mhz + channel * 5;
+                if (BAND_TABLE[i].ch_minus_one) freq_mhz -= 5;
+            }
+            break;
+        }
     }
 
     /* Magic (LE) */
@@ -243,6 +257,16 @@ static void wifi_promiscuous_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 
 void csi_collector_init(void)
 {
+    /* Detect the current Wi-Fi band to disambiguate channel numbers.
+     * 6 GHz (ESP32-C5/C6/C61) uses channels 1-233 which overlap with
+     * 2.4 GHz (1-13). This is the only reliable way to tell them apart
+     * since wifi_pkt_rx_ctrl_t has no band field. */
+    esp_wifi_get_band(&s_wifi_band);
+    ESP_LOGI(TAG, "Wi-Fi band: %s",
+             s_wifi_band == WIFI_BAND_2G ? "2.4 GHz" :
+             s_wifi_band == WIFI_BAND_5G ? "5 GHz" :
+             s_wifi_band == WIFI_BAND_6G ? "6 GHz" : "unknown");
+
     /* ADR-060: Determine the CSI channel.
      * Priority: 1) NVS override (--channel), 2) connected AP channel, 3) Kconfig default. */
     uint8_t csi_channel = (uint8_t)CONFIG_CSI_WIFI_CHANNEL;

@@ -9,6 +9,7 @@
  */
 
 #include "ota_update.h"
+#include "psk_auth.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -26,50 +27,23 @@ static const char *TAG = "ota_update";
 /** Maximum firmware size (900 KB — matches CI binary size gate). */
 #define OTA_MAX_SIZE (900 * 1024)
 
-/** NVS namespace and key for the OTA pre-shared key. */
-#define OTA_NVS_NAMESPACE "security"
-#define OTA_NVS_KEY       "ota_psk"
-
-/** Maximum PSK length (hex-encoded SHA-256). */
-#define OTA_PSK_MAX_LEN   65
-
-/** Cached PSK loaded from NVS at init time. Empty = auth disabled. */
-static char s_ota_psk[OTA_PSK_MAX_LEN] = {0};
+/** Cached PSK loaded from NVS at init time. Empty = auth disabled.
+ *  NVS namespace/key and max length are defined in psk_auth.h. */
+static char s_ota_psk[PSK_AUTH_MAX_LEN] = {0};
 
 /**
  * ADR-050: Verify the Authorization header contains the correct PSK.
- * Returns true if auth is disabled (no PSK provisioned) or if the
- * Bearer token matches the stored PSK.
+ * Returns true only if the Bearer token matches the stored PSK.
+ * Rejects all requests when no PSK is provisioned (secure default).
  */
 static bool ota_check_auth(httpd_req_t *req)
 {
     if (s_ota_psk[0] == '\0') {
-        /* No PSK provisioned — auth disabled (permissive for dev). */
-        return true;
-    }
-
-    char auth_header[128] = {0};
-    if (httpd_req_get_hdr_value_str(req, "Authorization", auth_header,
-                                     sizeof(auth_header)) != ESP_OK) {
+        ESP_LOGE(TAG, "OTA auth rejected: no PSK provisioned");
         return false;
     }
 
-    /* Expect "Bearer <psk>" */
-    const char *prefix = "Bearer ";
-    if (strncmp(auth_header, prefix, strlen(prefix)) != 0) {
-        return false;
-    }
-
-    const char *token = auth_header + strlen(prefix);
-    /* Constant-time comparison to prevent timing attacks. */
-    size_t psk_len = strlen(s_ota_psk);
-    size_t tok_len = strlen(token);
-    if (psk_len != tok_len) return false;
-    volatile uint8_t result = 0;
-    for (size_t i = 0; i < psk_len; i++) {
-        result |= (uint8_t)(s_ota_psk[i] ^ token[i]);
-    }
-    return result == 0;
+    return psk_verify_bearer(req, s_ota_psk);
 }
 
 /**
@@ -243,18 +217,53 @@ static esp_err_t ota_start_server(httpd_handle_t *out_handle)
 
 esp_err_t ota_update_init(void)
 {
-    /* ADR-050: Load OTA PSK from NVS if provisioned. */
+    /* ADR-050: Load OTA PSK from NVS if provisioned, or auto-generate
+     * one on first boot for security. */
     nvs_handle_t nvs;
-    if (nvs_open(OTA_NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
+    bool psk_found = false;
+    if (nvs_open(PSK_AUTH_NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
         size_t len = sizeof(s_ota_psk);
-        if (nvs_get_str(nvs, OTA_NVS_KEY, s_ota_psk, &len) == ESP_OK) {
+        if (nvs_get_str(nvs, PSK_AUTH_NVS_KEY, s_ota_psk, &len) == ESP_OK) {
             ESP_LOGI(TAG, "OTA PSK loaded from NVS (%d chars) — authentication enabled", (int)len - 1);
-        } else {
-            ESP_LOGW(TAG, "No OTA PSK in NVS — OTA authentication DISABLED (provision with nvs_set)");
+            psk_found = true;
         }
         nvs_close(nvs);
-    } else {
-        ESP_LOGW(TAG, "NVS namespace '%s' not found — OTA authentication DISABLED", OTA_NVS_NAMESPACE);
+    }
+
+    if (!psk_found) {
+        /* No PSK provisioned: generate a random 32-hex-char key on first
+         * boot and save it to NVS for persistence. Output the key via serial
+         * so the admin can capture it once. This prevents the device from
+         * being permanently locked out of OTA on field deployments. */
+        uint8_t random_bytes[16];
+        esp_fill_random(random_bytes, sizeof(random_bytes));
+        for (int i = 0; i < 16; i++) {
+            snprintf(&s_ota_psk[i * 2], 3, "%02x", random_bytes[i]);
+        }
+        s_ota_psk[32] = '\0';
+
+        /* Persist to NVS */
+        nvs_handle_t nvs_w;
+        if (nvs_open(PSK_AUTH_NVS_NAMESPACE, NVS_READWRITE, &nvs_w) == ESP_OK) {
+            nvs_set_str(nvs_w, PSK_AUTH_NVS_KEY, s_ota_psk);
+            esp_err_t commit_err = nvs_commit(nvs_w);
+            nvs_close(nvs_w);
+            if (commit_err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to persist auto-generated PSK (%s) — "
+                         "key will be lost on reboot. Flash may be full or worn.",
+                         esp_err_to_name(commit_err));
+            }
+        } else {
+            ESP_LOGE(TAG, "Cannot open NVS for writing — auto-generated PSK "
+                     "will be lost on reboot. Flash may be corrupted.");
+        }
+
+        /* Output once via serial — admin must capture this */
+        ESP_LOGI(TAG, "==============================================");
+        ESP_LOGI(TAG, "AUTO-GENERATED OTA PSK: %s", s_ota_psk);
+        ESP_LOGI(TAG, "Use: Authorization: Bearer %s", s_ota_psk);
+        ESP_LOGI(TAG, "SAVE THIS KEY — it will NOT be shown again.");
+        ESP_LOGI(TAG, "==============================================");
     }
 
     return ota_start_server(NULL);
@@ -263,4 +272,9 @@ esp_err_t ota_update_init(void)
 esp_err_t ota_update_init_ex(void **out_server)
 {
     return ota_start_server((httpd_handle_t *)out_server);
+}
+
+const char *ota_psk_get(void)
+{
+    return s_ota_psk;
 }
