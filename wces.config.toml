@@ -1,212 +1,434 @@
-# WCES — 竞赛系统统一配置文件
-# 此文件覆盖固件(Kconfig/NVS)、服务端(CLI)、部署(deploy.sh)的所有配置
-# 用法: 修改此文件 → 运行 ./apply-config.sh 自动应用到三个子系统
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                    WCES — 方舱生命体征感知与监护系统 统一配置                      ║
+# ║                          wces.config.toml                                     ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# 本文件是项目所有子系统的唯一配置来源，涵盖:
+#   [firmware]         → ESP32-C5 固件 (WiFi / CSI / UDP / WASM)
+#   [firmware.hop]     → 信道跳跃 (多频段采集)
+#   [firmware.tdm]     → 时隙调度 (多节点防冲突)
+#   [firmware.wasm]    → WASM 边缘模块热加载
+#   [server]           → Rust 服务端 (端口 / 数据源 / 日志 / UI / API Key)
+#   [server.model]     → RVF 模型加载
+#   [server.agent]     → Medical Agent 总控 (启停 / 模式 / 巡检 / 窗口)
+#   [server.agent.gateway]        → 云端 LLM API (支持 OpenAI / DeepSeek / 等)
+#   [server.agent.circuit_breaker] → 熔断器 (连续失败自动隔离)
+#   [server.agent.degradation]     → 降级阶梯 (网络断开后的回退策略)
+#   [server.agent.validator]       → 输出校验 (拦截危险医疗建议)
+#   [server.edge_modules] → 19 个边缘分析模块开关
+#   [deploy]           → 一键部署参数
+#   [competition]      → 竞赛现场专用配置
+#   [flash]            → ESP32 烧录参数
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+#  配置生效方式说明
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#  运行时生效（改完重启 sensing-server 即可）:
+#    所有 [server] 开头的配置段，包括:
+#      [server] / [server.model] / [server.agent] / [server.agent.*]
+#      [server.edge_modules]
+#
+#  部署/编译时生效（改完需重新运行 apply-config + 重新编译/烧录）:
+#    所有 [firmware] 开头的配置段
+#    [deploy] 段
+#    [competition] 段
+#    [flash] 段
+#
+#  [server] 段的基本端口/数据源等参数:
+#    目前通过 CLI 参数传给 sensing-server，配置文件中的值通过
+#    apply-config.ps1/sh 同步到 deploy.sh。启动时也可用命令行覆盖。
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+#  快速上手
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#  1. 至少填写 [server.agent.gateway] 的 api_key (DeepSeek / OpenAI 密钥)
+#  2. 修改 [firmware] 的 wifi_ssid / wifi_password 为实际路由器信息
+#  3. 运行:  .\apply-config.ps1 -NodeId 1   (Windows)
+#            ./apply-config.sh 1             (Linux)
+#  4. 重启服务端:
+#        cargo run -p wifi-densepose-sensing-server -- --source auto --ui-path ../docs/triage-ui --bind-addr 0.0.0.0 --http-port 8080
 
-# ============================================================================
-# 固件 — ESP32-C5 CSI 感知节点
-# ============================================================================
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                     固件 — ESP32-C5 CSI 感知节点                             ║
+# ║              修改后需: apply-config → idf.py build → flash                   ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 [firmware]
 
-# --- 节点身份 ---
-node_id = 1                     # 节点编号 (1/2/3), 三个节点唯一区别
-# 节点 2 改为 2, 节点 3 改为 3
+# ── 节点身份 ──────────────────────────────────────────────────────────────────
+# 每个 ESP32-C5 节点的唯一区别就是 node_id（1/2/3）
+# 三星堆阵列部署 — 3 个节点围成等边三角形，边距 2-3 米
+node_id = 1
 
-# --- WiFi 连接 ---
-wifi_ssid = "WCES"             # WiFi SSID (竞赛专用)
-wifi_password = ""             # WiFi 密码 (空 = 开放网络)
-wifi_auth = "OPEN"             # WPA2_PSK | OPEN | WPA3_SAE
+# ── WiFi 连接 ─────────────────────────────────────────────────────────────────
+# 竞赛现场路由器 SSID，所有 C5 节点 + RZ/G2L 连接同一个 AP
+wifi_ssid = "WCES"
+# WiFi 密码，开放网络留空
+wifi_password = ""
+# 加密方式: OPEN | WPA2_PSK | WPA3_SAE
+wifi_auth = "OPEN"
 
-# --- CSI 采集 ---
-csi_channel = 6                # 主信道 (2.4G: 1-13, 5G: 36-177, 6G: 1-233)
-csi_band = "AUTO"              # AUTO | 2G_ONLY | 5G_ONLY (C5 双频)
-                                # ⚠️ 5G/6G 需要 ESP-IDF v5.5+
+# ── CSI 采集参数 ──────────────────────────────────────────────────────────────
+# 主信道: 2.4GHz 选 1/6/11，5GHz 选 36-177，6GHz 选 1-233
+# 推荐: 6 (2.4GHz 穿墙好) 或 36 (5GHz 干扰少)
+csi_channel = 6
+# 频段: AUTO (自动双频) | 2G_ONLY | 5G_ONLY
+# ⚠️ 5G/6G 需要 ESP-IDF v5.5+
+csi_band = "AUTO"
 
-# --- UDP 发送目标 (RZ/G2L 主控) ---
-target_ip = "192.168.1.1"      # sensing-server 地址
-target_port = 5005             # UDP 接收端口
+# ── UDP 发送目标 (RZ/G2L 主控的 IP 和端口) ──────────────────────────────────
+target_ip = "192.168.1.1"
+target_port = 5005
 
-# --- 处理层级 ---
+# ── 边缘预处理层级 ────────────────────────────────────────────────────────────
 [firmware.edge]
-tier = 2                       # 0=原始透传, 1=基础DSP, 2=完整管线
-vital_interval_ms = 1000       # 生命体征包发送间隔 (ms)
-top_k_count = 8                # Top-K 高方差子载波数
-presence_thresh = 0.0          # 存在检测阈值 (0=自动校准)
-fall_thresh = 400.0            # 跌倒检测阈值 (rad/s²)
-vital_window = 64              # BPM 相位历史窗口帧数
-power_duty = 100               # 电源占空比 (10-100%)
+# 处理级别: 0=原始CSI透传  1=基础DSP(幅度提取等)  2=完整管线(含生命体征预提取)
+tier = 2
+# 生命体征包发送间隔 (ms)，越大越省带宽但更新慢
+vital_interval_ms = 1000
+# Top-K 高方差子载波筛选数量 (减少数据量)
+top_k_count = 8
+# 人体存在检测阈值，0=自适应校准
+presence_thresh = 0.0
+# 跌倒检测加速度阈值 (rad/s²)
+fall_thresh = 400.0
+# BPM 相位历史窗口帧数
+vital_window = 64
+# 电源占空比 (10-100%)，越低越省电但性能下降
+power_duty = 100
 
-# --- 信道跳跃 (ADR-029) ---
+# ── 信道跳跃 (ADR-029) — 多频段轮询提高信号覆盖 ───────────────────────────
 [firmware.hop]
-enabled = true                  # 启用多频段信道跳跃
-channels = [1, 6, 11, 36, 40, 44]  # 跳跃信道列表 (2.4G + 5G)
-dwell_ms = 50                   # 每信道停留时间 (ms)
+# 是否启用信道跳跃
+enabled = true
+# 跳跃信道列表，覆盖 2.4GHz (1/6/11) + 5GHz (36/40/44)
+channels = [1, 6, 11, 36, 40, 44]
+# 每个信道的驻留时间 (ms)
+dwell_ms = 50
 
-# --- 时隙调度 (TDM) ---
+# ── 时隙调度 (TDM) — 3 个节点分时发送避免 WiFi 冲突 ───────────────────────
 [firmware.tdm]
-node_count = 3                  # 总节点数 (用于时隙分配)
-slot_index = 1                  # 本节点时隙 (1-based, 按 node_id)
+# 总节点数
+node_count = 3
+# 本节点时隙编号 (1-based，等于 node_id)
+slot_index = 1
 
-# --- WASM 边缘模块 ---
+# ── WASM 边缘模块 ────────────────────────────────────────────────────────────
 [firmware.wasm]
-max_modules = 4                 # 最大并发 WASM 模块 (1-8)
-verify_signature = true         # 要求 Ed25519 签名
-frame_budget_us = 10000         # 每帧执行预算 (µs)
+# 最大并发 WASM 模块数 (1-8)
+max_modules = 4
+# 是否要求 Ed25519 签名 (量产开启，开发关闭)
+verify_signature = true
+# 每帧 WASM 执行预算 (µs)，超时强制中断
+frame_budget_us = 10000
 
-# ============================================================================
-# Rust 服务端 — sensing-server
-# ============================================================================
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                   Rust 服务端 — sensing-server                              ║
+# ║          改完: 重启 sensing-server 进程即可生效                              ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 [server]
 
-# --- 运行模式 ---
-source = "auto"                 # auto | esp32 | simulate
-                                # auto: 自动检测 ESP32 UDP, 无信号则模拟
-                                # esp32: 仅监听硬件 UDP
-                                # simulate: 纯模拟 (无需硬件)
+# ── 运行模式 ──────────────────────────────────────────────────────────────────
+# auto:      自动检测 — 有 ESP32 UDP 数据就用硬件，没有就模拟
+# esp32:     仅监听硬件 UDP（无数据时等待）
+# simulate:  纯正弦波模拟（无需任何硬件，适合 UI 开发调试）
+source = "auto"
 
-# --- 端口 ---
-http_port = 8080                # HTTP + 静态 UI
-ws_port = 8765                  # WebSocket 实时数据推送
-udp_port = 5005                 # UDP CSI 数据接收
-bind_addr = "0.0.0.0"          # 绑定地址
+# ── 服务端口 ──────────────────────────────────────────────────────────────────
+# HTTP + 静态 UI 服务端口（浏览器打开 http://localhost:8080）
+http_port = 8080
+# WebSocket 实时数据推送端口（sensing-server 会同时尝试 :8765 独立端口，
+# 如果被占用则通过 HTTP 端口 :8080 提供 WS 服务）
+ws_port = 8765
+# UDP CSI 数据接收端口（ESP32 节点通过 WiFi 向此端口发送 ADR-018 二进制帧）
+udp_port = 5005
+# 绑定地址: 0.0.0.0=接受所有来源 (局域网/公网) | 127.0.0.1=仅本机
+bind_addr = "0.0.0.0"
 
-# --- UI 路径 ---
-ui_path = "../docs/triage-ui"   # 分诊仪表盘目录 (相对于 rust-server/)
+# ── UI 静态文件路径 ──────────────────────────────────────────────────────────
+# 相对于 rust-server/ 目录，或写绝对路径
+# 包含 triage.html (分诊仪表盘) / index.html (入口页) / lib/ 等
+ui_path = "../docs/triage-ui"
 
-# --- 日志 ---
-log_level = "info"              # trace | debug | info | warn | error
-log_file = "/tmp/wces-server.log"  # 日志文件路径
+# ── 日志 ──────────────────────────────────────────────────────────────────────
+# 级别: trace | debug | info | warn | error
+# 竞赛现场建议 warn (减少磁盘写入)，开发调试建议 debug
+log_level = "info"
+# 日志文件路径（RZ/G2L 建议 /tmp 避免磨损 eMMC）
+log_file = "/tmp/wces-server.log"
 
-# --- 模型 ---
+# ── 模拟/广播 tick 间隔 (ms) ─────────────────────────────────────────────────
+# 默认 100ms = 每秒 10 帧，值越小 CPU 消耗越大但 UI 动画更流畅
+# 范围: 50-1000ms，RZ/G2L 推荐 100ms
+tick_ms = 100
+
+# ── API 鉴权 (写入操作保护) ──────────────────────────────────────────────────
+# REST API 的 POST/DELETE 等写入操作需要 X-API-Key 头与此值匹配
+# 如果为空或不设置 → 写入端点无鉴权（仅开发环境建议）
+# 同时支持环境变量 WCES_API_KEY（配置文件优先级更高）
+api_key = ""
+
+# ── RVF 模型 ──────────────────────────────────────────────────────────────────
 [server.model]
-load_on_startup = false         # 启动时加载 DensePose 模型 (费内存)
-model_path = "data/models/"     # .rvf 模型搜索路径
-pose_synthetic = true          # 模拟模式下生成合成骨架 (无需模型文件)
+# 启动时是否加载 DensePose 3D 骨架模型 (费内存，RZ/G2L 内存有限建议关闭)
+load_on_startup = false
+# .rvf 模型文件搜索路径
+model_path = "data/models/"
+# 模拟模式下是否生成合成 3D 骨架（无需模型文件，纯算法生成演示效果）
+pose_synthetic = true
 
-# --- 端侧 Medical Agent (Phase 4) ---
-# Coordinator 模式: RZ/G2L 信号处理 + 规则分诊 → 云端 LLM 深度分析
-# 优雅降级: 网络中断/API故障时自动回退到本地模板分析
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║               Medical Agent — 端侧医疗智能体配置                             ║
+# ║   Coordinator 模式: 本地信号处理 + 规则分诊 → 云端 LLM 深度分析             ║
+# ║   优雅降级: 网络中断/API故障时自动回退到本地模板分析，前端无感知              ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 [server.agent]
-enabled = true                      # 启用 Medical Agent 分析
-mode = "agent"                      # agent = 云端LLM + 本地降级, template-only = 仅模板
 
-# --- 触发与冷却 ---
-periodic_analysis_secs = 30         # 周期巡检间隔 (0=仅事件触发)
-analysis_timeout_secs = 120         # 单次分析超时 (秒)
-per_patient_cooldown_secs = 300     # 同一伤员冷却时间 (秒), 避免频繁 API 调用
-fallback_to_template = true         # LLM 失败时自动回退到模板分析
+# ── 总开关与模式 ──────────────────────────────────────────────────────────────
+# 是否启用 Medical Agent
+enabled = true
+# 运行模式:
+#   agent          = 云端 LLM + 本地模板降级 (推荐，需要 API Key)
+#   template-only  = 仅本地模板分析（零外部依赖，零费用）
+mode = "agent"
 
-# --- 滑窗配置 ---
-short_window_secs = 60              # 短期趋势窗口 (1分钟)
-medium_window_secs = 300            # 中期趋势窗口 (5分钟)
-long_window_secs = 1800             # 长期基线窗口 (30分钟)
+# ── 触发与冷却 ────────────────────────────────────────────────────────────────
+# 周期性巡检间隔 (秒): 每隔 N 秒对所有伤员做一次自动分析
+# 0 = 关闭周期性巡检，仅事件触发（新伤员/恶化）
+periodic_analysis_secs = 30
+# 单次 LLM 分析超时 (秒)，超过此时间自动降级为模板分析
+analysis_timeout_secs = 120
+# 同一伤员的冷却时间 (秒): 在此时间内不会重复调用云端 LLM
+# 避免频繁 API 调用烧钱（DeepSeek V4 Flash: ¥0.002/千token）
+per_patient_cooldown_secs = 300
+# LLM 调用失败时是否自动回退到本地模板分析
+fallback_to_template = true
 
-# --- 知识库路径 ---
-patient_db_path = "data/patients"                   # 病历数据库 (sled)
-medical_kb_path = "data/medical_knowledge.json"      # 传统疾病知识库 (8种)
-agent_kb_path = "data/agent_kb.json"                 # Agent 体征模式知识库 (16种)
+# ── 趋势分析滑窗 ──────────────────────────────────────────────────────────────
+# 短期趋势窗口 (秒) — 用于检测突发恶化
+short_window_secs = 60
+# 中期趋势窗口 (秒) — 用于判断病情走向
+medium_window_secs = 300
+# 长期基线窗口 (秒) — 用于建立伤员个体化基线
+long_window_secs = 1800
 
-# --- 云端 LLM 网关 (OpenAI 兼容 API) ---
+# ── 知识库与数据库路径 ───────────────────────────────────────────────────────
+# 伤员病历数据库路径（sled 嵌入式 DB，自动创建）
+patient_db_path = "data/patients"
+# 传统疾病知识库 (8+ 种疾病模板匹配，用于本地降级分析)
+medical_kb_path = "data/medical_knowledge.json"
+# Agent 体征模式知识库 (16 种生命体征 Pattern，用于智能触发判断)
+agent_kb_path = "data/agent_kb.json"
+
+
+# ── 云端 LLM API 网关 ─────────────────────────────────────────────────────────
+# 支持任意 OpenAI 兼容接口: DeepSeek / OpenAI / vLLM / Ollama / LiteLLM 等
+# ⚠️ 请至少填写 api_key，否则 Agent 自动降级为 template-only 模式
 [server.agent.gateway]
-endpoint = ""                       # 空 = 自动使用 https://api.openai.com/v1/chat/completions
-                                    # 可替换为任意 OpenAI 兼容端点 (vLLM/Ollama/LiteLLM)
-model = "gpt-4o-mini"               # 模型名: gpt-4o-mini | gpt-4o | qwen2.5-7b | deepseek-v3 等
-api_key = ""                        # API Key, 空 = 从环境变量 LLM_API_KEY 读取
-timeout_secs = 20                   # 单次 HTTP 请求超时 (秒)
-max_retries = 2                     # 失败后最大重试次数
-temperature = 0.3                   # LLM 采样温度 (0-2, 越低越确定性)
 
-# --- 熔断器 (Circuit Breaker) ---
+# ── API 端点 ──────────────────────────────────────────────────────────────────
+# 空字符串 = 自动解析为 https://api.openai.com/v1/chat/completions
+# 完整 URL（以 http:// 或 https:// 开头）= 直接使用，必须包含 /chat/completions
+#
+# 常用端点:
+#   DeepSeek:    "https://api.deepseek.com/v1/chat/completions"
+#   OpenAI:      "https://api.openai.com/v1/chat/completions"  (或留空)
+#   vLLM 自建:   "http://your-server:8000/v1/chat/completions"
+#   Ollama 本地:  "http://localhost:11434/v1/chat/completions"
+#   LiteLLM 代理: "http://your-proxy:4000/v1/chat/completions"
+endpoint = "https://api.deepseek.com/v1/chat/completions"
+
+# ── 模型名 ────────────────────────────────────────────────────────────────────
+# DeepSeek 推荐 (2026年4月发布，性价比极高):
+#   deepseek-v4-flash   = V4 快速版，¥0.002/千token，速度快，推荐日常使用
+#   deepseek-v4-pro     = V4 旗舰版，推理能力强，适合危重伤员深度分析
+#   deepseek-chat       = V3.2 通用版 (旧别名，将于2026-07-24停用)
+#   deepseek-reasoner   = V3.2 推理版 (旧别名，将于2026-07-24停用)
+#
+# OpenAI:
+#   gpt-4o-mini  = 性价比高
+#   gpt-4o       = 能力强但贵
+model = "deepseek-v4-flash"
+
+# ── API 密钥 ──────────────────────────────────────────────────────────────────
+# ⚠️ 请填写你的密钥！留空则 Agent 自动降级为 template-only 模式
+# DeepSeek 获取: https://platform.deepseek.com/api_keys
+# 也支持环境变量 LLM_API_KEY（配置文件优先级更高）
+api_key = ""   # ← 改为你的 sk-xxxxxxxxxxxxxxxx
+
+# ── 请求参数 ──────────────────────────────────────────────────────────────────
+# 单次 HTTP 请求超时 (秒)，网络不稳定可调大到 30-60
+timeout_secs = 20
+# 网络错误最大重试次数
+max_retries = 2
+# LLM 采样温度 (0-2):
+#   越低越保守/确定性高 (适合医疗分析)
+#   越高越随机/有创造性
+#   DeepSeek 官方推荐 1.0，但医疗场景建议 0.3-0.5
+temperature = 0.5
+
+
+# ── 熔断器 (Circuit Breaker) ──────────────────────────────────────────────────
+# 保护机制: 当云端 API 连续失败时自动"熔断"，避免雪崩式重试
+# 状态机: CLOSED(正常) → OPEN(熔断) → HALF_OPEN(试探) → CLOSED(恢复)
 [server.agent.circuit_breaker]
-failure_threshold = 3               # 连续失败 N 次后打开熔断器
-open_duration_secs = 300            # 熔断器打开后恢复等待时间 (秒)
 
-# --- 降级阶梯 (Degradation Ladder) ---
+# 连续失败 N 次后打开熔断器 (拒绝对外请求)
+failure_threshold = 3
+# 熔断后等待 N 秒再尝试恢复 (进入 HALF_OPEN 状态)
+open_duration_secs = 300
+
+
+# ── 降级阶梯 (Degradation Ladder) ─────────────────────────────────────────────
+# 五级降级，从高到低:
+#   L0 FullLLM       → 正常调用云端大模型
+#   L1 BriefLLM      → 简短云端分析 (轻伤员/稳定状态)
+#   L2 TemplateWithKB → 本地模板 + 医疗知识库匹配
+#   L3 TemplateOnly  → 纯本地模板 (知识库不可用时)
+#   L4 CachedReplay  → 回放缓存 (同伤员冷却期内)
 [server.agent.degradation]
-cooldown_secs = 300                 # 同一伤员重复分析冷却 (秒)
-max_cache_size = 32                 # LRU 缓存上限 (条目数)
-network_failure_threshold = 5       # 连续失败 N 次后标记网络不可达
 
-# --- 输出校验 ---
+# 同一伤员重复分析的冷却时间 (秒)，与 per_patient_cooldown_secs 配合使用
+cooldown_secs = 300
+# 分析结果缓存上限 (LRU 淘汰，最久未使用先删)
+max_cache_size = 32
+# 连续网络失败 N 次后标记"网络不可达"，永久走本地分析
+# 网络恢复后自动重置 (检测到一次成功即恢复)
+network_failure_threshold = 5
+# 缓存条目有效期 (秒)，超过此时间的缓存视为过期
+# 必须 <= cooldown_secs，否则冷却期内可能出现空缓存
+cache_ttl_secs = 120
+
+
+# ── 输出校验器 (Output Validator) ─────────────────────────────────────────────
+# 安全红线: 拦截 LLM 可能产生的危险医疗建议
+# 分诊等级越高（越危重），拦截越宽松 — 因为危重伤员需要更多信息
+#   Immediate(红): 仅拦截手术/处方/诊断声明
+#   Delayed(黄):   拦截药物/注射建议
+#   Minor(绿):     最严格，拦截所有医疗建议
 [server.agent.validator]
-enabled = true                      # 启用安全校验
-block_medication = true             # 拦截药物建议
-block_injection = true              # 拦截注射建议
-block_dosage = true                 # 拦截剂量建议
-block_surgery = true                # 拦截手术/处方建议
-append_disclaimer = true            # 自动附加 [AI分析, 仅供参考]
 
-# --- 边缘模块 ---
+# 是否启用安全校验（强烈不建议关闭）
+enabled = true
+# 拦截药物建议（如"建议使用阿司匹林"）
+block_medication = true
+# 拦截注射建议（如"建议静脉注射"）
+block_injection = true
+# 拦截剂量建议（如"每次10mg"）
+block_dosage = true
+# 拦截手术/处方建议（如"需要手术缝合"）
+block_surgery = true
+# 自动在 LLM 输出末尾追加 [AI分析, 仅供参考] 免责声明
+append_disclaimer = true
+
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                   19 个边缘分析模块开关                                      ║
+# ║      竞赛期: 以原生 Rust 编译，RZ/G2L 硬件 FPU 加速 (~10× WASM 解释器)     ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 [server.edge_modules]
-# 19 个模块, 可按需禁用 (false = 跳过)
-vital_trend = true
-lrn_anomaly_attractor = true
-coherence = true
-med_respiratory_distress = true
-ind_confined_space = true
-sec_panic_motion = true
-med_sleep_apnea = true
-med_cardiac_arrhythmia = true
-med_seizure_detect = true
-intrusion = true
-occupancy = true
-sig_mincut_person_match = true
-sec_weapon_detect = true
-med_gait_analysis = true
-tmp_temporal_logic_guard = true
-ind_structural_vibration = true
-sec_loitering = true
-lrn_meta_adapt = true
-sig_sparse_recovery = true
 
-# ============================================================================
-# 部署 — deploy.sh 配置
-# ============================================================================
+# ── 生命体征类 ────────────────────────────────────────────────────────────────
+vital_trend = true                      # 生命体征趋势分析
+lrn_anomaly_attractor = true            # Lyapunov 异常吸引子检测
+coherence = true                        # 信号相干性分析
+
+# ── 医疗诊断类 ────────────────────────────────────────────────────────────────
+med_respiratory_distress = true         # 呼吸窘迫检测 (RR异常 + SpO₂趋势)
+med_cardiac_arrhythmia = true           # 心律失常检测 (HRV时域/频域分析)
+med_sleep_apnea = true                  # 睡眠呼吸暂停检测
+med_seizure_detect = true               # 癫痫发作检测 (高频震颤模式)
+med_gait_analysis = true                # 步态分析 (跌倒风险/帕金森评估)
+
+# ── 安全监控类 ────────────────────────────────────────────────────────────────
+sec_panic_motion = true                 # 恐慌运动检测 (突发不规则动作)
+sec_weapon_detect = true                # 武器携带检测 (金属反射特征)
+sec_loitering = true                    # 徘徊检测 (持续不规则运动模式)
+
+# ── 环境感知类 ────────────────────────────────────────────────────────────────
+ind_confined_space = true               # 受限空间检测 (多径反射特征)
+ind_structural_vibration = true         # 结构振动检测 (地震/建筑安全)
+
+# ── 信号处理类 ────────────────────────────────────────────────────────────────
+intrusion = true                        # 入侵检测 (人体存在+边界越线)
+occupancy = true                        # 人数统计 (多人CSI方差分析)
+sig_mincut_person_match = true          # Min-Cut 人员匹配 (图割算法匹配CSI)
+sig_sparse_recovery = true              # 稀疏信号恢复 (压缩感知重建)
+
+# ── AI 增强类 ─────────────────────────────────────────────────────────────────
+lrn_meta_adapt = true                   # 元学习自适应 (快速适应新环境)
+tmp_temporal_logic_guard = true         # 时序逻辑守卫 (LTL约束验证)
+
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                     部署 — deploy.sh 参数                                   ║
+# ║       修改后需运行 apply-config.ps1/sh 同步到 deploy.sh                     ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 [deploy]
 
-# --- 瑞萨 RZ/G2L 目标 ---
-rz_ip = "192.168.1.1"           # SSH 目标
-rz_user = "root"                # SSH 用户
-rz_project_root = "/opt/WCES"  # 项目根目录
+# ── 瑞萨 RZ/G2L 目标 ──────────────────────────────────────────────────────────
+rz_ip = "192.168.1.1"                   # SSH 目标地址
+rz_user = "root"                        # SSH 用户名
+rz_project_root = "/opt/WCES"          # 项目根目录 (RZ/G2L 上)
 
-# --- 二进制路径 (RZ/G2L 上) ---
+# ── 二进制文件路径 (RZ/G2L 上的相对路径) ─────────────────────────────────────
 sensing_bin = "./rust-server/target/aarch64-unknown-linux-gnu/release/sensing-server"
 triage_ui = "./docs/triage-ui/triage.html"
 ui_dir = "./ui"
 
-# ============================================================================
-# 竞赛 — 比赛专用配置
-# ============================================================================
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                   竞赛 — 比赛现场专用配置                                    ║
+# ║         修改后需运行 apply-config 同步到固件和部署脚本                        ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 [competition]
 
-# --- 网络拓扑 ---
-router_ssid = "WCES"            # 现场路由器 SSID
-router_ip = "192.168.1.1"      # 路由器管理 IP
-subnet = "192.168.1.0/24"      # 局域网段
+# ── 网络拓扑 ──────────────────────────────────────────────────────────────────
+router_ssid = "WCES"                    # 现场路由器 SSID
+router_ip = "192.168.1.1"             # 路由器管理 IP
+subnet = "192.168.1.0/24"             # 局域网段
 
-# --- 节点固定 IP ---
-node1_ip = "192.168.1.10"      # ESP32-C5 #1
-node2_ip = "192.168.1.11"      # ESP32-C5 #2
-node3_ip = "192.168.1.12"      # ESP32-C5 #3
+# ── 节点固定 IP (由路由器 DHCP 静态分配或手动设置) ────────────────────────────
+node1_ip = "192.168.1.10"              # ESP32-C5 #1
+node2_ip = "192.168.1.11"              # ESP32-C5 #2
+node3_ip = "192.168.1.12"              # ESP32-C5 #3
 
-# --- 演示模式 ---
-demo_cycle_seconds = 300        # 自动循环演示周期 (秒)
-auto_start_triage = true        # 启动后自动打开分诊仪表盘
+# ── 演示模式 ──────────────────────────────────────────────────────────────────
+# 自动循环演示周期 (秒)，所有伤员完整走一遍红/黄/绿/黑/灰分诊
+demo_cycle_seconds = 300
+# 启动后是否自动打开分诊仪表盘 (RZ/G2L 用浏览器全屏)
+auto_start_triage = true
 
-# --- 故障预案 ---
-fault_tolerance = true          # 启用故障降级 (2/3 节点继续工作)
-max_missed_frames = 30          # 超时帧数 → 标记 Unknown
-reconnect_timeout_sec = 10      # WiFi 重连超时 (秒)
+# ── 故障预案 ──────────────────────────────────────────────────────────────────
+# 是否启用故障降级 (2/3 节点故障时，剩余节点继续工作)
+fault_tolerance = true
+# 超时帧数 → 标记为 Unknown (灰标)，超过此时间无数据的伤员
+max_missed_frames = 30
+# WiFi 断开后重连超时 (秒)
+reconnect_timeout_sec = 10
 
-# --- 硬件 ---
-flash_size = "8MB"              # 固件分区表: 8MB
-chip = "esp32c5"                # 目标芯片
-idf_version = "5.5"             # 最低 IDF 版本 ⚠️ v5.4 有 CSI bug
+# ── 硬件规格 ──────────────────────────────────────────────────────────────────
+flash_size = "8MB"                      # ESP32-C5 闪存大小 (决定分区表)
+chip = "esp32c5"                        # 目标芯片型号
+idf_version = "5.5"                     # ESP-IDF 最低版本 ⚠️ v5.4 有 C5 CSI 缓存bug
 
-# ============================================================================
-# 烧录 — ESP32-C5 固件烧录
-# ============================================================================
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                 烧录 — ESP32-C5 固件烧录参数                                ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 [flash]
-# 每个节点的串口 (Windows COM 或 Linux /dev/ttyUSB)
-ports = ["COM3", "COM4", "COM5"]  # 节点1, 节点2, 节点3
-baud = 921600                     # 烧录波特率
-erase_before_flash = false        # 烧录前擦除 (首次需要)
+
+# 每个节点的串口:
+#   Windows: COM3 / COM4 / COM5
+#   Linux:   /dev/ttyUSB0 / /dev/ttyUSB1 / /dev/ttyUSB2
+ports = ["COM3", "COM4", "COM5"]
+
+# 烧录波特率（越高越快，但稳定性下降）
+baud = 921600
+
+# 烧录前是否擦除全部闪存 (首次烧录建议 true，后续 false)
+erase_before_flash = false

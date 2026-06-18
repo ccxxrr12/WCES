@@ -27,6 +27,12 @@ pub struct ServerSection {
     pub bind_addr: Option<String>,
     pub ui_path: Option<String>,
     pub log_level: Option<String>,
+    /// 模拟/广播 tick 间隔（毫秒），默认 100ms = 10fps
+    #[serde(default = "default_tick_ms")]
+    pub tick_ms: u64,
+    /// 写入操作 API Key，对应环境变量 WCES_API_KEY
+    #[serde(default)]
+    pub api_key: Option<String>,
 
     #[serde(default)]
     pub agent: AgentSection,
@@ -154,10 +160,14 @@ impl Default for CircuitBreakerSection {
 pub struct DegradationSection {
     #[serde(default = "default_cooldown")]
     pub cooldown_secs: u64,
+    /// 单个伤员重复分析的冷却时间（秒）
     #[serde(default = "default_max_cache")]
     pub max_cache_size: usize,
     #[serde(default = "default_network_failure_threshold")]
     pub network_failure_threshold: u8,
+    /// 分析缓存有效期（秒），超过此时间的缓存视为过期
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl_secs: u64,
 }
 
 impl Default for DegradationSection {
@@ -166,6 +176,7 @@ impl Default for DegradationSection {
             cooldown_secs: 300,
             max_cache_size: 32,
             network_failure_threshold: 5,
+            cache_ttl_secs: 120,
         }
     }
 }
@@ -222,6 +233,8 @@ fn default_failure_threshold() -> u8 { 3 }
 fn default_breaker_open_secs() -> u64 { 300 }
 fn default_max_cache() -> usize { 32 }
 fn default_network_failure_threshold() -> u8 { 5 }
+fn default_cache_ttl() -> u64 { 120 }
+fn default_tick_ms() -> u64 { 100 }
 
 // ── Loader ─────────────────────────────────────────────────────────────────────
 
