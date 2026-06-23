@@ -7,6 +7,7 @@ set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
@@ -82,6 +83,8 @@ $SENSING_BIN \
     --ui-path "$UI_DIR" \
     --bind-addr 0.0.0.0 \
     --source auto \
+    --config wces.config.toml \
+    --data-dir rust-server \
     > /tmp/wces-server.log 2>&1 &
 
 SERVER_PID=$!

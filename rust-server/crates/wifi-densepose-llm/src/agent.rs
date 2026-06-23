@@ -48,20 +48,26 @@ pub struct MedicalAgent {
 
 impl MedicalAgent {
     /// Create a medical agent using the cloud LLM path (requires `agent` feature).
+    /// Uses default paths relative to CWD (for backwards compatibility).
     #[cfg(feature = "agent")]
     pub fn new(gateway: LlmGateway) -> Self {
-        Self::new_with_degradation(gateway, DegradationConfig::default())
+        Self::new_with_degradation(gateway, DegradationConfig::default(), "data/prompts", "data/medical_knowledge.json")
     }
 
     #[cfg(feature = "agent")]
-    pub fn new_with_degradation(gateway: LlmGateway, degradation_config: DegradationConfig) -> Self {
-        let prompt_compiler = PromptCompiler::from_dir("data/prompts").unwrap_or_default();
+    pub fn new_with_degradation(
+        gateway: LlmGateway,
+        degradation_config: DegradationConfig,
+        prompts_dir: &str,
+        medical_kb_path: &str,
+    ) -> Self {
+        let prompt_compiler = PromptCompiler::from_dir(prompts_dir).unwrap_or_default();
 
         Self {
             router: AnalysisRouter,
             degradation: DegradationManager::with_config(degradation_config),
             template_engine: TemplateEngine::new(),
-            cached_medical_kb: MedicalKnowledgeBase::load("data/medical_knowledge.json").ok(),
+            cached_medical_kb: MedicalKnowledgeBase::load(medical_kb_path).ok(),
             prompt_compiler,
             gateway: Some(gateway),
             validator: OutputValidator::new(),
@@ -81,14 +87,22 @@ impl MedicalAgent {
     }
 
     /// Create a template-only agent. Works with any feature flag combination.
+    /// Uses a CWD-relative path for the medical KB (backwards compatibility).
     pub fn new_template_only() -> Self {
+        Self::new_template_only_with_path("data/medical_knowledge.json")
+    }
+
+    /// Create a template-only agent with explicit medical knowledge base path.
+    /// Prefer this over `new_template_only()` when a resolved data directory is
+    /// available — avoids silent KB load failure when CWD ≠ project root.
+    pub fn new_template_only_with_path(medical_kb_path: &str) -> Self {
         #[cfg(feature = "agent")]
         {
             Self {
                 router: AnalysisRouter,
                 degradation: DegradationManager::new(),
                 template_engine: TemplateEngine::new(),
-                cached_medical_kb: MedicalKnowledgeBase::load("data/medical_knowledge.json").ok(),
+                cached_medical_kb: MedicalKnowledgeBase::load(medical_kb_path).ok(),
                 prompt_compiler: PromptCompiler::default(),
                 gateway: None,
                 validator: OutputValidator::new(),
@@ -101,7 +115,7 @@ impl MedicalAgent {
                 router: AnalysisRouter,
                 degradation: DegradationManager::new(),
                 template_engine: TemplateEngine::new(),
-                cached_medical_kb: MedicalKnowledgeBase::load("data/medical_knowledge.json").ok(),
+                cached_medical_kb: MedicalKnowledgeBase::load(medical_kb_path).ok(),
             }
         }
     }

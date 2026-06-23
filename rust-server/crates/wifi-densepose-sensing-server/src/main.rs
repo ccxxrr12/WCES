@@ -84,12 +84,18 @@ struct Args {
     #[arg(long, default_value = "../../ui")]
     ui_path: PathBuf,
 
+    /// Base directory for data files (models, recordings, patients, knowledge bases).
+    /// Default: auto-detect by walking up from the binary to find a `data/` directory,
+    /// falling back to "." (CWD) if detection fails.
+    #[arg(long, default_value = ".")]
+    data_dir: PathBuf,
+
     /// Tick interval in milliseconds (default 100 ms = 10 fps for smooth pose animation)
     #[arg(long, default_value = "100")]
     tick_ms: u64,
 
-    /// Bind address (default 127.0.0.1; set to 0.0.0.0 for network access)
-    #[arg(long, default_value = "127.0.0.1", env = "SENSING_BIND_ADDR")]
+    /// Bind address (default 0.0.0.0 for network access; set to 127.0.0.1 for local-only)
+    #[arg(long, default_value = "0.0.0.0", env = "SENSING_BIND_ADDR")]
     bind_addr: String,
 
     /// Data source: auto, wifi, esp32, simulate
@@ -161,8 +167,46 @@ struct Args {
     config: Option<PathBuf>,
 }
 
+/// Walk up from the current executable's location to find a directory
+/// that contains a `data/` subdirectory. Falls back to CWD if detection fails.
+fn detect_data_dir() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(std::path::Path::to_path_buf);
+        // Walk up at most 8 levels to avoid infinite loops on weird filesystems.
+        for _ in 0..8 {
+            if let Some(ref d) = dir {
+                if d.join("data").is_dir() {
+                    return d.clone();
+                }
+                dir = d.parent().map(std::path::Path::to_path_buf);
+            } else {
+                break;
+            }
+        }
+    }
+    // Fallback: use CWD (works for `cargo run` from rust-server/)
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if cwd.join("data").is_dir() {
+        return cwd;
+    }
+    // Check parent of CWD (e.g. when running from /opt/WCES/)
+    if let Some(parent) = cwd.parent() {
+        if parent.join("data").is_dir() {
+            return parent.to_path_buf();
+        }
+        // Check parent/rust-server/data (e.g. when running from /opt/WCES/)
+        let rs = parent.join("rust-server");
+        if rs.join("data").is_dir() {
+            return rs;
+        }
+    }
+    cwd
+}
+
 /// Shared application state
 pub(crate) struct AppStateInner {
+    /// Resolved base directory for data files (models, recordings, patients, KBs).
+    data_dir: PathBuf,
     latest_update: Option<SensingUpdate>,
     rssi_history: VecDeque<f64>,
     /// Circular buffer of recent CSI amplitude vectors for temporal analysis.
@@ -323,6 +367,15 @@ async fn main() {
         .init();
 
     let args = Args::parse();
+
+    // Resolve effective data directory: explicit --data-dir takes precedence,
+    // otherwise auto-detect from binary location or CWD.
+    let data_dir = if args.data_dir.as_os_str() != "." {
+        args.data_dir.clone()
+    } else {
+        detect_data_dir()
+    };
+    info!("Data directory: {}", data_dir.display());
 
     // ── Load unified config file ────────────────────────────────────────────
     let config = {
@@ -870,21 +923,28 @@ async fn main() {
     }
 
     // Ensure data directories exist for models, recordings, and LLM data
-    let _ = std::fs::create_dir_all("data/models");
-    let _ = std::fs::create_dir_all("data/recordings");
-    let _ = std::fs::create_dir_all("data/patients");
+    let _ = std::fs::create_dir_all(data_dir.join("data/models"));
+    let _ = std::fs::create_dir_all(data_dir.join("data/recordings"));
+    let _ = std::fs::create_dir_all(data_dir.join("data/patients"));
 
     // Initialize LLM analysis engine (template-only mode — no model needed)
     let llm_engine = {
-        let kb_path = if std::path::Path::new("crates/wifi-densepose-llm/data/medical_knowledge.json").exists() {
-            "crates/wifi-densepose-llm/data/medical_knowledge.json"
-        } else if std::path::Path::new("data/medical_knowledge.json").exists() {
-            "data/medical_knowledge.json"
-        } else {
-            warn!("Medical knowledge base not found, LLM engine disabled");
-            "data/medical_knowledge.json" // LlmAnalysisEngine will handle the error
-        };
-        match LlmAnalysisEngine::new_with_paths("data/patients", kb_path).await {
+        // Search for medical knowledge base: data dir first, then legacy crate path
+        let kb_candidates = [
+            data_dir.join("data/medical_knowledge.json"),
+            data_dir.join("crates/wifi-densepose-llm/data/medical_knowledge.json"),
+        ];
+        let kb_path = kb_candidates.iter()
+            .find(|p| p.exists())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| {
+                warn!("Medical knowledge base not found, LLM engine disabled");
+                data_dir.join("data/medical_knowledge.json").to_string_lossy().to_string()
+            });
+        match LlmAnalysisEngine::new_with_paths(
+            data_dir.join("data/patients").to_string_lossy().as_ref(),
+            &kb_path,
+        ).await {
             Ok(engine) => {
                 info!("LLM Analysis Engine initialized (template-only mode)");
                 Some(std::sync::Arc::new(engine))
@@ -904,25 +964,28 @@ async fn main() {
                 if p.is_empty() { None } else { Some(p) }
             });
 
-        let candidates: Vec<String> = if let Some(cp) = config_path {
-            vec![cp.to_string(), format!("crates/wifi-densepose-llm/{cp}")]
+        let candidates: Vec<PathBuf> = if let Some(cp) = config_path {
+            vec![
+                data_dir.join(cp),
+                data_dir.join(format!("crates/wifi-densepose-llm/{cp}")),
+            ]
         } else {
             vec![
-                "crates/wifi-densepose-llm/data/agent_kb.json".to_string(),
-                "data/agent_kb.json".to_string(),
+                data_dir.join("crates/wifi-densepose-llm/data/agent_kb.json"),
+                data_dir.join("data/agent_kb.json"),
             ]
         };
 
-        let resolved = candidates.iter().find(|p| std::path::Path::new(p.as_str()).exists())
+        let resolved = candidates.iter().find(|p| p.exists())
             .cloned()
             .unwrap_or_else(|| {
                 warn!("Agent knowledge base not found, using empty KB");
                 candidates[0].clone()
             });
 
-        match MedicalKb::load(&resolved) {
+        match MedicalKb::load(&resolved.to_string_lossy()) {
             Ok(kb) => {
-                info!("Medical Agent KB loaded from {resolved}: {} entries", kb.entry_count());
+                info!("Medical Agent KB loaded from {}: {} entries", resolved.display(), kb.entry_count());
                 kb
             }
             Err(e) => {
@@ -934,6 +997,19 @@ async fn main() {
 
     // Initialize MedicalAgent — config file values take precedence, env vars as fallback
     let medical_agent = {
+        // Resolve the medical knowledge base path using the same two-candidate
+        // search as the LLM engine — prevents silent KB load failure when the
+        // file only exists in the crate directory (common in dev environments).
+        let kb_candidates = [
+            data_dir.join("data/medical_knowledge.json"),
+            data_dir.join("crates/wifi-densepose-llm/data/medical_knowledge.json"),
+        ];
+        let agent_kb_path = kb_candidates.iter()
+            .find(|p| p.exists())
+            .cloned()
+            .unwrap_or_else(|| data_dir.join("data/medical_knowledge.json"));
+        let agent_kb_str = agent_kb_path.to_string_lossy().to_string();
+
         let (agent_enabled, agent_mode) = config.as_ref()
             .map(|c| (c.server.agent.enabled, c.server.agent.mode.clone()))
             .unwrap_or((true, "agent".to_string()));
@@ -952,7 +1028,7 @@ async fn main() {
         if !agent_enabled || agent_mode == "template-only" {
             info!("Medical Agent: {} (mode={agent_mode})",
                   if !agent_enabled { "disabled" } else { "template-only" });
-            MedicalAgent::new_template_only()
+            MedicalAgent::new_template_only_with_path(&agent_kb_str)
         } else {
             let gw = config.as_ref().map(|c| &c.server.agent.gateway);
             let cb = config.as_ref().map(|c| &c.server.agent.circuit_breaker);
@@ -971,7 +1047,7 @@ async fn main() {
 
             if api_key.is_empty() {
                 info!("No API key configured, Medical Agent starting in template-only mode");
-                MedicalAgent::new_template_only()
+                MedicalAgent::new_template_only_with_path(&agent_kb_str)
             } else {
                 let gateway_config = GatewayConfig {
                     endpoint,
@@ -986,11 +1062,17 @@ async fn main() {
                 match LlmGateway::new(gateway_config) {
                     Ok(gateway) => {
                         info!("Medical Agent initialized with LLM gateway (model: {model})");
-                        MedicalAgent::new_with_degradation(gateway, degradation_config)
+                        let prompts_dir = data_dir.join("data/prompts");
+                        MedicalAgent::new_with_degradation(
+                            gateway,
+                            degradation_config,
+                            &prompts_dir.to_string_lossy(),
+                            &agent_kb_str,
+                        )
                     }
                     Err(e) => {
                         warn!("Failed to create LLM gateway: {e}, falling back to template-only");
-                        MedicalAgent::new_template_only()
+                        MedicalAgent::new_template_only_with_path(&agent_kb_str)
                     }
                 }
             }
@@ -998,12 +1080,13 @@ async fn main() {
     };
 
     // Discover model and recording files on startup
-    let initial_models = handlers::model_routes::scan_model_files();
-    let initial_recordings = handlers::recording_routes::scan_recording_files();
+    let initial_models = handlers::model_routes::scan_model_files(&data_dir);
+    let initial_recordings = handlers::recording_routes::scan_recording_files(&data_dir);
     info!("Discovered {} model files, {} recording files", initial_models.len(), initial_recordings.len());
 
     let (tx, _) = broadcast::channel::<String>(256);
     let state: SharedState = Arc::new(RwLock::new(AppStateInner {
+        data_dir: data_dir.clone(),
         latest_update: None,
         rssi_history: VecDeque::new(),
         frame_history: VecDeque::new(),
@@ -1050,7 +1133,7 @@ async fn main() {
         // Training
         training_status: "idle".to_string(),
         training_config: None,
-        adaptive_model: adaptive_classifier::AdaptiveModel::load(&adaptive_classifier::model_path()).ok().map(|m| {
+        adaptive_model: adaptive_classifier::AdaptiveModel::load(&adaptive_classifier::model_path(&data_dir)).ok().map(|m| {
             info!("Loaded adaptive classifier: {} frames, {:.1}% accuracy",
                   m.trained_frames, m.training_accuracy * 100.0);
             m
@@ -1222,6 +1305,21 @@ async fn main() {
                 }
             }
         });
+    }
+
+    // ADR-050: If WCES_API_KEY env var is not set but the config file has
+    // server.api_key, set the env var so the auth middleware picks it up.
+    // This fixes the dead-end where operators configure api_key in the TOML
+    // but the middleware only reads the environment variable.
+    if std::env::var("WCES_API_KEY").is_err() {
+        if let Some(ref cfg) = config {
+            if let Some(ref key) = cfg.server.api_key {
+                if !key.is_empty() {
+                    std::env::set_var("WCES_API_KEY", key);
+                    info!("WCES_API_KEY set from config file (server.api_key)");
+                }
+            }
+        }
     }
 
     // ADR-050: Parse bind address once, use for all listeners

@@ -87,7 +87,7 @@ fn subcarrier_stats(amps: &[f64]) -> (f64, f64, f64, f64, f64, f64, f64, f64) {
 
     // IQR (inter-quartile range).
     let mut sorted = amps.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.total_cmp(b));
     let q1 = sorted[sorted.len() / 4];
     let q3 = sorted[3 * sorted.len() / 4];
     let iqr = q3 - q1;
@@ -180,9 +180,9 @@ impl AdaptiveModel {
             probs[c] = ((logits[c] - max_logit).exp()) / exp_sum;
         }
 
-        // Pick argmax.
+        // Pick argmax (NaN-safe via total_cmp).
         let (best_c, best_p) = probs.iter().enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .max_by(|a, b| a.1.total_cmp(b.1))
             .unwrap();
         let label = if best_c < CLASSES.len() { CLASSES[best_c] } else { "present_still" };
         (label, *best_p)
@@ -413,7 +413,7 @@ pub fn train_from_recordings(recordings_dir: &Path) -> Result<AdaptiveModel, Str
             }
         }
         let pred = logits.iter().enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .max_by(|a, b| a.1.total_cmp(b.1))
             .unwrap().0;
         if pred == *target { correct += 1; }
     }
@@ -433,7 +433,7 @@ pub fn train_from_recordings(recordings_dir: &Path) -> Result<AdaptiveModel, Str
             }
         }
         let pred = logits.iter().enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .max_by(|a, b| a.1.total_cmp(b.1))
             .unwrap().0;
         if pred == *target { class_correct[*target] += 1; }
     }
@@ -454,7 +454,7 @@ pub fn train_from_recordings(recordings_dir: &Path) -> Result<AdaptiveModel, Str
     })
 }
 
-/// Default path for the saved adaptive model.
-pub fn model_path() -> PathBuf {
-    PathBuf::from("data/adaptive_model.json")
+/// Default path for the saved adaptive model, relative to the data directory.
+pub fn model_path(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("data/adaptive_model.json")
 }

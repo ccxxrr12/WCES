@@ -1,20 +1,66 @@
 //! Recording route handlers (list, start, stop, delete CSI recordings).
 
-use std::path::PathBuf;
-
 use axum::extract::{Path, State};
 use axum::response::Json;
 use tokio::sync::broadcast;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 
 use crate::SharedState;
 use super::path_util::sanitize_path_segment;
 
+// ── Panic safety guard ───────────────────────────────────────────────────────
+
+/// Cleans up recording state on drop — safety net for writer task panics.
+/// If the writer task panics before normal cleanup, this guard ensures
+/// `recording_active` is not left permanently stuck at `true`.
+///
+/// IMPORTANT: Drop must be safe to run during panic unwind — no heap
+/// allocation (serde_json::json!), no lock-acquiring macros (tracing::warn!),
+/// only direct field assignments and eprintln for diagnostics.
+struct RecordingGuard {
+    state: SharedState,
+    rec_id: String,
+    should_cleanup: bool,
+}
+
+impl Drop for RecordingGuard {
+    fn drop(&mut self) {
+        if !self.should_cleanup {
+            return;
+        }
+        // Use try_write since we might be in a panic unwind context.
+        if let Ok(mut s) = self.state.try_write() {
+            if s.recording_current_id.as_deref() == Some(&self.rec_id) {
+                s.recording_active = false;
+                s.recording_start_time = None;
+                s.recording_current_id = None;
+                s.recording_stop_tx = None;
+                for rec in s.recordings.iter_mut() {
+                    if rec.get("id").and_then(|v| v.as_str()) == Some(self.rec_id.as_str()) {
+                        rec["status"] = serde_json::Value::String("failed".into());
+                        rec["error"] = serde_json::Value::String("writer task panicked".into());
+                    }
+                }
+                // eprintln is async-signal-safe; tracing::warn! is NOT safe during unwind
+                eprintln!("[WCES] Recording {}: writer task terminated unexpectedly, recording_active cleared", self.rec_id);
+            }
+        } else {
+            // try_write failed — another task holds the lock. We can't block
+            // (might be in unwind), so we rely on the operator noticing the
+            // stuck recording_active via /api/v1/recording/list.
+            eprintln!("[WCES] Recording {}: panic guard could not acquire write lock — recording_active may be stuck", self.rec_id);
+        }
+    }
+}
+
 // ── Recording Endpoints ─────────────────────────────────────────────────────
 
 /// GET /api/v1/recording/list —list CSI recordings.
-pub(crate) async fn list_recordings() -> Json<serde_json::Value> {
-    let recordings = scan_recording_files();
+pub(crate) async fn list_recordings(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let data_dir = state.read().await.data_dir.clone();
+    let recordings = scan_recording_files(&data_dir);
     Json(serde_json::json!({ "recordings": recordings }))
 }
 
@@ -23,32 +69,49 @@ pub(crate) async fn start_recording(
     State(state): State<SharedState>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let mut s = state.write().await;
-    if s.recording_active {
-        return Json(serde_json::json!({
-            "error": "recording already in progress",
-            "success": false,
-            "recording_id": s.recording_current_id,
-        }));
-    }
-    let id = body.get("id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            format!("rec_{}", chrono_timestamp())
-        });
+    // ═══════════════════════════════════════════════════════════════════════
+    // Block 1: validate request and build file path under read lock.
+    // All operations are reads — write lock deferred to Block 2.
+    // Does NOT subscribe to broadcast yet — that happens after
+    // recording_active is committed, so pre-start frames are not captured.
+    // ═══════════════════════════════════════════════════════════════════════
+    let (rec_path, id) = {
+        let s = state.read().await;
+        if s.recording_active {
+            return Json(serde_json::json!({
+                "error": "recording already in progress",
+                "success": false,
+                "recording_id": s.recording_current_id,
+            }));
+        }
+        // Auto-generate ID with sub-second precision to avoid collisions
+        // from concurrent requests arriving in the same whole-second tick.
+        let id = body.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+                format!("rec_{}_{:03}", ts.as_secs(), ts.subsec_millis())
+            });
 
-    // Sanitize: prevent path traversal
-    let safe_id = match sanitize_path_segment(&id) {
-        Ok(s) => s,
-        Err(_) => return Json(serde_json::json!({
-            "error": "invalid recording id",
-            "success": false,
-        })),
+        let safe_id = match sanitize_path_segment(&id) {
+            Ok(s) => s,
+            Err(_) => return Json(serde_json::json!({
+                "error": "invalid recording id",
+                "success": false,
+            })),
+        };
+
+        let rec_path = s.data_dir.join("data/recordings").join(format!("{}.jsonl", safe_id));
+        drop(s); // release read lock
+        (rec_path, id)
     };
 
-    // Create the recording file
-    let rec_path = PathBuf::from("data/recordings").join(format!("{}.jsonl", safe_id));
+    // ═══════════════════════════════════════════════════════════════════════
+    // Block 1.5: blocking filesystem I/O outside any lock.
+    // ═══════════════════════════════════════════════════════════════════════
     let file = match std::fs::File::create(&rec_path) {
         Ok(f) => f,
         Err(e) => {
@@ -60,36 +123,62 @@ pub(crate) async fn start_recording(
         }
     };
 
-    // Create a stop signal channel
-    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
-    s.recording_active = true;
-    s.recording_start_time = Some(std::time::Instant::now());
-    s.recording_current_id = Some(id.clone());
-    s.recording_stop_tx = Some(stop_tx);
+    // ═══════════════════════════════════════════════════════════════════════
+    // Block 2: atomically commit all state changes under ONE write lock.
+    // Re-check + subscribe + push entry + set recording_active + stop channel
+    // all happen together — stop_recording always sees a consistent view.
+    // ═══════════════════════════════════════════════════════════════════════
+    let (rec_id, mut stop_rx, mut rx) = {
+        let mut s = state.write().await;
+        // Re-check: another request may have started a recording during I/O.
+        if s.recording_active {
+            let _ = std::fs::remove_file(&rec_path);
+            return Json(serde_json::json!({
+                "error": "recording already in progress",
+                "success": false,
+                "recording_id": s.recording_current_id,
+            }));
+        }
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        // Subscribe AFTER we're about to commit — no pre-start frames leak in.
+        let rx = s.tx.subscribe();
+        s.recording_active = true;
+        s.recording_start_time = Some(std::time::Instant::now());
+        s.recording_current_id = Some(id.clone());
+        s.recording_stop_tx = Some(stop_tx);
+        // Push entry atomically — stops TOCTOU race with stop_recording.
+        s.recordings.push(serde_json::json!({
+            "id": id.clone(),
+            "path": rec_path.display().to_string(),
+            "status": "recording",
+            "started_at": chrono_timestamp(),
+            "frames": 0,
+        }));
+        let rec_id = id;
+        drop(s); // Release lock immediately — don't block other handlers.
+        (rec_id, stop_rx, rx)
+    };
 
-    // Subscribe to the broadcast channel to capture CSI frames
-    let mut rx = s.tx.subscribe();
-
-    // Add initial recording entry
-    s.recordings.push(serde_json::json!({
-        "id": id,
-        "path": rec_path.display().to_string(),
-        "status": "recording",
-        "started_at": chrono_timestamp(),
-        "frames": 0,
-    }));
-
-    let rec_id = id.clone();
-
-    // Clone SharedState for the writer task to update on error.
     let writer_state = state.clone();
 
-    // Spawn writer task in background
+    // Clone rec_id for the response — the original is moved into the spawn.
+    let rec_id_response = rec_id.clone();
+
+    // Spawn writer task with RecordingGuard for panic safety.
     tokio::spawn(async move {
         use std::io::Write;
         let mut writer = std::io::BufWriter::new(file);
         let mut frame_count: u64 = 0;
         let mut write_error: Option<String> = None;
+
+        // Panic safety net: if this task panics, the guard cleans up
+        // recording_active so the system can recover without a restart.
+        let mut guard = RecordingGuard {
+            state: writer_state.clone(),
+            rec_id: rec_id.clone(),
+            should_cleanup: true,
+        };
+
         loop {
             tokio::select! {
                 result = rx.recv() => {
@@ -101,7 +190,6 @@ pub(crate) async fn start_recording(
                                 break;
                             }
                             frame_count += 1;
-                            // Flush every 100 frames
                             if frame_count % 100 == 0 {
                                 let _ = writer.flush();
                             }
@@ -115,43 +203,57 @@ pub(crate) async fn start_recording(
                         }
                     }
                 }
-                _ = stop_rx.changed() => {
-                    if *stop_rx.borrow() {
-                        info!("Recording {rec_id}: stop signal received ({frame_count} frames)");
-                        break;
+                result = stop_rx.changed() => {
+                    match result {
+                        Ok(()) => {
+                            if *stop_rx.borrow() {
+                                info!("Recording {rec_id}: stop signal received ({frame_count} frames)");
+                                break;
+                            }
+                        }
+                        Err(_closed) => {
+                            // Sender dropped without sending — treat as stop.
+                            info!("Recording {rec_id}: stop channel closed ({frame_count} frames)");
+                            break;
+                        }
                     }
                 }
             }
         }
         let _ = writer.flush();
 
-        // If writer errored, mark the recording as failed in shared state
-        // so that stop_recording returns accurate status instead of silently
-        // reporting "completed" for a truncated file.
-        if let Some(ref err_msg) = write_error {
-            if let Ok(mut s) = writer_state.write().await {
-                if s.recording_active && s.recording_current_id.as_deref() == Some(&rec_id) {
-                    s.recording_active = false;
-                    s.recording_start_time = None;
-                    s.recording_current_id = None;
-                    s.recording_stop_tx = None;
-                    for rec in s.recordings.iter_mut() {
-                        if rec.get("id").and_then(|v| v.as_str()) == Some(rec_id.as_str()) {
-                            rec["status"] = serde_json::json!("failed");
-                            rec["error"] = serde_json::json!(err_msg);
-                            rec["frames"] = serde_json::json!(frame_count);
-                        }
+        // ── Always update recording entry and clean up active state ─────────
+        {
+            let mut s = writer_state.write().await;
+            for rec in s.recordings.iter_mut() {
+                if rec.get("id").and_then(|v| v.as_str()) == Some(rec_id.as_str()) {
+                    rec["frames"] = serde_json::json!(frame_count);
+                    if let Some(ref err_msg) = write_error {
+                        rec["status"] = serde_json::json!("failed");
+                        rec["error"] = serde_json::json!(err_msg);
                     }
                 }
             }
+            // Always reset active-recording fields so the system can recover
+            // without a manual restart — covers broadcast close, stop signal,
+            // and future exit paths that don't go through stop_recording.
+            if s.recording_current_id.as_deref() == Some(&rec_id) {
+                s.recording_active = false;
+                s.recording_start_time = None;
+                s.recording_current_id = None;
+                s.recording_stop_tx = None;
+            }
         }
+
+        // Normal exit — disarm the panic guard.
+        guard.should_cleanup = false;
 
         info!("Recording {rec_id} finished: {frame_count} frames written{}",
               if write_error.is_some() { " (with errors)" } else { "" });
     });
 
-    info!("Recording started: {id}");
-    Json(serde_json::json!({ "success": true, "recording_id": id }))
+    info!("Recording started: {rec_id_response}");
+    Json(serde_json::json!({ "success": true, "recording_id": rec_id_response }))
 }
 
 /// POST /api/v1/recording/stop —stop recording CSI data.
@@ -204,28 +306,51 @@ pub(crate) async fn delete_recording(
         Ok(s) => s,
         Err(_) => return Json(serde_json::json!({ "error": "invalid recording id", "success": false })),
     };
-    let path = PathBuf::from("data/recordings").join(format!("{}.jsonl", safe_id));
+
+    let data_dir = state.read().await.data_dir.clone();
+    let path = data_dir.join("data/recordings").join(format!("{}.jsonl", safe_id));
+
+    // Atomically check active guard + remove from in-memory state under write lock.
+    // File I/O (remove_file) happens outside the lock.
+    {
+        let mut s = state.write().await;
+        // Reject if this recording is currently active — deleting an in-progress
+        // recording's file while the writer task holds an open fd causes orphaned
+        // writes (Linux) or delete failure (Windows), and leaves stale state.
+        if s.recording_active && s.recording_current_id.as_deref() == Some(&safe_id) {
+            return Json(serde_json::json!({
+                "error": "cannot delete an active recording; stop it first",
+                "success": false,
+            }));
+        }
+        // Remove from in-memory list under the same lock.
+        let existed = s.recordings.iter().any(|r| {
+            r.get("id").and_then(|v| v.as_str()) == Some(safe_id)
+        });
+        if !existed && !path.exists() {
+            return Json(serde_json::json!({ "error": "recording not found", "success": false }));
+        }
+        s.recordings.retain(|r| {
+            r.get("id").and_then(|v| v.as_str()) != Some(safe_id)
+        });
+    }
+
+    // File I/O outside any lock
     if path.exists() {
         if let Err(e) = std::fs::remove_file(&path) {
             warn!("Failed to delete recording {:?}: {}", path, e);
             return Json(serde_json::json!({ "error": format!("delete failed: {e}"), "success": false }));
         }
-        let mut s = state.write().await;
-        s.recordings.retain(|r| {
-            r.get("id").and_then(|v| v.as_str()) != Some(safe_id)
-        });
-        info!("Recording deleted: {safe_id}");
-        Json(serde_json::json!({ "success": true, "deleted": safe_id }))
-    } else {
-        Json(serde_json::json!({ "error": "recording not found", "success": false }))
     }
+    info!("Recording deleted: {safe_id}");
+    Json(serde_json::json!({ "success": true, "deleted": safe_id }))
 }
 
 // ── Scanner helpers ─────────────────────────────────────────────────────────
 
-/// Scan `data/recordings/` for `.jsonl` files and return metadata.
-pub(crate) fn scan_recording_files() -> Vec<serde_json::Value> {
-    let dir = PathBuf::from("data/recordings");
+/// Scan `{data_dir}/data/recordings/` for `.jsonl` files and return metadata.
+pub(crate) fn scan_recording_files(data_dir: &std::path::Path) -> Vec<serde_json::Value> {
+    let dir = data_dir.join("data/recordings");
     let mut recordings = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {

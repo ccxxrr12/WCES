@@ -14,7 +14,8 @@ use super::path_util::sanitize_path_segment;
 /// GET /api/v1/models —list discovered RVF model files.
 pub(crate) async fn list_models(State(state): State<SharedState>) -> Json<serde_json::Value> {
     // Re-scan directory each call so newly-added files are visible.
-    let models = scan_model_files();
+    let data_dir = state.read().await.data_dir.clone();
+    let models = scan_model_files(&data_dir);
     let total = models.len();
     {
         let mut s = state.write().await;
@@ -78,7 +79,8 @@ pub(crate) async fn delete_model(
         Ok(s) => s,
         Err(_) => return Json(serde_json::json!({ "error": "invalid model id", "success": false })),
     };
-    let path = PathBuf::from("data/models").join(format!("{}.rvf", safe_id));
+    let data_dir = state.read().await.data_dir.clone();
+    let path = data_dir.join("data/models").join(format!("{}.rvf", safe_id));
     if path.exists() {
         if let Err(e) = std::fs::remove_file(&path) {
             warn!("Failed to delete model file {:?}: {}", path, e);
@@ -101,9 +103,11 @@ pub(crate) async fn delete_model(
 }
 
 /// GET /api/v1/models/lora/profiles —list LoRA adapter profiles.
-pub(crate) async fn list_lora_profiles() -> Json<serde_json::Value> {
-    // LoRA profiles are discovered from data/models/*.lora.json
-    let profiles = scan_lora_profiles();
+pub(crate) async fn list_lora_profiles(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let data_dir = state.read().await.data_dir.clone();
+    let profiles = scan_lora_profiles(&data_dir);
     Json(serde_json::json!({ "profiles": profiles }))
 }
 
@@ -125,9 +129,9 @@ pub(crate) async fn activate_lora_profile(
 
 // ── Scanner helpers ─────────────────────────────────────────────────────────
 
-/// Scan `data/models/` for `.rvf` files and return metadata.
-pub(crate) fn scan_model_files() -> Vec<serde_json::Value> {
-    let dir = PathBuf::from("data/models");
+/// Scan `{data_dir}/data/models/` for `.rvf` files and return metadata.
+pub(crate) fn scan_model_files(data_dir: &std::path::Path) -> Vec<serde_json::Value> {
+    let dir = data_dir.join("data/models");
     let mut models = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -157,9 +161,9 @@ pub(crate) fn scan_model_files() -> Vec<serde_json::Value> {
     models
 }
 
-/// Scan `data/models/` for `.lora.json` LoRA profile files.
-pub(crate) fn scan_lora_profiles() -> Vec<serde_json::Value> {
-    let dir = PathBuf::from("data/models");
+/// Scan `{data_dir}/data/models/` for `.lora.json` LoRA profile files.
+pub(crate) fn scan_lora_profiles(data_dir: &std::path::Path) -> Vec<serde_json::Value> {
+    let dir = data_dir.join("data/models");
     let mut profiles = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {

@@ -247,7 +247,7 @@
 <script>
 (function(){
     const $ = s => document.querySelector(s);
-    const API = location.hostname + ':' + (location.port || 8080);
+    const API = `${location.protocol}//${location.hostname}:${location.port || 8080}`;
 
     /* ── Theme ── */
     const saved = localStorage.getItem('wces-theme');
@@ -273,7 +273,7 @@
 
         // HTTP health check
         try {
-            const r = await fetch(`http://${API}/health`, {signal: AbortSignal.timeout(3000)});
+            const r = await fetch(`${API}/health`, {signal: AbortSignal.timeout(3000)});
             if (r.ok) {
                 httpOk = true;
                 setDot($('#httpDot'), true);
@@ -289,7 +289,7 @@
 
         // Metrics check
         try {
-            const r = await fetch(`http://${API}/api/v1/metrics`, {signal: AbortSignal.timeout(3000)});
+            const r = await fetch(`${API}/api/v1/metrics`, {signal: AbortSignal.timeout(3000)});
             if (r.ok) {
                 const j = await r.json();
                 $('#fpsStatus').textContent = (j.fps || 0) + ' fps';

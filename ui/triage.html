@@ -914,7 +914,7 @@ function renderFromServer(){
             newSurvivorHtml='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
         }else{
             newSurvivorHtml=latestTriage.survivors.map((s,idx)=>`
-                <div class="survivor-card ${escapeHtml(s.triage_color)}" onclick="openEhr(latestTriage.survivors[${idx}])">
+                <div class="survivor-card ${escapeHtml(s.triage_color)}" onclick="openEhrById('${escapeHtml(s.id)}')">
                     <div class="survivor-header">
                         <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(s.id.substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p></div></div>
                         <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
@@ -971,6 +971,10 @@ function renderFromServer(){
 // ═══════════════════════════════════════════════════════════
 // EHR SLIDE PANEL
 // ═══════════════════════════════════════════════════════════
+function openEhrById(id){
+    const surv=latestTriage?.survivors?.find(s=>s.id===id);
+    if(surv)openEhr(surv);
+}
 function openEhr(survivor){
     const panel=document.getElementById('ehrPanel'),overlay=document.getElementById('ehrOverlay');
     document.getElementById('ehrTitle').textContent='伤员: '+survivor.id;
@@ -1035,7 +1039,12 @@ function handleUpdate(data){
 }
 function connectWebSocket(){
     if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
-    const wsUrl=`ws://${location.hostname}:${location.port||8080}/ws/sensing`;
+    if(ws&&ws.readyState===WebSocket.CLOSING){
+        console.log('[TRIAGE] WS closing, waiting for close event');
+        return;
+    }
+    const wsProto=location.protocol==='https:'?'wss':'ws';
+    const wsUrl=`${wsProto}://${location.hostname}:${location.port||8080}/ws/sensing`;
     console.log('[TRIAGE] WS connecting to:',wsUrl);
     ws=new WebSocket(wsUrl);
     ws.onopen=()=>{
@@ -1068,7 +1077,7 @@ function connectWebSocket(){
             document.getElementById('statusText').textContent='连接失败 · 已达最大重试';
         }
     };
-    ws.onerror=(e)=>{console.error('[TRIAGE] WS error');document.getElementById('statusText').textContent='连接失败';ws.close();};
+    ws.onerror=()=>{console.error('[TRIAGE] WS error, readyState:',ws.readyState);document.getElementById('statusText').textContent='连接失败';};
 }
 
 // ═══════════════════════════════════════════════════════════

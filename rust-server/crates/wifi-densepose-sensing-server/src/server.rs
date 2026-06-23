@@ -107,7 +107,9 @@ pub(crate) async fn run_server(
         Ok(ws_listener) => {
             info!("WebSocket server listening on {ws_addr}");
             tokio::spawn(async move {
-                axum::serve(ws_listener, ws_app).await.unwrap();
+                if let Err(e) = axum::serve(ws_listener, ws_app).await {
+                    error!("WebSocket server error: {e} (WS still available on HTTP port)");
+                }
             });
         }
         Err(e) => {
@@ -118,12 +120,12 @@ pub(crate) async fn run_server(
 
     // ── HTTP server (serves UI + full DensePose-compatible REST API) ──────────
 
-    // UI files are served from project-root/ui/
-    let project_ui_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()   // wifi-densepose-sensing-server/
-        .parent().unwrap()   // crates/
-        .parent().unwrap()   // rust-server/
-        .join("ui");
+    // UI files are served from the path specified by --ui-path CLI arg.
+    // Canonicalize to resolve relative paths against the current working directory,
+    // falling back to the raw path if canonicalization fails (e.g. directory doesn't exist yet).
+    let project_ui_root = std::fs::canonicalize(&args.ui_path)
+        .unwrap_or_else(|_| args.ui_path.clone());
+    info!("  Serving UI from: {}", project_ui_root.display());
 
     let http_app = Router::new()
         .route("/", get(routes::info_page))

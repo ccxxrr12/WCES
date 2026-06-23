@@ -130,7 +130,7 @@ wifi-densepose-mat = { version = "0.3.0", path = "crates/wifi-densepose-mat" }
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 strip = true
 opt-level = 3
 

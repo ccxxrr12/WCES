@@ -252,7 +252,7 @@ endpoint = "https://api.deepseek.com/v1/chat/completions"
 # OpenAI:
 #   gpt-4o-mini  = 性价比高
 #   gpt-4o       = 能力强但贵
-model = "deepseek-v4-flash"
+model = "deepseek-v4-pro"
 
 # ── API 密钥 ──────────────────────────────────────────────────────────────────
 # ⚠️ 请填写你的密钥！留空则 Agent 自动降级为 template-only 模式

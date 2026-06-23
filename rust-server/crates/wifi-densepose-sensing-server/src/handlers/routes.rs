@@ -380,7 +380,8 @@ pub(crate) async fn train_stop(State(state): State<SharedState>) -> Json<serde_j
 
 /// POST /api/v1/adaptive/train —train the adaptive classifier from recordings.
 pub(crate) async fn adaptive_train(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    let rec_dir = PathBuf::from("data/recordings");
+    let data_dir = state.read().await.data_dir.clone();
+    let rec_dir = data_dir.join("data/recordings");
     eprintln!("=== Adaptive Classifier Training ===");
     match adaptive_classifier::train_from_recordings(&rec_dir) {
         Ok(model) => {
@@ -395,10 +396,11 @@ pub(crate) async fn adaptive_train(State(state): State<SharedState>) -> Json<ser
             }).collect();
 
             // Save to disk.
-            if let Err(e) = model.save(&adaptive_classifier::model_path()) {
+            let model_path = adaptive_classifier::model_path(&data_dir);
+            if let Err(e) = model.save(&model_path) {
                 warn!("Failed to save adaptive model: {e}");
             } else {
-                info!("Adaptive model saved to {}", adaptive_classifier::model_path().display());
+                info!("Adaptive model saved to {}", model_path.display());
             }
 
             // Load into runtime state.
