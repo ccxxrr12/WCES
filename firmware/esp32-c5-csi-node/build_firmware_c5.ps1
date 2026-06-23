@@ -6,9 +6,18 @@
 #   1. Verify RISC-V toolchain: dir C:\Espressif\tools\riscv32-esp-elf
 #   2. Verify C5 target:     idf.py --list-targets | findstr esp32c5
 #   3. Adjust $env:IDF_PATH below to match your installation.
+#   4. Run ..\..\apply-config.ps1 -NodeId <N> first to generate sdkconfig.defaults.
 #
-# Usage: .\build_firmware_c5.ps1
-#   Set $flash_port below to your C5 board's COM port to auto-flash after build.
+# Usage:
+#   .\build_firmware_c5.ps1 -FlashPort COM3          # Build & flash
+#   .\build_firmware_c5.ps1 -FlashPort COM3 -Clean   # Full rebuild & flash
+#   .\build_firmware_c5.ps1 -BuildOnly               # Build only, no flash
+
+param(
+    [string]$FlashPort = "",
+    [switch]$BuildOnly,
+    [switch]$Clean
+)
 
 # Remove MSYS environment variables that trigger ESP-IDF's MinGW rejection
 Remove-Item env:MSYSTEM -ErrorAction SilentlyContinue
@@ -29,10 +38,7 @@ $env:IDF_PYTHON_ENV_PATH = "C:\Espressif\tools\python\v5.5\venv"
 # Adjust the version number to match your installed toolchain.
 $env:PATH = "C:\Espressif\tools\riscv32-esp-elf\esp-14.2.0_20241119\riscv32-esp-elf\bin;C:\Espressif\tools\cmake\3.30.2\cmake-3.30.2-windows-x86_64\bin;C:\Espressif\tools\ninja\1.12.1;C:\Espressif\tools\ccache\4.10.2\ccache-4.10.2-windows-x86_64;C:\Espressif\tools\idf-exe\1.0.3;C:\Espressif\tools\python\v5.5\venv\Scripts;$env:PATH"
 
-# Set flash port (change to your C5 board's COM port)
-$flash_port = "COM7"
-
-# Firmware directory (relative to script location)
+# Firmware directory
 Set-Location $PSScriptRoot
 
 $python = "$env:IDF_PYTHON_ENV_PATH\Scripts\python.exe"
@@ -43,8 +49,10 @@ Write-Host "Target: esp32c5 (RISC-V 32-bit, WiFi 6)"
 Write-Host "IDF:    $env:IDF_PATH"
 Write-Host ""
 
-Write-Host "=== Cleaning stale build cache ==="
-& $python $idf fullclean
+if ($Clean) {
+    Write-Host "=== Cleaning stale build cache ==="
+    & $python $idf fullclean
+}
 
 Write-Host "=== Setting target to ESP32-C5 ==="
 & $python $idf set-target esp32c5
@@ -58,13 +66,16 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Binary: build\esp32-csi-node.bin"
     Write-Host ""
 
-    # Check if we can auto-detect the flash port
-    if ($flash_port) {
-        Write-Host "=== Flashing to $flash_port ==="
-        & $python $idf -p $flash_port flash
+    if ($BuildOnly) {
+        Write-Host "Build-only mode — skipping flash."
+        Write-Host "Flash manually: idf.py -p <COMx> flash"
+    } elseif ($FlashPort) {
+        Write-Host "=== Flashing to $FlashPort ==="
+        & $python $idf -p $FlashPort flash
     } else {
-        Write-Host "To flash: set `$flash_port and re-run, or use:"
-        Write-Host "  idf.py -p COMx flash"
+        Write-Host "No flash port specified. To flash:"
+        Write-Host "  .\build_firmware_c5.ps1 -FlashPort COMx"
+        Write-Host "  or: idf.py -p COMx flash"
     }
 } else {
     Write-Host ""
@@ -77,5 +88,6 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "     dir C:\Espressif\tools\riscv32-esp-elf"
     Write-Host "  3. Check esp32c5 is a supported target:"
     Write-Host "     idf.py --list-targets"
-    Write-Host "  4. See README.md for full compatibility notes"
+    Write-Host "  4. If sdkconfig not found, run: ..\..\apply-config.ps1 -NodeId N"
+    Write-Host "  5. See README.md for full compatibility notes"
 }

@@ -64,9 +64,10 @@ node_id = 1
 
 # ── WiFi 连接 ─────────────────────────────────────────────────────────────────
 # 竞赛现场路由器 SSID，所有 C5 节点 + RZ/G2L 连接同一个 AP
-wifi_ssid = "WCES"
+# ⚠️ 开发阶段连 "SC"，竞赛阶段改为 "WCES"
+wifi_ssid = "SC"
 # WiFi 密码，开放网络留空
-wifi_password = ""
+wifi_password = "0000000000"
 # 加密方式: OPEN | WPA2_PSK | WPA3_SAE
 wifi_auth = "OPEN"
 
@@ -79,7 +80,8 @@ csi_channel = 6
 csi_band = "AUTO"
 
 # ── UDP 发送目标 (RZ/G2L 主控的 IP 和端口) ──────────────────────────────────
-target_ip = "192.168.1.1"
+# ⚠️ 开发阶段: RZ/G2L WiFi IP，竞赛阶段改为静态 IP (如 192.168.1.100)
+target_ip = "10.144.178.195"
 target_port = 5005
 
 # ── 边缘预处理层级 ────────────────────────────────────────────────────────────
@@ -93,7 +95,8 @@ top_k_count = 8
 # 人体存在检测阈值，0=自适应校准
 presence_thresh = 0.0
 # 跌倒检测加速度阈值 (rad/s²)
-fall_thresh = 400.0
+# ⚠️ NVS 存储为 u16×1000，max=65.535，推荐 15.0 (正常行走 2-5 rad/s²)
+fall_thresh = 15.0
 # BPM 相位历史窗口帧数
 vital_window = 64
 # 电源占空比 (10-100%)，越低越省电但性能下降
@@ -371,7 +374,7 @@ tmp_temporal_logic_guard = true         # 时序逻辑守卫 (LTL约束验证)
 [deploy]
 
 # ── 瑞萨 RZ/G2L 目标 ──────────────────────────────────────────────────────────
-rz_ip = "192.168.1.1"                   # SSH 目标地址
+rz_ip = "10.144.178.195"              # SSH 目标地址 (开发阶段 WiFi IP)
 rz_user = "root"                        # SSH 用户名
 rz_project_root = "/opt/WCES"          # 项目根目录 (RZ/G2L 上)
 
