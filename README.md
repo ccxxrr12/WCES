@@ -1,8 +1,8 @@
-﻿# WCES — 基于WiFi CSI感知与端侧Agent的方舱生命体征感知与监护系统
+# WCES — 基于WiFi CSI感知与端侧Agent的方舱生命体征感知与监护系统
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + Medical Agent + 代码重构 + UI 全面优化 | main.rs 3868→1232 行（-68%），拆分为 30 个模块
+> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + Medical Agent + 代码重构 + UI 全面优化 | main.rs 3868→1331 行（-66%），拆分为 31 个模块
 
 ---
 
@@ -18,7 +18,7 @@
     ┌─────▼─────┐      ┌──────▼──────┐      ┌─────▼─────┐
     │ ESP32-C5  │      │ 瑞萨 RZ/G2L │      │ ESP32-C5  │
     │  节点 #2  │      │  (主控+AI)  │      │  节点 #3  │
-    │ .1.11     │      │  192.168.1.1│      │ .1.12     │
+    │ .1.11     │      │192.168.1.100│      │ .1.12     │
     └───────────┘      │             │      └───────────┘
                        │  7" HDMI 触屏│
     ┌─────▼─────┐      └─────────────┘
@@ -48,8 +48,8 @@ cd ..
 ./deploy.sh
 
 # 4. 浏览器打开仪表盘
-# http://192.168.1.1:8080/ui/triage.html    ← 分诊仪表盘
-# http://192.168.1.1:8080/                  ← 3D 可视化
+# http://192.168.1.100:8080/ui/triage.html    ← 分诊仪表盘
+# http://192.168.1.100:8080/                  ← 3D 可视化
 ```
 
 ### ⚡ 使用统一配置 (推荐)
@@ -121,7 +121,7 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
 
 | 功能 | 实现 | 状态 |
 |------|------|:--:|
-| WiFi CSI 采集 | ESP32-C5 固件 (WiFi 6, HT40 114子载波, 2.4/5GHz) | ✅ |
+| WiFi CSI 采集 | ESP32-C5 固件 (WiFi 6, HE40 484子载波, 2.4/5GHz) | ✅ |
 | 呼吸率检测 | FFT 频域分析 (0.1-0.5Hz → 6-30 BPM) | ✅ |
 | 心率检测 | 相位方差频谱 (0.8-2.0Hz → 40-120 BPM) | ✅ |
 | 人体存在检测 | CSI 振幅方差 + 自适应阈值 + 5帧消抖 | ✅ |
@@ -149,13 +149,13 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
 
 | 模块 | 功能 | 文件 |
 |------|------|------|
-| CSI 采集 | ESP-IDF `esp_wifi_set_csi_rx_cb()` 回调，WiFi 6 HT40 114子载波，2.4/5GHz 双频 | `csi_collector.c` |
+| CSI 采集 | ESP-IDF `esp_wifi_set_csi_rx_cb()` 回调，WiFi 6 HE40 484子载波，2.4/5GHz 双频 | `csi_collector.c` |
 | ADR-018 序列化 | 20 字节头 + IQ 数据对，Magic `0xC511_0001` | `csi_collector.c` |
 | UDP 发送 | lwIP socket → 主节点 UDP:5005，含 ENOMEM 退避保护 | `stream_sender.c` |
 | 通道跳跃 | 定时器驱动 ch1/6/11 多频段切换 | `csi_collector.c` |
 | 边缘预处理 | 子载波选择 + 幅度归一化 | `edge_processing.c` |
 | WASM 热加载 | 最多 4 个 WASM 模块 OTA 热加载 (ESP32 Tier 3 运行时) | `wasm_runtime.c` |
-| 竞赛配置 | `sdkconfig.defaults.competition` 专用 | 固件根目录 |
+| 竞赛配置 | 由 apply-config.ps1 生成 `sdkconfig.defaults` | 固件根目录 |
 
 ### 第 2 层：CSI 帧解析（服务端入口）
 
@@ -297,15 +297,15 @@ CSI 采集          UDP:5005 →
 ├── rust-server/
 │   ├── Cargo.toml                     ← Rust workspace (9 crates + 1 wasm32 独立编译)
 │   └── crates/
-│       ├── wifi-densepose-core/       ← 基础类型
-│       ├── wifi-densepose-signal/     ← CSI 信号处理
-│       ├── wifi-densepose-vitals/     ← 生命体征提取
-│       ├── wifi-densepose-hardware/   ← CSI 帧解析
-│       ├── wifi-densepose-llm/        ← Medical Agent 分析引擎 ⭐
-│       ├── wifi-densepose-nn/         ← ONNX 推理 (DensePose 3D 骨架)
-│       ├── wifi-densepose-mat/        ← 分诊系统 ⭐
+│       ├── wifi-densepose-core/       ← 基础类型 (2596行)
+│       ├── wifi-densepose-signal/     ← CSI 信号处理 (15176行)
+│       ├── wifi-densepose-vitals/     ← 生命体征提取 (1863行)
+│       ├── wifi-densepose-hardware/   ← CSI 帧解析 (4007行)
+│       ├── wifi-densepose-llm/        ← Medical Agent 分析引擎 ⭐ (5807行)
+│       ├── wifi-densepose-nn/         ← ONNX 推理 (DensePose 3D 骨架) (2959行)
+│       ├── wifi-densepose-mat/        ← 分诊系统 ⭐ (19614行)
 │       ├── wifi-densepose-sensing-server/ ← 主服务 (2026-05 重构模块化)
-│       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (1232行)
+│       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (1331行)
 │       │   ├── src/lib.rs                  ← crate 入口
 │       │   ├── src/types.rs                ← 数据类型 + 常量
 │       │   ├── src/signal_processing.rs    ← 14 个纯信号处理函数
@@ -315,8 +315,8 @@ CSI 采集          UDP:5005 →
 │       │   ├── src/vital_signs.rs          ← FFT 生命体征检测 (呼吸/心率)
 │       │   ├── src/mat_pipeline.rs         ← START 分诊 + 伤员追踪
 │       │   ├── src/edge_module_engine.rs   ← 19 边缘模块引擎
-│       │   ├── src/handlers/               ← 路由处理器 (ws/routes/model/recording/llm)
-│       │   ├── src/tasks/                  ← 后台任务 (udp_receiver/simulated_data/broadcast_tick)
+│       │   ├── src/handlers/               ← 路由处理器 (7 files: mod, ws, routes, model, recording, llm, path_util)
+│       │   ├── src/tasks/                  ← 后台任务 (4 files: mod, udp_receiver, simulated_data, broadcast_tick)
 │       │   ├── src/app_config.rs            ← 应用配置管理
 │       │   ├── src/rvf_container.rs        ← RVF 模型容器
 │       │   ├── src/rvf_pipeline.rs         ← RVF 推理管道
@@ -328,12 +328,10 @@ CSI 采集          UDP:5005 →
 │       │   ├── src/sparse_inference.rs     ← 稀疏推理
 │       │   ├── src/trainer.rs              ← 模型训练
 │       ├── wifi-densepose-wasm-edge/  ← WASM 边缘模块 (68 .rs, wasm32 独立编译, workspace 排除)
-│       └── wifi-densepose-config/     ← 系统配置 crate
+│       └── wifi-densepose-config/     ← 系统配置 namespace 占位 (deprecated, 配置在 app_config.rs)
 ├── ui/                                ← Web 可视化
 │   ├── index.html                     ← 统一入口门户页
-│   ├── triage.html                    ← 分诊仪表盘 (新版)
-│   ├── app.js                         ← UI 主应用
-│   ├── style.css                      ← 全局样式
+│   ├── triage.html                    ← 分诊仪表盘 (新版, 暗色/亮色主题)
 │   ├── lib/
 │   │   ├── three.min.js               ← Three.js r140 UMD (离线可用)
 │   │   └── OrbitControls.js           ← OrbitControls r140 UMD
@@ -342,7 +340,7 @@ CSI 采集          UDP:5005 →
 │   └── tests/                         ← 自动化测试
 ├── scripts/
 │   └── provision.py                   ← C5 烧录脚本 (固件内也有副本)
-└── docs/                              ← 竞赛设计文档
+└── docs/                              ← 竞赛设计文档 (21 个 .md 文件)
     ├── README_COMPETITION.md          ← 竞赛版 README
     ├── 项目全览.md                     ← 全项目技术全览
     ├── PROGRESS.md                    ← 构建进度 (实时更新)
@@ -361,6 +359,7 @@ CSI 采集          UDP:5005 →
     ├── 固件官方文档审计报告.md         ← 固件 vs 官方 API 审计
     ├── 目录审计报告.md                 ← 目录完整性审计
     ├── API_REFERENCE.md               ← WebSocket 数据接口文档
+    ├── 硬件部署与使用指南.md           ← 硬件部署完整指南
     └── triage-ui/
         ├── triage.html                ← 分诊仪表盘 (暗色/亮色主题, 热力图, 3D骨架, EHR面板)
         └── triage-v1.html             ← 旧版分诊仪表盘 (备份)
@@ -370,7 +369,7 @@ CSI 采集          UDP:5005 →
 
 ## 技术亮点
 
-- **WiFi 6 CSI**: ESP32-C5 484 子载波，4× 传统 S3 方案精度
+- **WiFi 6 CSI**: ESP32-C5 HE40 484 子载波，4× 传统 S3 方案精度
 - **Medical Agent**（已集成）: 云端 LLM 深度分析 + 本地模板降级 + 熔断保护，支持流式输出
 - **Rust 高性能**: 全异步 Tokio 运行时，零拷贝解析，比 Python 方案快数十倍
 - **START 分诊**: 标准战场分诊协议，自动伤员优先级评估
@@ -378,7 +377,7 @@ CSI 采集          UDP:5005 →
 - **全本地部署**: 核心信号处理+分诊全本地，数据不出方舱；Agent 分析可选云端 LLM 增强
 - **瑞萨 RZ/G2L SBC**: ARM64 边缘计算平台 (Cortex-A55 ×2 + M33, 1GB DDR4)
 - **模拟模式**: 无需硬件即可启动完整演示（`cargo run -- --source simulate`）
-- **代码质量**: 2026-05 完成大规模重构，消除锁竞态死锁隐患，写锁持有时间从 135 行压缩为两阶段锁，main.rs 拆分为 30 个模块文件
+- **代码质量**: 2026-05 完成大规模重构，消除锁竞态死锁隐患，写锁持有时间从 135 行压缩为两阶段锁，main.rs 拆分为 31 个模块文件
 
 ---
 
@@ -396,9 +395,10 @@ CSI 采集          UDP:5005 →
 | `docs/瑞萨 RZ_G2L 移植计划.md` | RZ/G2L 主控移植计划 |
 | `docs/端侧Agent开发计划.md` | Medical Agent 开发计划 |
 | `docs/端侧Agent技术文档.md` | Agent 架构/接口/技术文档 |
-| `docs/项目全览.md` | 全项目技术全览（本文档详细版） |
+| `docs/项目全览.md` | 全项目技术全览 |
 | `docs/API_REFERENCE.md` | WebSocket 数据接口完整文档 |
 | `docs/目录审计报告.md` | 目录完整性审计 |
+| `docs/硬件部署与使用指南.md` | 硬件部署完整指南 |
 | `docs/PROGRESS.md` | 构建进度追踪（实时更新） |
 
 ---

@@ -1,9 +1,13 @@
 ﻿#!/bin/bash
 # WCES — 竞赛一键部署脚本
 # 在瑞萨 RZ/G2L 上运行, 启动所有服务
-# 使用: ssh root@192.168.1.1 && cd /opt/WCES && ./deploy.sh
+# 使用: ssh root@<RZ_IP> && cd /opt/WCES && ./deploy.sh
+# RZ_IP 由 apply-config.ps1/sh 从 wces.config.toml [deploy] 段同步
 
 set -e
+
+# ⚠️ 以下配置由 apply-config.ps1/sh 从 wces.config.toml 自动同步。
+#    手动修改可能在下一次 apply-config 时被覆盖。
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -300,7 +300,7 @@ Current Vitals ───┘                                                     
 | `docs/竞赛准备清单.md` | 14.9KB | ✅ |
 | `docs/triage-ui/triage.html` | 14KB | ✅ 连接 `/ws/sensing` |
 | `deploy.sh` | 4.2KB | ✅ CLI 参数正确 |
-| `firmware/*/sdkconfig.defaults.competition` | 1.5KB | ✅ Kconfig 验证 |
+| `firmware/*/sdkconfig.defaults` | ~1.5KB | ✅ Kconfig 验证 (由 apply-config.ps1 生成) |
 | `rust-server/crates/wifi-densepose-sensing-server/src/mat_pipeline.rs` | 15.6KB | ✅ 纯分诊层 |
 
 ### 阶段2 (2026-05-09) — Cargo修复 + MAT集成
@@ -636,7 +636,7 @@ sensing-server/src/          重构前 → 重构后
 |---|------|------|------|
 | 26 | `VitalSignDetector` / `Esp32Frame` / `ModelLayer` 有不必要的 `#[allow(dead_code)]` | 移除（这些类型实际被使用） | 3× `.rs` |
 | 27 | `MI_UINT8`/`MI_UINT16` 常量被 `#[allow(dead_code)]` 抑制 | 移除标注 | `dataset.rs` |
-| 28 | `.gitignore` 未覆盖 NVS 二进制和竞赛密码文件 | 添加 `nvs_*.bin` + `sdkconfig.defaults.competition` | `.gitignore` |
+| 28 | `.gitignore` 未覆盖 NVS 二进制和竞赛密码文件 | 添加 `nvs_*.bin` + `sdkconfig.defaults` | `.gitignore` |
 | 29 | `triage.html` 使用绝对路径 `/ui/lib/` — 直接打开文件系统会 404 | 验证服务器有专用 `/ui/lib` 路由，通过 HTTP 访问正常，无需修复 | — |
 
 #### 固件 CSI API 专项核验

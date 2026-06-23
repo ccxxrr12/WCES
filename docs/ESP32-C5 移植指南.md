@@ -3,7 +3,7 @@
 ## ✅ 验证结论（2026-05-09 更新）
 
 **ESP32-C5 已确认支持 CSI！** 乐鑫官方 ESP-CSI 文档明确将 C5 列为 CSI 性能最强的芯片。
-**C5 固件已完整移植**，代码位于 `firmware/esp32-c5-csi-node/`，包含竞赛专用配置 `sdkconfig.defaults.competition`。
+**C5 固件已完整移植**，代码位于 `firmware/esp32-c5-csi-node/`，竞赛配置由 `apply-config.ps1` 生成 `sdkconfig.defaults`。
 
 ### 验证结果
 
@@ -235,7 +235,7 @@ idf.py fullclean
 idf.py set-target esp32c5
 
 # 应用竞赛配置文件
-cp sdkconfig.defaults.competition sdkconfig
+..\..\apply-config.ps1 -NodeId 1  # 生成 sdkconfig.defaults
 
 # 编译（观察是否有 CSI 相关错误）
 idf.py build 2>&1 | Select-String -Pattern "CSI|wifi|error" -Context 2

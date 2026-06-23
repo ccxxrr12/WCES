@@ -106,7 +106,7 @@ EOF
 
 ```bash
 # 默认通过串口或以太网连接
-ssh root@192.168.1.1
+ssh root@192.168.1.100
 # 确认系统信息
 uname -a
 cat /proc/cpuinfo | grep "processor\|model name"
@@ -134,12 +134,12 @@ file target/aarch64-unknown-linux-gnu/release/sensing-server
 ```bash
 # 使用 deploy.sh 一键部署
 # 或将二进制 + UI 文件 SCP 到设备
-scp target/aarch64-unknown-linux-gnu/release/sensing-server root@192.168.1.1:/opt/WCES/
-scp -r ui/ root@192.168.1.1:/opt/WCES/
-scp -r docs/triage-ui/ root@192.168.1.1:/opt/WCES/
+scp target/aarch64-unknown-linux-gnu/release/sensing-server root@192.168.1.100:/opt/WCES/
+scp -r ui/ root@192.168.1.100:/opt/WCES/
+scp -r docs/triage-ui/ root@192.168.1.100:/opt/WCES/
 
 # SSH 到设备启动
-ssh root@192.168.1.1
+ssh root@192.168.1.100
 cd /opt/WCES
 ./deploy.sh
 ```

@@ -81,7 +81,7 @@ notepad wces.config.toml
 
 ```bash
 # One-click deploy (run on RZ/G2L after cross-compile)
-ssh root@192.168.1.1 && cd /opt/WCES && ./deploy.sh
+ssh root@<RZ_IP> && cd /opt/WCES && ./deploy.sh  # RZ_IP from wces.config.toml [deploy]
 ```
 
 ## Architecture
@@ -113,12 +113,12 @@ CSI采集         UDP:5005 → parse_esp32_frame()
 | `wifi-densepose-nn` | ONNX inference (DensePose 3D skeleton) |
 | `wifi-densepose-mat` | START triage pipeline + casualty tracking |
 | `wifi-densepose-sensing-server` | **Main binary crate** — Axum HTTP/WS server, UDP receiver, simulation, UI serving |
-| `wifi-densepose-config` | System configuration (TOML parsing) |
+| `wifi-densepose-config` | Reserved namespace placeholder (deprecated) — actual config in `app_config.rs` |
 | `wifi-densepose-wasm-edge` | WASM edge modules (68 `.rs` files, `wasm32-unknown-unknown`, **excluded from workspace**) |
 
 ### sensing-server internal module map (2026-05 refactor)
 
-- `main.rs` — CLI args (clap) + state init + task spawning (1232 lines after refactor from 3868)
+- `main.rs` — CLI args (clap) + state init + task spawning (1331 lines after refactor from 3868)
 - `server.rs` — Axum HTTP/WS setup, graceful shutdown, API key auth middleware
 - `types.rs` — `Esp32Frame`, `SensingUpdate`, `NodeInfo`, all constants
 - `parser.rs` — ADR-018 binary frame parsing (`parse_esp32_frame`, `parse_esp32_vitals`, `parse_wasm_output`)
@@ -127,8 +127,8 @@ CSI采集         UDP:5005 → parse_esp32_frame()
 - `vital_signs.rs` — `VitalSignDetector` with FFT-based breathing rate (0.1-0.5Hz) and heart rate (0.8-2.0Hz)
 - `mat_pipeline.rs` — `TriageEngine` implementing START protocol (Red/Yellow/Green/Black/Gray), casualty matching/tracking, deterioration detection, mass-casualty assessment, age estimation
 - `edge_module_engine.rs` — 19 edge modules (gait, arrhythmia, respiratory distress, seizure, loitering, vibration, etc.)
-- `handlers/` — `ws.rs` (WebSocket), `routes.rs` (REST API), `model_routes.rs`, `recording_routes.rs`, `llm_routes.rs`
-- `tasks/` — `udp_receiver.rs` (hardware data), `simulated_data.rs` (synthetic CSI), `broadcast_tick.rs` (periodic rebroadcast)
+- `handlers/` — `mod.rs`, `path_util.rs`, `ws.rs` (WebSocket), `routes.rs` (REST API), `model_routes.rs`, `recording_routes.rs`, `llm_routes.rs` (7 files)
+- `tasks/` — `mod.rs`, `udp_receiver.rs` (hardware data), `simulated_data.rs` (synthetic CSI), `broadcast_tick.rs` (periodic rebroadcast) (4 files)
 - `app_config.rs` — TOML config loading
 - `rvf_container.rs` / `rvf_pipeline.rs` — RVF model format container + progressive loading
 - `dataset.rs`, `embedding.rs`, `graph_transformer.rs`, `sparse_inference.rs`, `trainer.rs`, `adaptive_classifier.rs`, `sona.rs` — ML training/inference modules
