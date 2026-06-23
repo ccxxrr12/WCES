@@ -1,12 +1,12 @@
 # ESP32-C5 CSI Node — Build & Flash Script
 # Uses RISC-V toolchain (riscv32-esp-elf) instead of Xtensa (xtensa-esp-elf).
-# REQUIRES ESP-IDF v5.5+ (v5.4 has C5 5GHz CSI cache coherency bug).
+# REQUIRES ESP-IDF v5.5+ (v6.0.1 recommended; v5.4 has C5 5GHz CSI cache coherency bug).
 #
 # Before running:
 #   1. Verify RISC-V toolchain: dir C:\Espressif\tools\riscv32-esp-elf
 #   2. Verify C5 target:     idf.py --list-targets | findstr esp32c5
 #   3. Adjust $env:IDF_PATH below to match your installation.
-#   4. Run ..\..\apply-config.ps1 -NodeId <N> first to generate sdkconfig.defaults.
+#   4. Run ..\..\..\apply-config.ps1 -NodeId <N> first to generate sdkconfig.defaults.
 #
 # Usage:
 #   .\build_firmware_c5.ps1 -FlashPort COM3          # Build & flash
@@ -29,14 +29,17 @@ Remove-Item env:MINGW_PACKAGE_PREFIX -ErrorAction SilentlyContinue
 Remove-Item env:MINGW_PREFIX -ErrorAction SilentlyContinue
 
 # ---- CONFIGURATION ----
-# ESP-IDF path (v5.5+ REQUIRED for 5GHz CSI; v5.4 works for 2.4GHz only)
-$env:IDF_PATH = "C:\Espressif\frameworks\esp-idf-v5.5"
+# ESP-IDF v6.0.1 (ESP32-C5 full stable support; v5.4 has C5 CSI 5GHz cache bug)
+$env:IDF_PATH = "C:\esp\v6.0.1\esp-idf"
 $env:IDF_TOOLS_PATH = "C:\Espressif\tools"
-$env:IDF_PYTHON_ENV_PATH = "C:\Espressif\tools\python\v5.5\venv"
+$env:IDF_PYTHON_ENV_PATH = "C:\Espressif\tools\python\v6.0.1\venv"
 
 # RISC-V toolchain for ESP32-C5 (riscv32-esp-elf)
-# Adjust the version number to match your installed toolchain.
-$env:PATH = "C:\Espressif\tools\riscv32-esp-elf\esp-14.2.0_20241119\riscv32-esp-elf\bin;C:\Espressif\tools\cmake\3.30.2\cmake-3.30.2-windows-x86_64\bin;C:\Espressif\tools\ninja\1.12.1;C:\Espressif\tools\ccache\4.10.2\ccache-4.10.2-windows-x86_64;C:\Espressif\tools\idf-exe\1.0.3;C:\Espressif\tools\python\v5.5\venv\Scripts;$env:PATH"
+# Adjust the version numbers below to match your installed toolchain.
+# Run:  dir C:\Espressif\tools\riscv32-esp-elf
+#       dir C:\Espressif\tools\cmake
+#       dir C:\Espressif\tools\python
+$env:PATH = "C:\Espressif\tools\riscv32-esp-elf\esp-15.2.0_20251204\riscv32-esp-elf\bin;C:\Espressif\tools\cmake\4.0.3\bin;C:\Espressif\tools\ninja\1.12.1;C:\Espressif\tools\ccache\4.12.1\ccache-4.12.1-windows-x86_64;C:\Espressif\tools\idf-exe\1.0.3;C:\Espressif\tools\python\v6.0.1\venv\Scripts;$env:PATH"
 
 # Firmware directory
 Set-Location $PSScriptRoot
@@ -82,8 +85,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "=== Build failed with exit code $LASTEXITCODE ==="
     Write-Host ""
     Write-Host "Troubleshooting:"
-    Write-Host "  1. ESP-IDF v5.5+ required for full C5 CSI support"
-    Write-Host "     v5.4 will build but 5GHz CSI is broken (use 2.4GHz only)"
+    Write-Host "  1. ESP-IDF v5.5+ required (v6.0.1 is installed) for full C5 CSI support"
     Write-Host "  2. Check riscv32-esp-elf toolchain:"
     Write-Host "     dir C:\Espressif\tools\riscv32-esp-elf"
     Write-Host "  3. Check esp32c5 is a supported target:"

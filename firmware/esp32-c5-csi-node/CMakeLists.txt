@@ -1,5 +1,5 @@
 # ESP32 CSI Node Firmware (ADR-018)
-# ⚠️ ESP-IDF v5.5+ REQUIRED for ESP32-C5 (v5.4 has C5 CSI 5GHz cache bug)
+# ⚠️ ESP-IDF v5.5+ REQUIRED (v6.0.1 installed). v5.4 has known C5 CSI 5GHz cache bug.
 cmake_minimum_required(VERSION 3.16)
 
 set(EXTRA_COMPONENT_DIRS "")
