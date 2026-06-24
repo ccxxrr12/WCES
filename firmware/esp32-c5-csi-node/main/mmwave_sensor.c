@@ -472,6 +472,8 @@ const char *mmwave_type_name(mmwave_type_t type)
 
 esp_err_t mmwave_sensor_init(int uart_tx_pin, int uart_rx_pin)
 {
+    ESP_LOGI(TAG, "mmWave sensor skipped (ESP32-C5)");
+    return ESP_ERR_NOT_SUPPORTED;
     memset(&s_state, 0, sizeof(s_state));
     memset(&s_mr60, 0, sizeof(s_mr60));
     memset(&s_ld, 0, sizeof(s_ld));

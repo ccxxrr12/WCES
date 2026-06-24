@@ -18,6 +18,7 @@
 #include "esp_app_desc.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_random.h"
 
 static const char *TAG = "ota_update";
 

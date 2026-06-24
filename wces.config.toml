@@ -374,7 +374,7 @@ tmp_temporal_logic_guard = true         # 时序逻辑守卫 (LTL约束验证)
 [deploy]
 
 # ── 瑞萨 RZ/G2L 目标 ──────────────────────────────────────────────────────────
-rz_ip = "10.144.178.195"              # SSH 目标地址 (开发阶段 WiFi IP)
+rz_ip = "10.223.168.195"              # SSH 目标地址 (开发阶段 WiFi IP)
 rz_user = "root"                        # SSH 用户名
 rz_project_root = "/opt/WCES"          # 项目根目录 (RZ/G2L 上)
 

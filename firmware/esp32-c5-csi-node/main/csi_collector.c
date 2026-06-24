@@ -133,7 +133,6 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
         bool       ch_minus_one;  /* 2.4 GHz uses (ch-1)*5, others use ch*5 */
         bool       fixed_freq;    /* channel 14: use base_mhz directly, no ch*5 term */
     } BAND_TABLE[] = {
-        { WIFI_BAND_6G,   1, 233, 5950, false, false },
         { WIFI_BAND_2G,   1,  13, 2412, true,  false },
         { WIFI_BAND_2G,  14,  14, 2484, false, true  },  /* Japan ch14 = 2484 MHz fixed */
         { WIFI_BAND_5G,  36, 177, 5000, false, false },
@@ -226,6 +225,7 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
             if (ret > 0) {
                 s_send_ok++;
                 s_last_send_us = now;
+                if (s_send_ok <= 3) ESP_LOGI(TAG, "UDP OK #%lu %uB", (unsigned long)s_send_ok, (unsigned)frame_len);
             } else {
                 s_send_fail++;
                 if (s_send_fail <= 5) {
@@ -265,7 +265,7 @@ void csi_collector_init(void)
     ESP_LOGI(TAG, "Wi-Fi band: %s",
              s_wifi_band == WIFI_BAND_2G ? "2.4 GHz" :
              s_wifi_band == WIFI_BAND_5G ? "5 GHz" :
-             s_wifi_band == WIFI_BAND_6G ? "6 GHz" : "unknown");
+             "unknown");
 
     /* ADR-060: Determine the CSI channel.
      * Priority: 1) NVS override (--channel), 2) connected AP channel, 3) Kconfig default. */
@@ -293,15 +293,10 @@ void csi_collector_init(void)
     /* Enable promiscuous mode — required for reliable CSI callbacks.
      * Without this, CSI only fires on frames destined to this station,
      * which may be very infrequent on a quiet network. */
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(wifi_promiscuous_cb));
-
-    wifi_promiscuous_filter_t filt = {
-        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA,
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filt));
-
-    ESP_LOGI(TAG, "Promiscuous mode enabled for CSI capture");
+    /* Promiscuous mode disabled on C5: sniffer starves TX hardware.
+     * CSI still works from normal STA RX frames (AP beacons, directed traffic).
+     * Frame rate is lower (~5-15 Hz) but TX works normally. */
+    ESP_LOGI(TAG, "Promiscuous mode OFF — CSI from normal STA RX, TX available");
 
     /* CSI configuration.
      * C5/C6/C61: wifi_csi_acquire_config_t (esp_wifi_he_types.h, ESP-IDF v5.4+).

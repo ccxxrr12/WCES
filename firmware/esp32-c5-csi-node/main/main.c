@@ -127,12 +127,12 @@ static void wifi_init_sta(void)
         .ghz_2g = WIFI_PROTOCOL_11N,
         .ghz_5g = WIFI_PROTOCOL_11N,
     };
-    ESP_ERROR_CHECK(esp_wifi_set_protocols(ESP_IF_WIFI_STA, &protocols));
+    ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
     wifi_bandwidths_t bandwidth = {
-        .ghz_2g = WIFI_BW_HT40,
-        .ghz_5g = WIFI_BW_HT40,
+        .ghz_2g = WIFI_BW40,
+        .ghz_5g = WIFI_BW40,
     };
-    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(ESP_IF_WIFI_STA, &bandwidth));
+    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(WIFI_IF_STA, &bandwidth));
 #endif
 
     ESP_LOGI(TAG, "WiFi STA initialized, connecting to SSID: %s", g_nvs_config.wifi_ssid);

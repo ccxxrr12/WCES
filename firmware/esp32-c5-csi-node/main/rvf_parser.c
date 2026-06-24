@@ -10,7 +10,8 @@
 
 #include <string.h>
 #include "esp_log.h"
-#include "mbedtls/sha256.h"
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#include "mbedtls/private/sha256.h"
 
 static const char *TAG = "rvf";
 

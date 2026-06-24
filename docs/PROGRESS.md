@@ -284,7 +284,10 @@ Current Vitals ───┘                                                     
 | **P10e** | **代码架构重构 (main.rs 3868→976 + 锁安全修复)** | ✅ **2026-05-18** |
 | **P10f** | **UI 全面优化 (8项: CDN本地化/趋势图/热力图/统一入口/响应式/蒙皮骨架/EHR面板/主题切换)** | ✅ **2026-05-20** |
 | P11 | 竞赛申报材料 | ❌ 待准备 |
-| P12 | 硬件联调 | ❌ 需硬件 |
+| **P12** | **ESP-IDF v6.0.1 + C5 固件编译** | ✅ **2026-06-24** |
+| **P13** | **C5 节点#1 烧录 + CSI 运行** | 🔵 **进行中 (CSI已跑通)** |
+| P14 | 节点 #2/#3 烧录 | ⬜ 待 COM 口确认 |
+| P15 | RZ/G2L 交叉编译 + 部署联调 | ⬜ 待做 |
 
 ## 新建/修改文件 (阶段1: 11个 + 阶段2: 17个 + 阶段2.12重构: 20个 + 阶段2.13 UI优化: 4个)
 
@@ -396,9 +399,11 @@ CSI 采集        UDP:5005 → sensing-server
 |------|:--:|------|
 | ~~端侧 LLM 代码实现~~ | ✅ 完成 2026-05-15 | wifi-densepose-llm crate + triage.html AI卡片 |
 | ~~WASM 边缘模块集成~~ | ✅ 完成 2026-05-14 | 19个模块全部接入 (13+6) |
-| C5 固件编译 | 🔴 必须 | ESP-IDF v5.5+ |
+| ~~C5 固件编译~~ | ✅ 完成 2026-06-24 | ESP-IDF v6.0.1 |
+| C5 节点 #2/#3 烧录 | 🔴 必须 | COM 口确认 |
 | Rust aarch64 交叉编译 | 🔴 必须 | RZ/G2L SDK |
 | 3 节点 烧录+联调 | 🔴 必须 | 硬件 |
+| C5 ENOMEM 修复验证 | 🔵 进行中 | async sender 架构改动待烧录测试 |
 
 ### 竞赛材料
 
@@ -666,4 +671,71 @@ sensing-server/src/          重构前 → 重构后
 
 **编译验证**: `cargo check` ✅ (training_api.rs 编译阻塞已消除)
 **固件编译**: 待 ESP-IDF v5.5+ 环境验证
+
+### 2.15 ESP-IDF v6.0.1 环境搭建与 C5 固件适配 (2026-06-24) ⭐ NEW
+
+ESP-IDF v6.0.1 安装 + 固件 v5.x→v6.0 迁移 + C5 单核适配 + 内存优化。
+
+#### 环境搭建
+
+| 项目 | 路径/版本 |
+|------|----------|
+| ESP-IDF | `C:\esp\v6.0.1\esp-idf` (v6.0.1) |
+| RISC-V 编译器 | `C:\Espressif\tools\riscv32-esp-elf\esp-15.2.0_20251204` |
+| CMake | `C:\Espressif\tools\cmake\4.0.3` |
+| Python venv | `C:\Espressif\tools\python\v6.0.1\venv` |
+
+#### ESP-IDF v6.0 迁移修复 (固件源码)
+
+| # | 文件 | 问题 | 修复 |
+|---|------|------|------|
+| 1 | `main.c` | `ESP_IF_WIFI_STA` 枚举已移除 | → `WIFI_IF_STA` |
+| 2 | `main.c` | `WIFI_BW_HT40` 枚举已移除 | → `WIFI_BW40` |
+| 3 | `csi_collector.c` | `WIFI_BAND_6G` 枚举已移除 (C5 不支持 6GHz) | 删除 6GHz 频段表条目和日志分支 |
+| 4 | `ota_update.c` | `esp_fill_random()` 不再经由 `esp_system.h` 包含 | 新增 `#include "esp_random.h"` |
+| 5 | `rvf_parser.c` | `mbedtls/sha256.h` 公开头已移除 (mbedtls v4) | → `mbedtls/private/sha256.h` + 定义 `MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS` |
+| 6 | `wasm3/CMakeLists.txt` | GCC 15 新 `-Werror=strict-aliasing` 拦截 WASM3 类型双关 | 新增 `-Wno-strict-aliasing` |
+
+#### C5 单核适配与硬件差异修复
+
+| # | 文件 | 问题 | 修复 |
+|---|------|------|------|
+| 7 | `edge_processing.c` | `xTaskCreatePinnedToCore()` 钉在 Core 1 — C5 只有 Core 0 | → `tskNO_AFFINITY` (单核自适应) |
+| 8 | `mmwave_sensor.c` | S3 默认 GPIO17/18 在 C5 上可能冲突，且未接传感器 | 函数入口直接返回 `ESP_ERR_NOT_SUPPORTED` |
+| 9 | `Kconfig.projbuild` | `CONFIG_WASM_ENABLE` 默认 `y` — C5 无 PSRAM，4×160KB arena = 640KB 无效分配 | 通过 `sdkconfig.defaults` 显式设为 `n` |
+
+#### 架构优化 (C5 内存限制应对)
+
+| # | 文件 | 说明 |
+|---|------|------|
+| 10 | `stream_sender.c` | **重写为异步队列架构** — CSI 回调 (WiFi 高优先级任务) 中不再阻塞调用 `sendto()`，改为 `xQueueSend` 投递到低优先级 `udp_sender` 任务，避免 lwIP pbuf 池耗尽导致 ENOMEM |
+| 11 | `apply-config.ps1` | **完全重写** — 修复 PowerShell here-string 语法错误，改用数组拼接 + `-join`，消除所有 `` `" `` 转义引号问题 |
+| 12 | `sdkconfig.defaults` | 新增 C5 内存优化: `CONFIG_WASM_ENABLE=n`、WiFi 动态 TX 缓冲 32→8、动态 RX 缓冲 32→16、静态 RX 缓冲 10→6、LWIP TCPIP mbox 32→12 |
+
+#### 配置文件修复
+
+| # | 文件 | 修复 |
+|---|------|------|
+| 13 | `wces.config.toml` | `[firmware]target_ip` → `10.223.168.195` (RZ/G2L 当前 WiFi IP)、`[deploy]rz_ip` 同步 |
+| 14 | `build_firmware_c5.ps1` (两个副本) | 工具链路径全部更新为 v6.0.1 (esp-15.2.0, cmake 4.0.3, python v6.0.1) |
+| 15 | `firmware/build_firmware_c5.ps1` | 同上 + 烧录端口参数化 `-FlashPort COMx` |
+
+#### C5 固件当前状态
+
+| 组件 | 状态 |
+|------|:--:|
+| WiFi STA 连接 (SC, 5GHz ch44) | ✅ |
+| CSI 采集 (promiscuous sniffer, HE40) | ✅ |
+| Edge DSP (tier=2, FFT/BPM/存在/跌倒) | ✅ |
+| UDP 流式发送 (async queue → RZ/G2L:5005) | ✅ (ENOMEM 修复中) |
+| OTA HTTP 服务器 | ✅ (保留) |
+| WASM3 运行时 | 🚫 已禁用 (C5 无 PSRAM, 竞赛不需要) |
+| mmWave 传感器 | 🚫 已跳过 (C5 未接传感器) |
+| Swarm 蜂群桥接 | 🚫 未配置 (无 seed_url) |
+| Display/LVGL | 🚫 已禁用 (RZ/G2L 接屏幕) |
+| Power Management | 🚫 已禁用 (duty=100%) |
+
+**节点 #1 已成功烧录并运行** (COM9, IP `10.223.168.212`, CSI 回调 700+ 帧零重启)。
+
+节点 #2、#3 待烧录（只需 `apply-config -NodeId 2/3` + `idf.py -p COMx erase-flash` + `idf.py -p COMx flash`）。
 

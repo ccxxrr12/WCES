@@ -74,4 +74,5 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-unused-variable
     -Wno-maybe-uninitialized
     -Wno-sign-compare
+	    -Wno-strict-aliasing
 )

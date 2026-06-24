@@ -1013,7 +1013,7 @@ esp_err_t edge_processing_init(const edge_config_t *cfg)
         NULL,
         5,          /* Priority 5 — above idle, below WiFi. */
         NULL,
-        1           /* Pin to Core 1. */
+        tskNO_AFFINITY  /* ESP32-C5: single core */
     );
 
     if (ret != pdPASS) {
