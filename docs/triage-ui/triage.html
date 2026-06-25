@@ -402,7 +402,7 @@
 
         <!-- Vitals with Sparkline -->
         <div class="sidebar-section">
-            <div class="section-header"><span class="section-title">当前生命体征</span></div>
+            <div class="section-header"><span class="section-title">当前生命体征</span><span id="vitalsSelected" style="display:none;margin-left:auto;font-size:11px;color:var(--primary-blue)"></span></div>
             <div class="vitals-chart-card">
                 <div class="chart-metrics">
                     <div class="metric-item breathing">
@@ -714,7 +714,7 @@ function createFigurePool(){
         const group=new THREE.Group();
         const joints=[],bones=[],segments=[];
         for(let i=0;i<17;i++){
-            const r=i>=1&&i<=4?.04:i>=5&&i<=6?.055:.04;
+            const r=(i>=1&&i<=4)?0.04:(i>=5&&i<=6)?0.055:0.04;
             const geo=new THREE.SphereGeometry(r,16,16);
             const mat=new THREE.MeshStandardMaterial({color:i<=4?COLORS.head:COLORS.joint,emissive:i<=4?COLORS.head:COLORS.joint,emissiveIntensity:.25,metalness:.3,roughness:.3});
             const j=new THREE.Mesh(geo,mat);j.castShadow=true;j.userData.index=i;
@@ -793,10 +793,10 @@ function animate(){
     animationTime+=.016;
     let poses=[];
     if(latestData&&latestData.pose_keypoints&&latestData.pose_keypoints.length>0){
-        poses.push(latestData.pose_keypoints.map(k=>[k[0],k[1],k[2]]));
+        poses.push(latestData.pose_keypoints.map(k=>[k[0],-k[1],k[2]]));
     }else{
         const numPeople=latestTriage?.survivors?.length?Math.min(latestTriage.survivors.length,3):1;
-        const motionScore=latestData?.classification?.motion_score??(latestData?.classification?.motion_level==='high'?.8:latestData?.classification?.motion_level==='medium'?.3:.05);
+        const motionScore=latestData?.classification?.motion_score??(latestData?.classification?.motion_level==='high'?0.8:latestData?.classification?.motion_level==='medium'?0.3:0.05);
         const breathAmp=latestData?.vital_signs?.breathing_rate_bpm?Math.sin(animationTime*latestData.vital_signs.breathing_rate_bpm/60*Math.PI*2):0;
         for(let i=0;i<numPeople;i++)poses.push(generatePose17(i,animationTime*60,motionScore,breathAmp));
     }
@@ -907,7 +907,7 @@ function renderFromServer(){
             newSurvivorHtml='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
         }else{
             newSurvivorHtml=latestTriage.survivors.map((s,idx)=>`
-                <div class="survivor-card ${escapeHtml(s.triage_color)}" onclick="openEhr(latestTriage.survivors[${idx}])">
+                <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" onclick="selectSurvivor('${escapeHtml(s.id)}');openEhr(latestTriage.survivors[${idx}])">
                     <div class="survivor-header">
                         <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(s.id.substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p></div></div>
                         <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
@@ -959,6 +959,12 @@ function renderFromServer(){
         document.getElementById('currentHeart').textContent=hr?.toFixed(0)??'--';
         breathingHistory.push(br??null);breathingHistory.shift();
         heartHistory.push(hr??null);heartHistory.shift();
+        // Show selected survivor indicator
+        const selEl=document.getElementById('vitalsSelected');
+        if(selEl){
+            if(selectedPatientId){selEl.textContent='📍 '+selectedPatientId;selEl.style.display=''}
+            else{selEl.style.display='none'}
+        }
     }
 }
 
@@ -1075,7 +1081,8 @@ function enableAnalyzeButton(){
     const btn=document.getElementById('agentAnalyzeBtn');if(!btn)return;
     if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成Agent分析报告'}
 }
-function selectPatientForAnalysis(patientId){selectedPatientId=patientId;enableAnalyzeButton()}
+function selectPatientForAnalysis(patientId){selectedPatientId=patientId;renderFromServer();enableAnalyzeButton()}
+function selectSurvivor(survivorId){selectedPatientId=survivorId;if(latestTriage)renderFromServer()}
 function requestAgentAnalysis(){
     if(!selectedPatientId||!latestTriage)return;
     const survivor=(latestTriage.survivors||[]).find(s=>s.id===selectedPatientId);if(!survivor)return;
