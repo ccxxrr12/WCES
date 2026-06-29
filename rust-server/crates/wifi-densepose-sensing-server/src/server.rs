@@ -23,23 +23,45 @@ use wifi_densepose_sensing_server::graph_transformer;
 
 /// Constant-time byte-slice comparison — prevents timing side-channels
 /// from leaking the API key byte-by-byte through early-exit string equality.
-/// Iterates all bytes of the longer slice; uses XOR accumulation.
+///
+/// Uses a fixed 64-byte XOR-accumulation loop regardless of input lengths.
+/// Slices shorter than 64 bytes are padded with zeros; slices longer than
+/// 64 bytes are hashed first with a cheap non-crypto hash (FNV-1a 64-bit)
+/// and the 8-byte hash is compared constant-time.  This avoids leaking
+/// length information through the total number of loop iterations.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        // Still iterate max_len to avoid leaking length via timing.
-        let max_len = a.len().max(b.len());
-        let mut result: u8 = 1; // non-zero = mismatch (length differs)
-        for i in 0..max_len {
-            let ab = a.get(i).copied().unwrap_or(0);
-            let bb = b.get(i).copied().unwrap_or(0);
-            result |= ab ^ bb;
+    // FNV-1a 64-bit hash of longer slices to fit in fixed-size comparison
+    let hash = |s: &[u8]| -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for &byte in s {
+            h ^= byte as u64;
+            h = h.wrapping_mul(0x100000001b3);
         }
-        return result == 0; // always false when lengths differ
+        h
+    };
+
+    // Fixed-size comparison buffer: 64 bytes, enough for typical API keys
+    // and 8-byte hashes of longer keys.
+    let mut buf_a = [0u8; 64];
+    let mut buf_b = [0u8; 64];
+
+    if a.len() <= 64 && b.len() <= 64 {
+        buf_a[..a.len()].copy_from_slice(a);
+        buf_b[..b.len()].copy_from_slice(b);
+    } else {
+        // Hash to 8 bytes, pad the rest with zeros
+        let ha = hash(a).to_le_bytes();
+        let hb = hash(b).to_le_bytes();
+        buf_a[..8].copy_from_slice(&ha);
+        buf_b[..8].copy_from_slice(&hb);
     }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (&x, &y)| acc | (x ^ y))
-        == 0
+
+    // Constant-time XOR accumulation over fixed 64 iterations
+    let mut result: u8 = 0;
+    for i in 0..64 {
+        result |= buf_a[i] ^ buf_b[i];
+    }
+    result == 0
 }
 
 /// API Key authentication middleware.

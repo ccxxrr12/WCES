@@ -175,7 +175,7 @@ pub enum DegradationLevel {
 
 // ── Gateway (shared across gateway.rs and degrade.rs) ────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct GatewayConfig {
     pub endpoint: String,
     pub model: String,
@@ -185,6 +185,21 @@ pub struct GatewayConfig {
     pub temperature: f32,
     pub failure_threshold: u8,
     pub breaker_open_secs: u64,
+}
+
+impl std::fmt::Debug for GatewayConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GatewayConfig")
+            .field("endpoint", &self.endpoint)
+            .field("model", &self.model)
+            .field("api_key", &"***")
+            .field("timeout_secs", &self.timeout_secs)
+            .field("max_retries", &self.max_retries)
+            .field("temperature", &self.temperature)
+            .field("failure_threshold", &self.failure_threshold)
+            .field("breaker_open_secs", &self.breaker_open_secs)
+            .finish()
+    }
 }
 
 impl Default for GatewayConfig {

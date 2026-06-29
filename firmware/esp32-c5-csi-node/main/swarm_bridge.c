@@ -50,6 +50,8 @@ static uint32_t s_cnt_regs;
 static uint32_t s_cnt_heartbeats;
 static uint32_t s_cnt_ingests;
 static uint32_t s_cnt_errors;
+static uint32_t s_consec_failures;  /**< Bug 5: consecutive HTTP failures for reconnect trigger. */
+#define SWARM_MAX_CONSEC_FAILURES 5  /**< Re-init HTTP client after this many consecutive failures. */
 
 /* ---- Forward declarations ---- */
 static void swarm_task(void *arg);
@@ -160,6 +162,7 @@ static esp_err_t swarm_post_json(esp_http_client_handle_t client,
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "HTTP POST failed: %s", esp_err_to_name(err));
             s_cnt_errors++;
+            s_consec_failures++;
             esp_http_client_close(client);
             return err;
         }
@@ -172,9 +175,12 @@ static esp_err_t swarm_post_json(esp_http_client_handle_t client,
     if (status < 200 || status >= 300) {
         ESP_LOGW(TAG, "HTTP POST status %d", status);
         s_cnt_errors++;
+        s_consec_failures++;
         return ESP_FAIL;
     }
 
+    /* Success — reset consecutive failure counter. */
+    s_consec_failures = 0;
     return ESP_OK;
 }
 
@@ -263,6 +269,29 @@ static void swarm_task(void *arg)
 
     for (;;) {
         vTaskDelay(poll_interval);
+
+        /* Bug 5: Re-init HTTP client if consecutive failures exceed threshold.
+         * The Seed endpoint may restart or change IP, and the persistent client
+         * has no built-in reconnect logic. This avoids logging warnings forever. */
+        if (s_consec_failures >= SWARM_MAX_CONSEC_FAILURES) {
+            ESP_LOGW(TAG, "%lu consecutive HTTP failures — re-initializing client",
+                     (unsigned long)s_consec_failures);
+            esp_http_client_cleanup(client);
+            client = esp_http_client_init(&http_cfg);
+            if (client == NULL) {
+                ESP_LOGE(TAG, "client re-init failed — will retry next cycle");
+                s_consec_failures = 0;  /* Prevent tight re-init loop. */
+                continue;
+            }
+            esp_http_client_set_header(client, "Content-Type", "application/json");
+            if (s_cfg.seed_token[0] != '\0') {
+                char auth_hdr[80];
+                snprintf(auth_hdr, sizeof(auth_hdr), "Bearer %s", s_cfg.seed_token);
+                esp_http_client_set_header(client, "Authorization", auth_hdr);
+            }
+            s_consec_failures = 0;
+            ESP_LOGI(TAG, "HTTP client re-initialized OK");
+        }
 
         TickType_t now = xTaskGetTickCount();
 

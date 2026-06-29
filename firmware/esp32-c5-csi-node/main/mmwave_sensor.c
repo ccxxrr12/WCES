@@ -472,14 +472,14 @@ const char *mmwave_type_name(mmwave_type_t type)
 
 esp_err_t mmwave_sensor_init(int uart_tx_pin, int uart_rx_pin)
 {
-    ESP_LOGI(TAG, "mmWave sensor skipped (ESP32-C5)");
-    return ESP_ERR_NOT_SUPPORTED;
     memset(&s_state, 0, sizeof(s_state));
     memset(&s_mr60, 0, sizeof(s_mr60));
     memset(&s_ld, 0, sizeof(s_ld));
-    s_running = true;
 
 #ifdef CONFIG_CSI_MOCK_ENABLED
+    /* BUG 1 fix: mock mode runs regardless of target (C5 or S3).
+     * Previously an unconditional return before this block made mock dead code. */
+    s_running = true;
     ESP_LOGI(TAG, "Mock mode: starting synthetic mmWave generator");
 
     BaseType_t ret = xTaskCreatePinnedToCore(
@@ -492,6 +492,12 @@ esp_err_t mmwave_sensor_init(int uart_tx_pin, int uart_rx_pin)
     }
 
     return ESP_OK;
+
+#elif CONFIG_IDF_TARGET_ESP32C5
+    /* C5 has no physical mmWave sensor and GPIO conflicts.
+     * Return cleanly rather than attempting UART init. */
+    ESP_LOGI(TAG, "mmWave sensor skipped (ESP32-C5: no sensor, GPIO conflict)");
+    return ESP_ERR_NOT_SUPPORTED;
 
 #else
     if (uart_tx_pin < 0) uart_tx_pin = 17;
@@ -561,6 +567,7 @@ esp_err_t mmwave_sensor_init(int uart_tx_pin, int uart_rx_pin)
         return ESP_ERR_NO_MEM;
     }
 
+    s_running = true;
     return ESP_OK;
 #endif
 }

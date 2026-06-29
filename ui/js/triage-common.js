@@ -8,21 +8,18 @@
  */
 
 /**
- * Escape HTML special characters for safe innerHTML insertion.
+ * Escape HTML special characters for safe innerHTML and attribute insertion.
  *
- * SAFE for: text content between tags and inside quoted attribute values
- *   whose content is drawn from a fixed server-side enum (CSS class names).
- * NOT safe for: attribute values that may contain user-controlled double
- *   quotes — textContent mapping does NOT encode " or '.  For those cases
- *   use data-* attributes + getAttribute() instead of inline on* handlers.
+ * Encodes: & < > ' "  (full HTML-attribute-safe set)
+ * SAFE for: text content, quoted attribute values, inline onclick handlers
  *
  * - null/undefined → '' (empty string)
- * - 0, false, "" → their String representation (safe)
- * - everything else → DOM-encoded via textContent (& < > encoded)
+ * - everything else → fully encoded via textContent + quote replacement
  */
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
     var div = document.createElement('div');
     div.textContent = String(str);
-    return div.innerHTML;
+    // textContent handles & < >  —  we add ' " for attribute safety (XSS fix)
+    return div.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
 }

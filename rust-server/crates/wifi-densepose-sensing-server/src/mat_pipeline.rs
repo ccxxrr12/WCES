@@ -213,6 +213,7 @@ fn rssi_to_distance(rssi: f64) -> f64 {
 
 // ── 伤员追踪引擎 ────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 struct TrackedSurvivor {
     id: String,
     triage: TriageLevel,
@@ -225,23 +226,25 @@ struct TrackedSurvivor {
     first_seen: f64,
     last_updated: f64,
     node_id: u8,
+    person_id: Option<u32>,
     deterioration_count: u32,
     status: &'static str,  // "active" | "rescued" | "lost" | "deceased"
 }
 
 impl TrackedSurvivor {
-    fn new(id: String, now: f64, node_id: u8) -> Self {
+    fn new(id: String, now: f64, node_id: u8, person_id: Option<u32>) -> Self {
         Self {
             id, triage: TriageLevel::Unknown, prev_triage: TriageLevel::Unknown,
             position: (0.0, 0.0, 0.0), position_confidence: 0.0,
             breathing_history: Vec::new(), heart_rate_history: Vec::new(),
             motion_history: Vec::new(),
-            first_seen: now, last_updated: now, node_id,
+            first_seen: now, last_updated: now, node_id, person_id,
             deterioration_count: 0, status: "active",
         }
     }
 }
 
+#[derive(Clone)]
 pub struct TriageEngine {
     config: TriageConfig,
     survivors: HashMap<String, TrackedSurvivor>,
@@ -344,7 +347,7 @@ impl TriageEngine {
                     });
                 }
             } else {
-                s.deterioration_count = 0;
+                s.deterioration_count = s.deterioration_count.saturating_sub(1);
             }
         }
 
@@ -355,18 +358,18 @@ impl TriageEngine {
     }
 
     fn match_or_create(&mut self, input: &VitalSignsInput, now: f64) -> String {
-        // 已有伤员: person_id 匹配
-        if let Some(_pid) = input.person_id {
+        // 已有伤员: person_id + node_id + 时间窗口匹配
+        if let Some(pid) = input.person_id {
             for (id, s) in &self.survivors {
-                if s.node_id == input.node_id && s.last_updated > now - 5.0 {
+                if s.person_id == Some(pid) && s.node_id == input.node_id && s.last_updated > now - 5.0 {
                     return id.clone();
                 }
             }
         }
         // 新建伤员
         self.counter += 1;
-        let id = format!("SURV-{:04x}", self.counter);
-        self.survivors.insert(id.clone(), TrackedSurvivor::new(id.clone(), now, input.node_id));
+        let id = format!("SURV-{:08x}", self.counter);
+        self.survivors.insert(id.clone(), TrackedSurvivor::new(id.clone(), now, input.node_id, input.person_id));
         id
     }
 

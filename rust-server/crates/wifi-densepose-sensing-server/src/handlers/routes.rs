@@ -351,7 +351,7 @@ pub(crate) async fn train_start(
     }
     s.training_status = "running".to_string();
     s.training_config = Some(body.clone());
-    info!("Training started with config: {}", body);
+    info!("Training started with config keys: {:?}", body.as_object().map(|o| o.keys().collect::<Vec<_>>()));
     Json(serde_json::json!({
         "success": true,
         "status": "running",

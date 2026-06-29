@@ -147,6 +147,10 @@ pub(crate) fn estimate_breathing_rate_hz(frame_history: &VecDeque<Vec<f64>>, sam
     let mut best_freq = 0.0f64;
     let mut best_power = 0.0f64;
 
+    // BUG 22 fix: store per-candidate powers to avoid recomputing the entire
+    // Goertzel filter bank twice (was 2× CPU cost for identical computation).
+    let mut powers: Vec<f64> = Vec::with_capacity(n_candidates);
+
     for i in 0..n_candidates {
         let freq = f_low + (f_high - f_low) * i as f64 / (n_candidates - 1).max(1) as f64;
         let omega = 2.0 * std::f64::consts::PI * freq / sample_rate_hz;
@@ -160,6 +164,7 @@ pub(crate) fn estimate_breathing_rate_hz(frame_history: &VecDeque<Vec<f64>>, sam
         }
         // Goertzel magnitude squared.
         let power = s_prev2 * s_prev2 + s_prev1 * s_prev1 - coeff * s_prev1 * s_prev2;
+        powers.push(power);
         if power > best_power {
             best_power = power;
             best_freq = freq;
@@ -167,24 +172,8 @@ pub(crate) fn estimate_breathing_rate_hz(frame_history: &VecDeque<Vec<f64>>, sam
     }
 
     // Only report a breathing rate if the Goertzel energy is meaningfully above noise.
-    // Threshold: power must exceed 10× the average power across all candidates.
-    let avg_power = {
-        let mut total = 0.0f64;
-        for i in 0..n_candidates {
-            let freq = f_low + (f_high - f_low) * i as f64 / (n_candidates - 1).max(1) as f64;
-            let omega = 2.0 * std::f64::consts::PI * freq / sample_rate_hz;
-            let coeff = 2.0 * omega.cos();
-            let mut s_prev2 = 0.0f64;
-            let mut s_prev1 = 0.0f64;
-            for &x in &detrended {
-                let s = x + coeff * s_prev1 - s_prev2;
-                s_prev2 = s_prev1;
-                s_prev1 = s;
-            }
-            total += s_prev2 * s_prev2 + s_prev1 * s_prev1 - coeff * s_prev1 * s_prev2;
-        }
-        total / n_candidates as f64
-    };
+    // Threshold: power must exceed 3× the average power across all candidates.
+    let avg_power = powers.iter().sum::<f64>() / n_candidates as f64;
 
     if best_power > avg_power * 3.0 {
         best_freq.clamp(f_low, f_high)
@@ -401,39 +390,94 @@ pub(crate) fn trimmed_mean(buf: &VecDeque<f64>) -> f64 {
 }
 
 /// Generate synthetic 17-point COCO skeleton pose keypoints for DensePose visualization.
-/// Used when a model is loaded via --model flag (placeholder until real ONNX model available).
+///
+/// Coordinates use **Three.js Y-up** space, matching the UI's `generatePose17` standing pose:
+///   - Head (nose) at y ≈ 1.72, feet (ankles) at y ≈ 0.04
+///   - Body centered around x=0, z=0
+///   - Grid plane at y=0
+///
+/// This is a placeholder until a real ONNX DensePose model is available;
+/// it drives the skeleton from CSI amplitude (→ scale) and motion_score (→ animation).
 pub(crate) fn generate_synthetic_pose(tick: u64, amplitudes: &[f64], motion_score: f64) -> Option<Vec<[f64; 4]>> {
     let t = tick as f64 * 0.1;
     let amp_mean = if amplitudes.is_empty() { 15.0 } else { amplitudes.iter().sum::<f64>() / amplitudes.len() as f64 };
-    let scale = (amp_mean / 20.0).clamp(0.5, 1.5);
-    let motion = motion_score.clamp(0.0, 1.0);
-    // 17 COCO keypoints: [x, y, z, confidence]
-    let kps: Vec<[f64; 4]> = vec![
-        [0.0, -1.6 * scale, 0.0, 0.9],           // 0  nose
-        [0.15 * scale, -1.5 * scale, 0.0, 0.85],  // 1  left_eye
-        [-0.15 * scale, -1.5 * scale, 0.0, 0.85], // 2  right_eye
-        [0.1 * scale, -1.35 * scale, 0.0, 0.8],   // 3  left_ear
-        [-0.1 * scale, -1.35 * scale, 0.0, 0.8],  // 4  right_ear
-        [0.25 * scale, -0.9 * scale, 0.1 * motion, 0.8],  // 5  left_shoulder
-        [-0.25 * scale, -0.9 * scale, 0.1 * motion, 0.8], // 6  right_shoulder
-        [0.2 * scale, -0.3 * scale, 0.05, 0.75],  // 7  left_elbow
-        [-0.2 * scale, -0.3 * scale, 0.05, 0.75], // 8  right_elbow
-        [0.1 * scale, 0.3 * scale, 0.0, 0.7],     // 9  left_wrist
-        [-0.1 * scale, 0.3 * scale, 0.0, 0.7],    // 10 right_wrist
-        [0.05 * scale, -0.65 * scale, 0.0, 0.8],  // 11 left_hip
-        [-0.05 * scale, -0.65 * scale, 0.0, 0.8], // 12 right_hip
-        [0.08 * scale, 0.0, 0.05 * motion, 0.7],  // 13 left_knee
-        [-0.08 * scale, 0.0, 0.05 * motion, 0.7], // 14 right_knee
-        [0.03 * scale, 0.65 * scale, 0.0, 0.65],  // 15 left_ankle
-        [-0.03 * scale, 0.65 * scale, 0.0, 0.65], // 16 right_ankle
+    let scale = (amp_mean / 20.0).clamp(0.7, 1.3); // person size: ~child to tall adult
+    let motion = if motion_score.is_finite() { motion_score.clamp(0.0, 1.0) } else { 0.0 };
+
+    // Standing pose base (Three.js Y-up coordinates, matches UI generatePose17)
+    // [x, y, z, confidence]  —  17 COCO keypoints
+    let base: [[f64; 3]; 17] = [
+        [0.00, 1.72,  0.00], // 0  nose
+        [0.03, 1.74, -0.02], // 1  left_eye
+        [-0.03, 1.74, -0.02], // 2  right_eye
+        [0.07, 1.72,  0.00], // 3  left_ear
+        [-0.07, 1.72,  0.00], // 4  right_ear
+        [0.22, 1.48,  0.00], // 5  left_shoulder
+        [-0.22, 1.48,  0.00], // 6  right_shoulder
+        [0.24, 1.18,  0.02], // 7  left_elbow
+        [-0.24, 1.18, -0.02], // 8  right_elbow
+        [0.22, 0.92,  0.05], // 9  left_wrist
+        [-0.22, 0.92, -0.05], // 10 right_wrist
+        [0.11, 0.98,  0.00], // 11 left_hip
+        [-0.11, 0.98,  0.00], // 12 right_hip
+        [0.12, 0.52,  0.00], // 13 left_knee
+        [-0.12, 0.52,  0.00], // 14 right_knee
+        [0.12, 0.04,  0.00], // 15 left_ankle
+        [-0.12, 0.04,  0.00], // 16 right_ankle
     ];
-    // 加入呼吸微动
-    let br_amp = 0.02 * scale * (t * 0.8).sin();
-    let kps_with_motion: Vec<[f64; 4]> = kps.iter().enumerate().map(|(i, k)| {
-        let y_shift = if i >= 5 && i <= 10 { br_amp } else { 0.0 };
-        [k[0] + (t * 0.5 + i as f64).sin() * motion * 0.05, k[1] + y_shift, k[2], k[3]]
+
+    // Confidence per keypoint (torso/head high, extremities taper)
+    let conf: [f64; 17] = [
+        0.90, 0.85, 0.85, 0.80, 0.80, // head
+        0.80, 0.80, 0.75, 0.75, 0.70, 0.70, // arms
+        0.80, 0.80, 0.70, 0.70, 0.65, 0.65, // legs
+    ];
+
+    // Build keypoints with motion animation
+    let br_amp = 0.015 * scale * (t * 0.8).sin(); // breathing ripple on torso
+    let kps: Vec<[f64; 4]> = base.iter().enumerate().map(|(i, b)| {
+        let sx = b[0] * scale;
+        let sy = b[1]; // height is NOT scaled — keep feet planted at y=0.04
+        let sz = b[2] * scale;
+
+        // Breathing: raise/lower shoulders and chest
+        let y_breath = if (5..=10).contains(&i) { br_amp } else { 0.0 };
+
+        // Walking: swing arms and legs
+        let walk_phase = t * 5.0 + i as f64 * 0.3;
+        let x_anim = if i == 9 || i == 10 {
+            // wrists swing
+            (walk_phase).sin() * motion * 0.15
+        } else if i == 7 || i == 8 {
+            (walk_phase).sin() * motion * 0.08
+        } else if i == 13 || i == 14 {
+            // knees
+            (walk_phase).sin() * motion * 0.06
+        } else if i == 15 || i == 16 {
+            // ankles (forward stride)
+            (walk_phase).sin() * motion * 0.2
+        } else {
+            0.0
+        };
+        let z_anim = if i == 15 || i == 16 {
+            (walk_phase).sin() * motion * 0.25
+        } else if i == 9 || i == 10 {
+            (walk_phase).cos() * motion * 0.08
+        } else {
+            0.0
+        };
+        // Idle sway
+        let sway = (t * 0.6).sin() * (1.0 - motion) * 0.01 * scale;
+
+        [
+            sx + x_anim + sway,
+            sy + y_breath,
+            sz + z_anim,
+            conf[i],
+        ]
     }).collect();
-    Some(kps_with_motion)
+
+    Some(kps)
 }
 
 // ── Simulated data generator ─────────────────────────────────────────────────
@@ -501,21 +545,41 @@ pub(crate) fn compute_person_score(feat: &FeatureInfo) -> f64 {
 /// Convert smoothed person score to discrete count with hysteresis.
 ///
 /// Uses asymmetric thresholds: higher threshold to *add* a person, lower to
-/// *drop* one.  This prevents flickering when the score hovers near a boundary
-/// (the #1 user-reported issue —see #237, #249, #280, #292).
+/// *drop* one.  This prevents flickering when the score hovers near a boundary.
+///
+/// Returns 0 when `smoothed_score` is below the noise floor (≤ 0.05) AND
+/// `prev_count` is 0 — unambiguous empty room.  Otherwise returns at least 1
+/// when the caller believes a person is present (checked via `classification.presence`).
 pub(crate) fn score_to_person_count(smoothed_score: f64, prev_count: usize) -> usize {
+    // BUG 15 fix: explicit noise-floor check — return 0 when score is negligible
+    // and no prior detection exists (empty room).
+    if prev_count == 0 && smoothed_score <= 0.05 {
+        return 0;
+    }
+
     // Up-thresholds (must exceed to increase count):
-    //   1→: 0.65  (raised from 0.50 —multipath in small rooms hit 0.50 easily)
-    //   2→: 0.85  (raised from 0.80 —3 persons needs strong sustained signal)
+    //   0→1: 0.40  (entry threshold — lower than previously; needs signal)
+    //   1→2: 0.65  (raised from 0.50 —multipath in small rooms hit 0.50 easily)
+    //   2→3: 0.85  (raised from 0.80 —3 persons needs strong sustained signal)
     // Down-thresholds (must drop below to decrease count):
-    //   2→: 0.45  (hysteresis gap of 0.20)
-    //   3→: 0.70  (hysteresis gap of 0.15)
+    //   1→0: 0.08  (exit threshold — very low score with presence=false)
+    //   2→1: 0.45  (hysteresis gap of 0.20)
+    //   3→2: 0.70  (hysteresis gap of 0.15)
     match prev_count {
-        0 | 1 => {
+        0 => {
+            if smoothed_score > 0.40 {
+                1
+            } else {
+                0
+            }
+        }
+        1 => {
             if smoothed_score > 0.85 {
                 3
             } else if smoothed_score > 0.65 {
                 2
+            } else if smoothed_score < 0.08 {
+                0
             } else {
                 1
             }

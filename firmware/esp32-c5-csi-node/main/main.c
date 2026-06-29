@@ -60,6 +60,13 @@ static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 #define MAX_RETRY 10
 
+/* BUG 4 fix: proper esp_timer_cb_t wrapper avoids UB function-pointer cast.
+ * wasm_runtime_on_timer() is void(void); esp_timer expects void(*)(void*). */
+static void wasm_timer_cb(void *arg) {
+    (void)arg;
+    wasm_runtime_on_timer();
+}
+
 static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data)
 {
@@ -232,9 +239,11 @@ void app_main(void)
             wasm_upload_register(ota_server);
         }
 
+        /* BUG 4 fix: use proper wrapper instead of UB function-pointer cast.
+         * wasm_runtime_on_timer is void(void) but esp_timer_cb_t is void(*)(void*). */
         /* Start periodic timer for wasm_runtime_on_timer(). */
         esp_timer_create_args_t timer_args = {
-            .callback = (void (*)(void *))wasm_runtime_on_timer,
+            .callback = wasm_timer_cb,
             .arg = NULL,
             .dispatch_method = ESP_TIMER_TASK,
             .name = "wasm_timer",

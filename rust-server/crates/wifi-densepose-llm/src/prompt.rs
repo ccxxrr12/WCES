@@ -75,8 +75,10 @@ impl PromptCompiler {
     }
 
     fn estimate_tokens(text: &str) -> u16 {
-        // Rough: Chinese chars ~1 token, English words ~1.3 tokens per word
-        (text.chars().count() as f32 * 0.65) as u16
+        // ASCII chars ~0.25 tokens (English text tokenizes at ~4 chars/token).
+        // CJK / non-ASCII chars ~1.5 tokens each (often 1-2 tokens per char).
+        let tokens: f32 = text.chars().map(|c| if c.is_ascii() { 0.25 } else { 1.5 }).sum();
+        tokens as u16
     }
 }
 

@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::f64::consts::PI;
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 // ── Configuration constants ────────────────────────────────────────────────
 
@@ -64,6 +65,7 @@ impl Default for VitalSigns {
 
 /// Stateful vital sign detector. Maintains rolling buffers of CSI amplitude
 /// data and extracts breathing and heart rate via spectral analysis.
+#[derive(Clone)]
 pub struct VitalSignDetector {
     /// Rolling buffer of mean-amplitude samples for breathing detection.
     breathing_buffer: VecDeque<f64>,
@@ -106,6 +108,12 @@ impl VitalSignDetector {
             heartbeat_capacity: heartbeat_capacity.max(1),
             frame_count: 0,
         }
+    }
+
+    /// Update the sample rate dynamically based on measured frame arrival intervals.
+    /// Does not resize internal buffers (initial capacity is preserved).
+    pub fn set_sample_rate(&mut self, rate: f64) {
+        self.sample_rate = rate.clamp(5.0, 100.0);
     }
 
     /// Process one CSI frame and return updated vital signs.
@@ -224,8 +232,13 @@ impl VitalSignDetector {
         signal[..buffer.len()].copy_from_slice(buffer);
 
         // Apply Hann window to reduce spectral leakage
-        for i in 0..buffer.len() {
-            let w = 0.5 * (1.0 - (2.0 * PI * i as f64 / (buffer.len() as f64 - 1.0)).cos());
+        // BUG 12 fix: guard against single-sample buffer (division by zero)
+        let n = buffer.len();
+        if n <= 1 {
+            return (None, 0.0);
+        }
+        for i in 0..n {
+            let w = 0.5 * (1.0 - (2.0 * PI * i as f64 / (n as f64 - 1.0)).cos());
             signal[i] *= w;
         }
 
@@ -294,12 +307,16 @@ impl VitalSignDetector {
 
         let bpm = peak_freq * 60.0;
 
-        // Confidence mapping: peak_ratio >= CONFIDENCE_THRESHOLD maps to high confidence
-        let confidence = if peak_ratio >= CONFIDENCE_THRESHOLD {
-            ((peak_ratio - 1.0) / (CONFIDENCE_THRESHOLD * 2.0 - 1.0)).clamp(0.0, 1.0)
+        // BUG 5 fix: continuous confidence mapping, no jump at threshold.
+        // Below threshold: linear 0→0.5.  Above: asymptotic 0.5→1.0.
+        let confidence = if peak_ratio < CONFIDENCE_THRESHOLD {
+            // 1.0 → 0.0,  CONFIDENCE_THRESHOLD → 0.5
+            ((peak_ratio - 1.0) / (CONFIDENCE_THRESHOLD - 1.0)) * 0.5
         } else {
-            ((peak_ratio - 1.0) / (CONFIDENCE_THRESHOLD - 1.0) * 0.5).clamp(0.0, 0.5)
+            // CONFIDENCE_THRESHOLD → 0.5,  ∞ → 1.0
+            0.5 + (1.0 - 1.0 / (peak_ratio - CONFIDENCE_THRESHOLD + 1.0)) * 0.5
         };
+        let confidence = confidence.clamp(0.0, 1.0);
 
         if confidence > 0.05 {
             (Some(bpm), confidence)
@@ -380,7 +397,10 @@ pub fn bandpass_filter(data: &[f64], low_hz: f64, high_hz: f64, sample_rate: f64
     let high_norm = high_hz / sample_rate;
 
     if low_norm >= high_norm || low_norm >= 0.5 || high_norm <= 0.0 {
-        return data.to_vec();
+        // BUG 13 fix: return attenuated signal instead of raw data to avoid feeding
+        // unfiltered noise into FFT peak detector when band parameters are invalid.
+        warn!("bandpass_filter: invalid cutoff range low={low_hz} high={high_hz} sr={sample_rate}, returning zeros");
+        return vec![0.0; data.len()];
     }
 
     // FIR filter order: ~3 cycles of the lowest frequency, clamped to [5, 127]
@@ -455,6 +475,13 @@ fn fft_magnitude(signal: &[f64]) -> Vec<f64> {
 
     if n <= 1 {
         return signal.to_vec();
+    }
+
+    // BUG 17 fix: guard against size overflow for pathological input sizes.
+    // In practice n ≤ 16384 (next_power_of_two of the ~5000 sample buffer),
+    // but a defensive check prevents panic if that assumption changes.
+    if n > 65536 {
+        return signal.to_vec(); // too large for safe radix-2 FFT
     }
 
     // Convert to complex (imaginary = 0)

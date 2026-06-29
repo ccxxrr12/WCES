@@ -64,8 +64,9 @@ const BONE_TAPER = (() => {
   return tapers;
 })();
 
-// Secondary motion delay factors per joint — extremities lag more
-const SECONDARY_DELAY = [
+// Secondary motion responsiveness per joint — higher = faster convergence
+// Hips are most anchored (0.20 = fast follow), wrists have most lag (0.10 = slow follow)
+const SECONDARY_RESPONSIVENESS = [
   0.12, // 0 nose
   0.10, // 1 left eye
   0.10, // 2 right eye
@@ -312,9 +313,9 @@ export class FigurePool {
         const prev = fig.prevPositions[i];
         const vel = fig.velocities[i];
 
-        // Smooth lerp with per-joint delay
-        const delay = SECONDARY_DELAY[i];
-        const jointLerp = lerpFactor + delay;
+        // Smooth lerp with per-joint responsiveness (higher = faster follow)
+        const responsiveness = SECONDARY_RESPONSIVENESS[i];
+        const jointLerp = lerpFactor + responsiveness;
         j.position.lerp(_vecTarget, Math.min(jointLerp, 0.95));
 
         // Apply subtle overshoot based on velocity change

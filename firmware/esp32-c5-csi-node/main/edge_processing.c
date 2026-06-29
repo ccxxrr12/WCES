@@ -37,6 +37,23 @@ extern nvs_config_t g_nvs_config;
 static const char *TAG = "edge_proc";
 
 /* ======================================================================
+ * BSS Memory Budget (Bug 2 doc)
+ * ======================================================================
+ * Total static .bss from this file: ~72 KB on ESP32-C5 (2068-byte IQ slots).
+ * C5 has 400 KB SRAM total; ~80 KB is reserved for WiFi/BT/lwIP stack, leaving
+ * ~320 KB for application. This file's allocations consume ~22% of app SRAM.
+ *
+ * Breakdown (C5 worst-case with EDGE_MAX_IQ_BYTES=2068):
+ *   s_ring            ~33.1 KB  (16 slots x 2068+ bytes)
+ *   s_subcarrier_var   ~10.0 KB  (512 x 20-byte welford_t)
+ *   s_person state     ~12.3 KB  (4 persons: history + filtered + biquad)
+ *   s_phase_history     ~1.0 KB  (256 floats)
+ *   s_*_filtered        ~2.0 KB  (breathing + heartrate history)
+ *   s_prev_iq           ~2.0 KB  (delta compression reference)
+ *   static locals       ~9.3 KB  (phases, amplitudes, variances, xor_buf, comp_buf, pkt)
+ *   misc (top_k, bq, cfg, etc.) ~2.3 KB
+ * ======================================================================
+ *
  * SPSC Ring Buffer (lock-free, single-producer single-consumer)
  * ====================================================================== */
 
@@ -96,6 +113,14 @@ static inline bool ring_pop(edge_ring_slot_t *out)
 static void biquad_bandpass_design(edge_biquad_t *bq, float fs,
                                    float f_lo, float f_hi)
 {
+    /* Bug 1 fix: guard against fs==0 which produces Inf/NaN coefficients via
+     * division by zero. Currently fs is hardcoded to 20.0f at init, but if
+     * future code makes it configurable this prevents silent garbage. */
+    if (fs <= 0.0f) {
+        memset(bq, 0, sizeof(*bq));
+        return;
+    }
+
     float w0 = 2.0f * M_PI * (f_lo + f_hi) / 2.0f / fs;
     float bw = 2.0f * M_PI * (f_hi - f_lo) / fs;
     float alpha = sinf(w0) * sinhf(logf(2.0f) / 2.0f * bw / sinf(w0));
@@ -389,8 +414,9 @@ static uint16_t delta_compress(const uint8_t *curr, uint16_t len,
         return 0;
     }
 
-    /* XOR delta. */
-    uint8_t xor_buf[EDGE_MAX_IQ_BYTES];
+    /* BUG 2 fix: static to avoid stack overflow on C5 (8KB task stack).
+     * EDGE_MAX_IQ_BYTES=2068; three such buffers in call chain would exceed stack. */
+    static uint8_t xor_buf[EDGE_MAX_IQ_BYTES];
     for (uint16_t i = 0; i < len; i++) {
         xor_buf[i] = curr[i] ^ s_prev_iq[i];
     }
@@ -435,7 +461,18 @@ static uint16_t delta_compress(const uint8_t *curr, uint16_t len,
 static void send_compressed_frame(const uint8_t *iq_data, uint16_t iq_len,
                                   uint8_t channel)
 {
-    uint8_t comp_buf[EDGE_MAX_IQ_BYTES];
+    /* BUG 6 fix: rate-limit compressed sends to 2 Hz (compression is expensive
+     * and high-rate IQ streaming is not the primary use case). */
+    #define COMP_MIN_SEND_INTERVAL_US  (500 * 1000)  /* 500 ms = 2 Hz */
+    static int64_t s_last_comp_send_us = 0;
+    int64_t now = esp_timer_get_time();
+    if ((now - s_last_comp_send_us) < COMP_MIN_SEND_INTERVAL_US) {
+        return;
+    }
+    s_last_comp_send_us = now;
+
+    /* BUG 2 fix: static to avoid stack overflow (see delta_compress) */
+    static uint8_t comp_buf[EDGE_MAX_IQ_BYTES];
     uint16_t comp_len = delta_compress(iq_data, iq_len,
                                        comp_buf, sizeof(comp_buf));
     if (comp_len == 0) {
@@ -443,9 +480,10 @@ static void send_compressed_frame(const uint8_t *iq_data, uint16_t iq_len,
         goto store_prev;
     }
 
-    /* Build compressed frame packet. */
+    /* Build compressed frame packet.
+     * BUG 2 fix: static to avoid stack overflow on C5 (8KB task stack). */
     uint16_t pkt_size = 10 + comp_len;
-    uint8_t pkt[10 + EDGE_MAX_IQ_BYTES];
+    static uint8_t pkt[10 + EDGE_MAX_IQ_BYTES];
 
     uint32_t magic = EDGE_COMPRESSED_MAGIC;
     memcpy(&pkt[0], &magic, 4);
@@ -531,7 +569,12 @@ static void update_multi_person_vitals(const uint8_t *iq_data, uint16_t n_sc,
 
         /* Estimate BPM when we have enough history. */
         if (pv->history_len >= 64) {
-            /* Build contiguous buffer for zero-crossing. */
+            /* Build contiguous buffer for zero-crossing.
+             * Bug 3 note: br_buf + hr_buf = 2048 bytes on the stack, combined
+             * with the caller process_frame()'s own stack usage (~5 KB including
+             * phases[], amplitudes[], variances[]) — approaches the 8 KB task
+             * stack limit. If stack overflow symptoms appear (LoadProhibited in
+             * edge_dsp), move these to static (safe: single-task DSP pipeline). */
             float br_buf[EDGE_PHASE_HISTORY_LEN];
             float hr_buf[EDGE_PHASE_HISTORY_LEN];
             uint16_t buf_len = pv->history_len;
@@ -564,6 +607,16 @@ static void update_multi_person_vitals(const uint8_t *iq_data, uint16_t n_sc,
 
 static void send_vitals_packet(void)
 {
+    /* BUG 6 fix: rate-limit vitals UDP sends to avoid flooding lwIP pbuf pool.
+     * Vitals change slowly (breathing/heart rate), so 5 Hz is more than enough. */
+    #define VITALS_MIN_SEND_INTERVAL_US  (200 * 1000)  /* 200 ms = 5 Hz */
+    static int64_t s_last_vitals_pkt_send_us = 0;
+    int64_t now = esp_timer_get_time();
+    if ((now - s_last_vitals_pkt_send_us) < VITALS_MIN_SEND_INTERVAL_US) {
+        return;
+    }
+    s_last_vitals_pkt_send_us = now;
+
     edge_vitals_pkt_t pkt;
     memset(&pkt, 0, sizeof(pkt));
 
@@ -713,7 +766,12 @@ static void process_frame(const edge_ring_slot_t *slot)
 
     /* --- Step 7: BPM estimation (zero-crossing) --- */
     if (s_history_len >= 64) {
-        /* Build contiguous buffers from ring. */
+        /* Build contiguous buffers from ring.
+         * Bug 3 note: br_buf + hr_buf = 2048 bytes on the stack. Combined with
+         * phases[], amplitudes[], variances[] (static locals, ~6 KB) and the
+         * FreeRTOS context frame, the total approaches the 8 KB task stack limit.
+         * If LoadProhibited crashes appear in edge_dsp, move these to static
+         * (safe: single-task DSP pipeline). */
         float br_buf[EDGE_PHASE_HISTORY_LEN];
         float hr_buf[EDGE_PHASE_HISTORY_LEN];
         uint16_t buf_len = s_history_len;
@@ -893,11 +951,16 @@ bool edge_get_vitals(edge_vitals_pkt_t *pkt)
 
 void edge_get_multi_person(edge_person_vitals_t *persons, uint8_t *n_active)
 {
+    /* BUG 3 fix: acquire spinlock to prevent tearing on the 1032+ byte
+     * s_persons struct during concurrent writes from the DSP task. */
+    static portMUX_TYPE s_persons_spinlock = portMUX_INITIALIZER_UNLOCKED;
     uint8_t active = 0;
+    taskENTER_CRITICAL(&s_persons_spinlock);
     for (uint8_t p = 0; p < EDGE_MAX_PERSONS; p++) {
         if (persons) persons[p] = s_persons[p];
         if (s_persons[p].active) active++;
     }
+    taskEXIT_CRITICAL(&s_persons_spinlock);
     if (n_active) *n_active = active;
 }
 

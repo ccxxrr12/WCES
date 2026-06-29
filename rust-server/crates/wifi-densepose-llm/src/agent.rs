@@ -266,7 +266,9 @@ impl MedicalAgent {
                     "LLM gateway failed for patient {}: {}, falling back to template",
                     patient_id, e
                 );
-                self.degradation.on_network_change(false);
+                // Do NOT call on_network_change(false) here — a single transient
+                // stream error should not permanently disable the network path.
+                // The circuit breaker already handles persistent failures.
                 return self.template_with_kb(ctx);
             }
         };
@@ -361,13 +363,25 @@ impl MedicalAgent {
             )
         }).unwrap_or_default();
 
+        // NOTE: StructuredContext carries a single vitals_trend_1min that aggregates
+        // both BR and HR into one direction/delta. When heart_rate_bpm is absent we
+        // cannot infer a meaningful HR-specific trend, so we fall back to Stable/0.
+        let hr_present = ctx.vitals_current.heart_rate_bpm.is_some();
         let trend = VitalTrendSummary {
             rr_mean: ctx.vitals_current.breathing_rate_bpm.unwrap_or(16.0) as f64,
             rr_trend: ctx.vitals_trend_1min.direction,
             rr_change_pct: ctx.vitals_trend_1min.delta_pct as f64,
-            hr_mean: ctx.vitals_current.heart_rate_bpm.unwrap_or(72.0) as f64,
-            hr_trend: ctx.vitals_trend_1min.direction,
-            hr_change_pct: ctx.vitals_trend_1min.delta_pct as f64,
+            hr_mean: ctx.vitals_current.heart_rate_bpm.unwrap_or(0.0) as f64,
+            hr_trend: if hr_present {
+                ctx.vitals_trend_1min.direction
+            } else {
+                crate::sliding_window::TrendDirection::Stable
+            },
+            hr_change_pct: if hr_present {
+                ctx.vitals_trend_1min.delta_pct as f64
+            } else {
+                0.0
+            },
             motion_pattern: crate::sliding_window::MotionPattern::ContinuousStill,
             ..Default::default()
         };

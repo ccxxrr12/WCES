@@ -76,12 +76,11 @@ impl CircuitBreaker {
                 self.failure_count.store(0, Ordering::Release);
             }
             STATE_HALF_OPEN => {
-                if self.success_count.fetch_add(1, Ordering::AcqRel) + 1
-                    >= self.config.failure_threshold as u64
-                {
-                    self.state.store(STATE_CLOSED, Ordering::Release);
-                    self.failure_count.store(0, Ordering::Release);
-                }
+                // Standard circuit-breaker pattern: a single success in half-open
+                // is enough to prove the downstream is healthy again.
+                self.state.store(STATE_CLOSED, Ordering::Release);
+                self.failure_count.store(0, Ordering::Release);
+                self.success_count.store(0, Ordering::Release);
             }
             _ => {}
         }

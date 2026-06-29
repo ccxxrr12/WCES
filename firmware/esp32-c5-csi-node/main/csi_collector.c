@@ -102,7 +102,9 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
         return 0;
     }
 
-    uint8_t n_antennas = 1;  /* Single antenna for CSI (C5/S3 default) */
+    /* BUG 11 fix: read actual antenna count from rx_ctrl instead of hardcoding.
+     * C5 is single-antenna but other targets (S3) may have 2+. Fall back to 1. */
+    uint8_t n_antennas = (info->rx_ctrl.rx_ant > 0) ? (uint8_t)(info->rx_ctrl.rx_ant + 1) : 1;
 
     /* ADR-060: C5/C6/C61 may report first_word_invalid when AGC corrupts lead I/Q. */
     uint16_t iq_offset = 0;
@@ -111,7 +113,19 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
         iq_offset = 2;  /* Skip first invalid I/Q pair. */
     }
 #endif
-    if (info->len <= 0 || (uint16_t)info->len < iq_offset + 2) {
+    if (info->len <= 0) {
+        return 0;
+    }
+    /* Bug 4: info->len is int (signed 32-bit on ESP32). The `(uint16_t)` cast
+     * below is safe because: (a) the <= 0 check already eliminates negatives,
+     * (b) info->len memory is 2^(len+2) capped at 2068 bytes (EDGE_MAX_IQ_BYTES)
+     * which fits comfortably in uint16_t. The explicit range check defends against
+     * a future where the CSI buffer grows beyond 65535 bytes. */
+    if (info->len > UINT16_MAX) {
+        ESP_LOGW(TAG, "CSI len %d exceeds UINT16_MAX, rejecting frame", info->len);
+        return 0;
+    }
+    if ((uint16_t)info->len < iq_offset + 2) {
         return 0;  /* Not enough data after skipping invalid word. */
     }
     uint16_t iq_len = (uint16_t)info->len - iq_offset;
@@ -243,17 +257,9 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
                          (int8_t)info->rx_ctrl.rssi, info->rx_ctrl.channel);
     }
 }
-
-/**
- * Promiscuous mode callback — required for CSI to fire on all received frames.
- * We don't need the packet content, just the CSI triggered by reception.
- */
-static void wifi_promiscuous_cb(void *buf, wifi_promiscuous_pkt_type_t type)
-{
-    /* No-op: CSI callback is registered separately and fires in parallel. */
-    (void)buf;
-    (void)type;
-}
+/* BUG 9: wifi_promiscuous_cb removed — dead code.
+ * Promiscuous mode is OFF; CSI is extracted from normal STA RX path.
+ * If promiscuous is re-enabled, register via esp_wifi_set_promiscuous_rx_cb(). */
 
 void csi_collector_init(void)
 {

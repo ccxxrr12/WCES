@@ -25,8 +25,7 @@
  *  WiFi 4 (S3/C3) 40MHz: up to 114 subcarriers.
  *  Formula: header + max_antennas * max_subcarriers * 2 bytes (I/Q)
  *  = 20 + 4 * 512 * 2 = 4116 bytes.
- *  NOTE: Stack-allocated in CSI callback. C5 has 400KB SRAM; ensure
- *  CONFIG_ESP_MAIN_TASK_STACK_SIZE >= 7168 to accommodate this. */
+ *  NOTE: Static (BSS) buffer, not stack — safe for C5's 400KB SRAM. */
 #define CSI_MAX_FRAME_SIZE (CSI_HEADER_SIZE + 4 * 512 * 2)
 
 /** Maximum number of channels in the hop table (ADR-029). */

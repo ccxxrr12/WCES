@@ -1,7 +1,7 @@
 //! UDP receiver task: receives ESP32 CSI frames, parses vitals/WASM packets,
 //! extracts features, processes vitals, and broadcasts sensing updates.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
 use tokio::sync::Semaphore;
@@ -14,7 +14,7 @@ use crate::types::{
 };
 use crate::SharedState;
 use crate::signal_processing::*;
-use crate::state_ops::{smooth_and_classify, adaptive_override, smooth_vitals};
+use crate::state_ops::{adaptive_override, smooth_and_classify_node, smooth_vitals_node};
 use crate::parser::{parse_esp32_frame, parse_esp32_vitals, parse_wasm_output};
 use crate::mat_pipeline::VitalSignsInput;
 
@@ -38,6 +38,10 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
     // Limit concurrent agent analyses to prevent unbounded task growth
     let agent_sem = Arc::new(Semaphore::new(4));
 
+    // Broadcast throttle: max ~10 Hz to prevent WebSocket channel overflow
+    let mut last_broadcast = Instant::now();
+    const BROADCAST_INTERVAL_MS: u64 = 100; // 10 Hz max
+
     let mut buf = [0u8; 2048];
     loop {
         match socket.recv_from(&mut buf).await {
@@ -48,21 +52,24 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                            vitals.node_id, vitals.breathing_rate_bpm,
                            vitals.heartrate_bpm, vitals.presence);
                     let mut s = state.write().await;
-                    // Broadcast vitals via WebSocket.
-                    if let Ok(json) = serde_json::to_string(&serde_json::json!({
-                        "type": "edge_vitals",
-                        "node_id": vitals.node_id,
-                        "presence": vitals.presence,
-                        "fall_detected": vitals.fall_detected,
-                        "motion": vitals.motion,
-                        "breathing_rate_bpm": vitals.breathing_rate_bpm,
-                        "heartrate_bpm": vitals.heartrate_bpm,
-                        "n_persons": vitals.n_persons,
-                        "motion_energy": vitals.motion_energy,
-                        "presence_score": vitals.presence_score,
-                        "rssi": vitals.rssi,
-                    })) {
-                        let _ = s.tx.send(json);
+                    let now = Instant::now();
+                    if now.duration_since(last_broadcast) >= Duration::from_millis(BROADCAST_INTERVAL_MS) {
+                        last_broadcast = now;
+                        if let Ok(json) = serde_json::to_string(&serde_json::json!({
+                            "type": "edge_vitals",
+                            "node_id": vitals.node_id,
+                            "presence": vitals.presence,
+                            "fall_detected": vitals.fall_detected,
+                            "motion": vitals.motion,
+                            "breathing_rate_bpm": vitals.breathing_rate_bpm,
+                            "heartrate_bpm": vitals.heartrate_bpm,
+                            "n_persons": vitals.n_persons,
+                            "motion_energy": vitals.motion_energy,
+                            "presence_score": vitals.presence_score,
+                            "rssi": vitals.rssi,
+                        })) {
+                            let _ = s.tx.send(json);
+                        }
                     }
                     s.edge_vitals = Some(vitals);
                     continue;
@@ -95,51 +102,81 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                     let (features, classification, breathing_rate_hz, sub_variances,
                          _raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
-                         prev_triage, agent_handle) =
+                         prev_triage, agent_handle, node_snapshot) =
                     {
                         let mut s = state.write().await;
                         s.source = "esp32".to_string();
                         s.last_esp32_frame = Some(std::time::Instant::now());
 
-                        // Append current amplitudes to history before extracting features so
-                        // that temporal analysis includes the most recent frame.
-                        s.frame_history.push_back(frame.amplitudes.clone());
-                        if s.frame_history.len() > FRAME_HISTORY_CAPACITY {
-                            s.frame_history.pop_front();
+                        let vitals;
+                        let features;
+                        let mut classification;
+                        let br_hz;
+                        let variances;
+                        let raw_motion;
+                        let tick;
+                        let motion_score;
+                        let smoothed_motion;
+                        {
+                            // ── Per-node independent pipeline ──
+                            let ns = s.node_states.entry(frame.node_id)
+                                .or_insert_with(|| crate::types::PerNodeState::new(20.0));
+
+                            // Dynamic sample rate: measure actual frame arrival interval
+                            // and smooth with EMA to adapt to real ESP32-C5 transmission rate.
+                            let now = std::time::Instant::now();
+                            if let Some(prev) = ns.last_frame_time {
+                                let dt = now.duration_since(prev).as_secs_f64();
+                                if dt > 0.001 && dt < 1.0 {
+                                    // valid interval: 1ms–1s → 1–1000 Hz
+                                    let instantaneous = 1.0 / dt;
+                                    // EMA α=0.15 — adapts within ~1 second at 20 Hz
+                                    ns.measured_sample_rate = ns.measured_sample_rate * 0.85
+                                                           + instantaneous * 0.15;
+                                }
+                            }
+                            ns.last_frame_time = Some(now);
+                            ns.tick += 1;
+                            ns.frame_history.push_back(frame.amplitudes.clone());
+                            if ns.frame_history.len() > FRAME_HISTORY_CAPACITY { ns.frame_history.pop_front(); }
+
+                            // Use dynamically-measured sample rate instead of hardcoded 20 Hz
+                            let sample_rate_hz = ns.measured_sample_rate;
+                            ns.vital_detector.set_sample_rate(sample_rate_hz);
+                            let (f, mut c, b, v, rm) = extract_features_from_frame(&frame, &ns.frame_history, sample_rate_hz);
+                            features = f; classification = c; br_hz = b; variances = v; raw_motion = rm;
+                            smooth_and_classify_node(ns, &mut classification, raw_motion);
+
+                            ns.rssi_history.push_back(features.mean_rssi);
+                            if ns.rssi_history.len() > 60 { ns.rssi_history.pop_front(); }
+
+                            tick = ns.tick;
+                            motion_score = if classification.motion_level == "active" { 0.8 }
+                                else if classification.motion_level == "present_still" { 0.3 } else { 0.05 };
+
+                            let sensitive_sc = select_sensitive_subcarriers(&ns.frame_history, frame.n_subcarriers as usize, 30);
+                            let selected_amps = extract_selected_amplitudes(&frame.amplitudes, &sensitive_sc);
+                            let selected_phases = extract_selected_amplitudes(&frame.phases, &sensitive_sc);
+                            let raw_vitals = ns.vital_detector.process_frame(
+                                if selected_amps.len() >= 10 { &selected_amps } else { &frame.amplitudes },
+                                if selected_phases.len() >= 10 { &selected_phases } else { &frame.phases },
+                            );
+                            vitals = smooth_vitals_node(ns, &raw_vitals);
+                            ns.latest_vitals = vitals.clone();
+                            // Capture per-node smoothed_motion for global backward-compat
+                            smoothed_motion = ns.smoothed_motion;
+                            // ns dropped here — releases borrow on s.node_states
                         }
 
-                        let sample_rate_hz = 50.0; // ESP32 CSI frames arrive at ~20-100 Hz via lwIP
-                        let (features, mut classification, br_hz, variances, raw_motion) =
-                            extract_features_from_frame(&frame, &s.frame_history, sample_rate_hz);
-                        smooth_and_classify(&mut s, &mut classification, raw_motion);
+                        // Update global fields for backward compatibility
+                        s.smoothed_motion = smoothed_motion;
+
+                        // Apply adaptive model override if a trained classifier is loaded
                         adaptive_override(&s, &features, &mut classification);
 
-                        // Update RSSI history
-                        s.rssi_history.push_back(features.mean_rssi);
-                        if s.rssi_history.len() > 60 {
-                            s.rssi_history.pop_front();
-                        }
-
-                        s.tick += 1;
-                        let tick = s.tick;
-
-                        let motion_score = if classification.motion_level == "active" { 0.8 }
-                            else if classification.motion_level == "present_still" { 0.3 }
-                            else { 0.05 };
-
-                        // 子载波灵敏度选择: 取 top-30 高方差子载波提升生命体征SNR
-                        let sensitive_sc = select_sensitive_subcarriers(
-                            &s.frame_history, frame.n_subcarriers as usize, 30
-                        );
-                        let selected_amps = extract_selected_amplitudes(&frame.amplitudes, &sensitive_sc);
-                        let selected_phases = extract_selected_amplitudes(&frame.phases, &sensitive_sc);
-
-                        let raw_vitals = s.vital_detector.process_frame(
-                            if selected_amps.len() >= 10 { &selected_amps } else { &frame.amplitudes },
-                            if selected_phases.len() >= 10 { &selected_phases } else { &frame.phases },
-                        );
-                        let vitals = smooth_vitals(&mut s, &raw_vitals);
+                        // Update global fields for backward compatibility (latest frame wins)
                         s.latest_vitals = vitals.clone();
+                        s.tick = tick;
 
                         // LLM analysis: push vitals into sliding windows for trend analysis
                         // Inline — push_vitals is fast (lock+window push), no need to spawn
@@ -165,7 +202,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             node_id: frame.node_id,
                             rssi: features.mean_rssi,
                         };
-                        let triage_update = Some(s.triage_engine.process(&triage_input));
+                        let triage_update = Some(s.node_states.get_mut(&frame.node_id).expect("node state missing").triage_engine.process(&triage_input));
 
                         // Edge module engine: run all 10 modules
                         let amps_f32: Vec<f32> = frame.amplitudes.iter().map(|a| *a as f32).collect();
@@ -178,15 +215,15 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
 
                         // Multi-person estimation with temporal smoothing (EMA α=0.10).
                         let raw_score = compute_person_score(&features);
-                        s.smoothed_person_score = s.smoothed_person_score * 0.90 + raw_score * 0.10;
+                        { let ns2 = s.node_states.get_mut(&frame.node_id).expect("node state missing");
+                          ns2.smoothed_person_score = ns2.smoothed_person_score * 0.90 + raw_score * 0.10; }
+                        let ns3 = s.node_states.get_mut(&frame.node_id).expect("node state missing");
                         let est_persons = if classification.presence {
-                            let count = score_to_person_count(s.smoothed_person_score, s.prev_person_count);
-                            s.prev_person_count = count;
+                            let count = score_to_person_count(ns3.smoothed_person_score, ns3.prev_person_count);
+                            ns3.prev_person_count = count;
                             count
-                        } else {
-                            s.prev_person_count = 0;
-                            0
-                        };
+                        } else { ns3.prev_person_count = 0; 0 };
+                        // ns3 borrow released here
 
                         let model_loaded = s.model_loaded;
                         let rssi_mean = features.mean_rssi;
@@ -197,11 +234,30 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             .and_then(|t| t.survivors.first().map(|s| s.triage.clone()));
                         let agent_handle = s.medical_agent.clone();
 
+                        // Clone node data for building NodeInfo outside the lock
+                        let node_snapshot: Vec<_> = s.node_states.iter().map(|(&id, ns)| {
+                            (id, ns.last_frame_time, ns.rssi_history.back().copied().unwrap_or(0.),
+                             ns.latest_vitals.breathing_rate_bpm, ns.latest_vitals.heart_rate_bpm,
+                             ns.current_motion_level.clone(), ns.latest_vitals.breathing_rate_bpm.is_some())
+                        }).collect();
+
                         (features, classification, br_hz, variances,
                          raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
-                         prev_triage, agent_handle)
+                         prev_triage, agent_handle, node_snapshot)
                     }; // ── write lock released ──
+
+                    // Build multi-node info from snapshot (no lock held)
+                    let now = Instant::now();
+                    let timeout = Duration::from_secs(5);
+                    let all_nodes: Vec<NodeInfo> = node_snapshot.iter().map(|&(nid, last_t, rssi, br, hr, ref ml, pres)| {
+                        let active = last_t.map(|t| now.duration_since(t) < timeout).unwrap_or(false);
+                        if nid == frame.node_id {
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: [2.,0.,1.5], amplitude: frame.amplitudes.iter().take(56).cloned().collect(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: frame.freq_mhz as u8, band: "5GHz".into() }
+                        } else if active {
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: [2.,0.,1.5], amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: br, heart_rate_bpm: hr, motion_level: Some(ml.clone()), presence: pres, active: true, channel: 0, band: "5GHz".into() }
+                        } else { NodeInfo { node_id: nid, rssi_dbm: 0., position: [2.,0.,1.5], amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: None, heart_rate_bpm: None, motion_level: None, presence: false, active: false, channel: 0, band: "".into() } }
+                    }).collect();
 
                     // ── Agent trigger: spawn analysis on triage escalation only ──
                     let curr_triage = triage_update.as_ref()
@@ -269,12 +325,26 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                                 // in `agent_guard.analyze(ctx).await`. This is a known trade-off:
                                 // MedicalAgent::analyze requires &mut self, so the lock must be
                                 // held for the entire analysis duration. The Semaphore above
-                                // (max 4 concurrent analyses) bounds the contention. A future
-                                // improvement would be to refactor MedicalAgent to use an
-                                // internal channel (mpsc) so that the lock is only held for
-                                // dispatching the request, not for the entire LLM round-trip.
+                                // (max 4 concurrent analyses) bounds the contention.
+                                // A tokio::time::timeout wraps the analyze call so a hung LLM
+                                // request cannot hold the lock indefinitely.
+                                let patient_id = ctx.patient_id;
                                 let mut agent_guard = agent.lock().await;
-                                let result = agent_guard.analyze(ctx).await;
+                                let result = match tokio::time::timeout(
+                                    Duration::from_secs(30),
+                                    agent_guard.analyze(ctx),
+                                )
+                                .await
+                                {
+                                    Ok(r) => r,
+                                    Err(_elapsed) => {
+                                        warn!(
+                                            "Agent analysis timed out for patient {}",
+                                            patient_id
+                                        );
+                                        return;
+                                    }
+                                };
                                 drop(agent_guard);
 
                                 if !result.text.is_empty() {
@@ -311,13 +381,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         timestamp: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
                         source: "esp32".to_string(),
                         tick,
-                        nodes: vec![NodeInfo {
-                            node_id: frame.node_id,
-                            rssi_dbm: rssi_mean,
-                            position: [2.0, 0.0, 1.5],
-                            amplitude: frame.amplitudes.iter().take(56).cloned().collect(),
-                            subcarrier_count: frame.n_subcarriers as usize,
-                        }],
+                        nodes: all_nodes,
                         features: features.clone(),
                         classification,
                         signal_field: generate_signal_field(
@@ -346,10 +410,19 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         }
                     };
 
-                    // ═══ Phase 3: Quick write lock — broadcast ═══
-                    {
+                    // ═══ Phase 3: Quick write lock — broadcast (throttled) ═══
+                    let now = Instant::now();
+                    if now.duration_since(last_broadcast) >= Duration::from_millis(BROADCAST_INTERVAL_MS) {
+                        last_broadcast = now;
+                        {
+                            let mut s = state.write().await;
+                            // Use try_send to avoid blocking if channel is full
+                            let _ = s.tx.send(json);
+                            s.latest_update = Some(update);
+                        }
+                    } else {
+                        // Still update latest_update so broadcast_tick can pick it up
                         let mut s = state.write().await;
-                        let _ = s.tx.send(json);
                         s.latest_update = Some(update);
                     }
                 }
@@ -366,6 +439,9 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
 fn is_triage_escalation(from: &str, to: &str) -> bool {
     fn severity(t: &str) -> u8 {
         match t {
+            // BUG 7 fix: "Deceased" is the most severe outcome, now correctly
+            // triggers escalation when transitioning from any lower tier.
+            "Deceased" | "Black" => 4,
             "Immediate" | "Red" => 3,
             "Delayed" | "Yellow" => 2,
             "Minor" | "Green" => 1,
@@ -374,3 +450,4 @@ fn is_triage_escalation(from: &str, to: &str) -> bool {
     }
     severity(to) > severity(from)
 }
+

@@ -152,10 +152,15 @@ impl VitalSignsHistory {
 
         let recent: Vec<_> = self.readings.iter().rev().take(3).collect();
 
-        // Check breathing trend
-        let breathing_declining = recent.windows(2).all(|w| {
+        // Check breathing trend - deteriorating if rate moves outside normal range
+        let breathing_deteriorating = recent.windows(2).any(|w| {
             match (&w[0].breathing, &w[1].breathing) {
-                (Some(a), Some(b)) => a.rate_bpm < b.rate_bpm,
+                (Some(a), Some(b)) => {
+                    // Bradypnea: decreasing below 8
+                    (a.rate_bpm < b.rate_bpm && a.rate_bpm < 8.0) ||
+                    // Tachypnea: increasing above 24
+                    (a.rate_bpm > b.rate_bpm && a.rate_bpm > 24.0)
+                }
                 _ => false,
             }
         });
@@ -165,7 +170,7 @@ impl VitalSignsHistory {
             w[0].confidence.value() < w[1].confidence.value()
         });
 
-        breathing_declining || confidence_declining
+        breathing_deteriorating || confidence_declining
     }
 }
 
@@ -278,8 +283,9 @@ impl Survivor {
         self.triage_status = TriageCalculator::calculate(&reading);
         self.last_updated = Utc::now();
 
-        // Log triage change for audit
+        // Log triage change for audit; reset alert on any triage shift
         if previous_triage != self.triage_status {
+            self.alert_sent = false;
             tracing::info!(
                 survivor_id = %self.id,
                 previous = ?previous_triage,

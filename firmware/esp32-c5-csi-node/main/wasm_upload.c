@@ -278,6 +278,14 @@ static const char *state_name(wasm_module_state_t state)
 
 static esp_err_t wasm_list_handler(httpd_req_t *req)
 {
+    /* Bug 6 fix: require authentication for GET /wasm/list.
+     * Previously this endpoint returned loaded WASM module names, capabilities,
+     * and runtime counters without any auth check, unlike POST/DELETE endpoints
+     * which call wasm_auth_or_reject. Module metadata is sensitive information
+     * in a production deployment. */
+    esp_err_t auth_err = wasm_auth_or_reject(req, "list");
+    if (auth_err != ESP_OK) return auth_err;
+
     wasm_module_info_t info[WASM_MAX_MODULES];
     uint8_t count = 0;
     wasm_runtime_get_info(info, &count);

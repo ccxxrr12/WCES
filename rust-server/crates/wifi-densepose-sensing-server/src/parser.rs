@@ -3,6 +3,7 @@
 //! Extracted from `main.rs` to keep the entry point slim.
 
 use crate::types::{Esp32Frame, Esp32VitalsPacket, WasmEvent, WasmOutputPacket};
+use tracing::warn;
 
 /// Parse a 32-byte edge vitals packet (magic 0xC511_0002).
 pub(crate) fn parse_esp32_vitals(buf: &[u8]) -> Option<Esp32VitalsPacket> {
@@ -95,6 +96,15 @@ pub(crate) fn parse_esp32_frame(buf: &[u8]) -> Option<Esp32Frame> {
 
     let iq_start = 20;
     let n_pairs = n_antennas as usize * n_subcarriers as usize;
+
+    // BUG 10 fix: bound n_pairs to prevent DoS via malicious packets.
+    // C5 max: 1 antenna × 484 subcarriers = 484. With margin: 2048.
+    const MAX_PAIRS: usize = 2048;
+    if n_pairs > MAX_PAIRS || n_antennas == 0 || n_subcarriers == 0 {
+        warn!("Rejecting frame: n_pairs={n_pairs} exceeds MAX_PAIRS={MAX_PAIRS} or zero antennas/subcarriers");
+        return None;
+    }
+
     let expected_len = iq_start + n_pairs * 2;
 
     if buf.len() < expected_len {

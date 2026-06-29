@@ -374,6 +374,10 @@ impl EdgeModuleEngine {
         let mut alerts = Vec::new();
         let br = breathing_bpm.unwrap_or(0.0) as f32;
         let hr = heart_rate_bpm.unwrap_or(0.0) as f32;
+        // Guard: when vital signs are None (insufficient data), downstream
+        // modules must not interpret 0.0 as "apnea" or "no breathing".
+        let br_valid = breathing_bpm.is_some();
+        let _hr_valid = heart_rate_bpm.is_some(); // reserved for future HR validity checks
 
         // Compute amplitude stats
         let n = amplitudes.len().min(32);
@@ -386,13 +390,19 @@ impl EdgeModuleEngine {
         {
             let n_sc = amplitudes.len().min(32);
             let mut dropout_count = 0u32;
-            // Build correlation model from non-null carriers
+            // Build/update correlation model from non-null carriers
             if !self.sr.model_built {
                 for i in 0..n_sc {
                     self.sr.corr_model[i] = 0.15 * amplitudes[i] + 0.85 * self.sr.corr_model[i];
                 }
                 self.sr.model_frames += 1;
                 if self.sr.model_frames >= 100 { self.sr.model_built = true; }
+            } else {
+                // BUG 18 fix: continue slow EMA update after calibration to track
+                // environmental changes (0.5% per frame → adapts over ~minutes)
+                for i in 0..n_sc {
+                    self.sr.corr_model[i] = 0.005 * amplitudes[i] + 0.995 * self.sr.corr_model[i];
+                }
             }
             for i in 0..n_sc {
                 if amplitudes[i].abs() < 0.001 { dropout_count += 1; self.sr.total_dropouts += 1; }
@@ -435,7 +445,7 @@ impl EdgeModuleEngine {
         self.vt_hr.push(hr);
         if self.vt_timer % 10 == 0 { // ~1 Hz
             // Apnea
-            if br < 1.0 { self.vt_apnea_ctr += 1; }
+            if br_valid && br < 1.0 { self.vt_apnea_ctr += 1; }
             else { self.vt_apnea_ctr = 0; }
             if self.vt_apnea_ctr >= 20 {
                 alerts.push(EdgeAlert {
@@ -627,7 +637,7 @@ impl EdgeModuleEngine {
 
         // ── Module 7: med_sleep_apnea ──────────────────────────────────
         self.sa_sleep_secs += 1;
-        if br < 4.0 { self.sa_no_br_ctr += 1; }
+        if br_valid && br < 4.0 { self.sa_no_br_ctr += 1; }
         else {
             if self.sa_apnea_active {
                 alerts.push(EdgeAlert { module: "sleep_apnea".into(), event_type: 101,
@@ -878,7 +888,7 @@ impl EdgeModuleEngine {
                     let end = if p == n_det - 1 { n } else { start + subs };
                     // Select top-8 highest variance subcarriers in this region
                     let mut vals: Vec<(usize, f32)> = (start..end).map(|i| (i, sc_var[i])).collect();
-                    vals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    vals.sort_by(|a, b| b.1.total_cmp(&a.1));
                     for f in 0..MC_FEAT_DIM.min(vals.len()) {
                         cur_feat[p][f] = vals[f].1;
                     }
@@ -1270,8 +1280,17 @@ impl EdgeModuleEngine {
             self.vib.phase_rms_buf.push(phase_rms);
             self.vib.seismic_cooldown = self.vib.seismic_cooldown.saturating_sub(1);
             self.vib.resonance_cooldown = self.vib.resonance_cooldown.saturating_sub(1);
-            // Drift accumulation
-            self.vib.drift_cumulative += phases[..n].iter().sum::<f32>() / n as f32;
+            // BUG 8 fix: circular mean via complex representation avoids
+            // phase-wrap artifacts (±π boundary) that caused spurious drift alerts.
+            // Guard against atan2(0,0) = NaN which would poison drift_cumulative.
+            let (sum_cos, sum_sin) = phases[..n].iter()
+                .fold((0.0f32, 0.0f32), |(sc, ss), &p| (sc + p.cos(), ss + p.sin()));
+            let circ_mean = if sum_cos == 0.0 && sum_sin == 0.0 {
+                0.0
+            } else {
+                sum_sin.atan2(sum_cos)
+            };
+            self.vib.drift_cumulative += circ_mean;
             self.vib.drift_frames += 1;
             if self.vib.phase_rms_buf.len >= 600 {
                 let broadband = self.vib.phase_rms_buf.mean_last(600);
@@ -1466,9 +1485,11 @@ impl EdgeModuleEngine {
                 }
             } else { self.ltl.hr_high_timer = 0; }
             // Rule 8: G(seizure → !normal_gait within 60s)
+            // BUG 11 fix: use explicit cooldown slot constant (Rule 1 has no cooldown,
+            // so slot 0 is free). Previously used confusing `8 % 8` expression.
             if self.sz_seizing {
                 self.ltl.seizure_gait_timer += 1;
-                if self.ltl.seizure_gait_timer > 60 && self.ltl.alert_cooldown[8 % 8] == 0 {
+                if self.ltl.seizure_gait_timer > 60 && self.ltl.alert_cooldown[0] == 0 {
                     self.ltl.alert_cooldown[0] = 200;
                     alerts.push(EdgeAlert {
                         module: "ltl".into(), event_type: 795,

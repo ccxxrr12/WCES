@@ -84,6 +84,16 @@ pub struct NodeInfo {
     pub position: [f64; 3],
     pub amplitude: Vec<f64>,
     pub subcarrier_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub breathing_rate_bpm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heart_rate_bpm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motion_level: Option<String>,
+    pub presence: bool,
+    pub active: bool,
+    pub channel: u8,
+    pub band: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,4 +181,81 @@ pub struct WasmOutputPacket {
     pub node_id: u8,
     pub module_id: u8,
     pub events: Vec<WasmEvent>,
+}
+
+// ── Per-node state (multi-node support) ──────────────────────────────────────────
+
+use std::collections::VecDeque;
+use crate::vital_signs::VitalSignDetector;
+use crate::mat_pipeline::TriageEngine;
+
+/// Independent state tracked for each ESP32-C5 sensing node.
+/// When multiple nodes stream CSI data, each gets its own processing pipeline.
+#[derive(Clone)]
+pub(crate) struct PerNodeState {
+    pub frame_history: VecDeque<Vec<f64>>,
+    pub rssi_history: VecDeque<f64>,
+    pub vital_detector: VitalSignDetector,
+    pub triage_engine: TriageEngine,
+    pub latest_vitals: VitalSigns,
+    pub tick: u64,
+    pub last_frame_time: Option<std::time::Instant>,
+
+    // Motion smoothing
+    pub smoothed_motion: f64,
+    pub current_motion_level: String,
+    pub debounce_counter: u32,
+    pub debounce_candidate: String,
+    pub baseline_motion: f64,
+    pub baseline_frames: u64,
+
+    // Vital smoothing
+    pub smoothed_hr: f64,
+    pub smoothed_br: f64,
+    pub smoothed_hr_conf: f64,
+    pub smoothed_br_conf: f64,
+    pub hr_buffer: VecDeque<f64>,
+    pub br_buffer: VecDeque<f64>,
+
+    // Person count
+    pub smoothed_person_score: f64,
+    pub prev_person_count: usize,
+
+    // Dynamic sample rate (measured from frame arrival intervals)
+    pub measured_sample_rate: f64,
+
+    // Edge/wasm
+    pub edge_vitals: Option<crate::types::Esp32VitalsPacket>,
+    pub latest_wasm_events: Option<crate::types::WasmOutputPacket>,
+}
+
+impl PerNodeState {
+    pub fn new(vital_sample_rate: f64) -> Self {
+        Self {
+            frame_history: VecDeque::with_capacity(FRAME_HISTORY_CAPACITY),
+            rssi_history: VecDeque::with_capacity(60),
+            vital_detector: VitalSignDetector::new(vital_sample_rate),
+            triage_engine: TriageEngine::new(crate::mat_pipeline::TriageConfig::competition()),
+            latest_vitals: VitalSigns::default(),
+            tick: 0,
+            last_frame_time: None,
+            smoothed_motion: 0.0,
+            current_motion_level: "absent".into(),
+            debounce_counter: 0,
+            debounce_candidate: "absent".into(),
+            baseline_motion: 0.0,
+            baseline_frames: 0,
+            smoothed_hr: 0.0,
+            smoothed_br: 0.0,
+            smoothed_hr_conf: 0.0,
+            smoothed_br_conf: 0.0,
+            hr_buffer: VecDeque::with_capacity(32),
+            br_buffer: VecDeque::with_capacity(32),
+            smoothed_person_score: 0.0,
+            prev_person_count: 0,
+            measured_sample_rate: vital_sample_rate,
+            edge_vitals: None,
+            latest_wasm_events: None,
+        }
+    }
 }

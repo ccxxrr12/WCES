@@ -46,6 +46,7 @@ export class PoseSystem {
   // ---- Rotation utility --------------------------------------------------
 
   rotateKps(kps, cx, cz, angle) {
+    if (!Number.isFinite(angle)) return;
     const cos = Math.cos(angle), sin = Math.sin(angle);
     for (const kp of kps) {
       const dx = kp[0] - cx, dz = kp[2] - cz;

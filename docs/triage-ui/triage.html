@@ -532,11 +532,20 @@ window.addEventListener('error',function(e){
         showError('JS Error: '+(e.message||'unknown')+' (line '+(e.lineno||'?')+')');
     }
 },true);
+window.addEventListener('unhandledrejection',function(e){
+    console.error('[TRIAGE] Unhandled rejection:',e.reason);
+    if(e.reason)showError('Async error: '+(e.reason.message||e.reason));
+    e.preventDefault();
+});
 
 // ═══════════════════════════════════════════════════════════
 // GLOBAL STATE
 // ═══════════════════════════════════════════════════════════
-const NODES = [{id:1,x:350,y:120,label:'C5 #1'},{id:2,x:120,y:420,label:'C5 #2'},{id:3,x:580,y:420,label:'C5 #3'}];
+const NODES = [
+    {id:1,x:350,y:120,label:'C5 #1',alive:false,rssi:null,br:null,hr:null,motion:null},
+    {id:2,x:120,y:420,label:'C5 #2',alive:false,rssi:null,br:null,hr:null,motion:null},
+    {id:3,x:580,y:420,label:'C5 #3',alive:false,rssi:null,br:null,hr:null,motion:null}
+];
 let latestTriage=null, latestData=null, showHeatmap=false, ws=null, currentView='map';
 let selectedPatientId=null, registeredPatients={}, agentStreamBuffer={};
 let lastRenderStamp=0; const MIN_RENDER_MS=150;
@@ -555,8 +564,8 @@ let scene,camera,renderer,controls,autoRotate=true,isWireframe=false,animationTi
 
 const SKELETON_PAIRS=[[0,1],[0,2],[1,3],[2,4],[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
 const COLORS={joint:0x00d878,limb:0x3eff8a,head:0x00e5ff,spine:0x5856d6,skin:0xffccaa,background:0x0f0f10};
-let figureGroups=[],smoothedPoses=[];
-let _vFrom=null,_vTo=null;  // lazy-init: prevents crash if THREE hasn't loaded yet
+let figureGroups=[];
+let _vFrom=null,_vTo=null,_dir=null,_q=null,_yAxis=null;  // lazy-init: prevents crash if THREE hasn't loaded yet
 
 // ═══════════════════════════════════════════════════════════
 // CANVAS MAP (with heatmap support)
@@ -612,13 +621,24 @@ function drawMap(){
     const scaleX=(mapW-2*margin)/700,scaleY=(mapH-2*margin)/550;
     NODES.forEach(node=>{
         const nx=margin+node.x*scaleX,ny=margin+node.y*scaleY;
+        // Range circle
         ctx.beginPath();ctx.arc(nx,ny,100*scaleX,0,Math.PI*2);
-        ctx.strokeStyle='rgba(0,122,255,0.15)';ctx.setLineDash([6,6]);ctx.lineWidth=1.5;ctx.stroke();ctx.setLineDash([]);
+        ctx.strokeStyle=node.alive?'rgba(0,122,255,0.25)':'rgba(142,142,147,0.1)';ctx.setLineDash([6,6]);ctx.lineWidth=1.5;ctx.stroke();ctx.setLineDash([]);
+        // Diamond marker
         ctx.save();ctx.translate(nx,ny);ctx.rotate(Math.PI/4);
-        ctx.fillStyle='#007AFF';ctx.shadowColor='rgba(0,122,255,0.5)';ctx.shadowBlur=12;
-        ctx.fillRect(-8,-8,16,16);ctx.restore();
-        ctx.fillStyle='#007AFF';ctx.font='11px -apple-system,sans-serif';ctx.textAlign='center';ctx.shadowBlur=0;
-        ctx.fillText(node.label,nx,ny-20);
+        ctx.fillStyle=node.alive?'#007AFF':'#636366';ctx.shadowColor=node.alive?'rgba(0,122,255,0.5)':'rgba(99,99,102,0.3)';ctx.shadowBlur=12;
+        ctx.fillRect(-8,-8,16,16);ctx.shadowBlur=0;ctx.restore();
+        // Label
+        ctx.fillStyle=node.alive?'#007AFF':'#636366';ctx.font='bold 11px -apple-system,sans-serif';ctx.textAlign='center';
+        ctx.fillText(node.label,nx,ny-22);
+        // Live vitals
+        if(node.alive){
+            ctx.fillStyle='#98989D';ctx.font='9px -apple-system,sans-serif';
+            const rssiStr=node.rssi!=null?`RSSI:${node.rssi.toFixed(0)}`:'';
+            const brStr=node.br!=null?`BR:${node.br.toFixed(0)}`:'';
+            const hrStr=node.hr!=null?`HR:${node.hr.toFixed(0)}`:'';
+            ctx.fillText([rssiStr,brStr,hrStr].filter(Boolean).join(' '),nx,ny+32);
+        }
     });
 
     // Survivors
@@ -654,7 +674,9 @@ canvas.addEventListener('click',(e)=>{
     latestTriage.survivors.forEach(s=>{
         const px=s.position?margin+(s.position[0]+2)/4*(mapW-2*margin):mapW/2;
         const py=s.position?margin+(s.position[1]+1.5)/3*(mapH-2*margin):mapH/2;
-        const dx=clickX-px,dy=clickY-py;
+        const cx=Math.max(margin,Math.min(mapW-margin,px));
+        const cy=Math.max(margin,Math.min(mapH-margin,py));
+        const dx=clickX-cx,dy=clickY-cy;
         if(dx*dx+dy*dy<400){openEhr(s)}
     });
 });
@@ -734,7 +756,7 @@ function createFigurePool(){
             segments.push(mesh);group.add(mesh);
         });
         group.userData={joints,bones,segments,smoothed:null};group.visible=false;
-        scene.add(group);figureGroups.push(group);smoothedPoses.push(null);
+        scene.add(group);figureGroups.push(group);
     }
 }
 
@@ -762,21 +784,46 @@ function lerpPose(target,current,factor){
 
 function updateFigureFromPose(group,pose17){
     if(!pose17)return;
-    if(!_vFrom){try{_vFrom=new THREE.Vector3();_vTo=new THREE.Vector3()}catch(e){return}}
+    if(!_vFrom){try{_vFrom=new THREE.Vector3();_vTo=new THREE.Vector3();_dir=new THREE.Vector3();_q=new THREE.Quaternion();_yAxis=new THREE.Vector3(0,1,0)}catch(e){return}}
     const{joints,bones,segments}=group.userData;
     pose17.forEach((kp,i)=>{if(joints[i])joints[i].position.set(kp[0],kp[1],kp[2])});
+    // BUG 5 fix: use setFromUnitVectors to avoid degenerate orientation for vertical bones
     bones.forEach(bone=>{
         const a=bone.userData.jointA,b=bone.userData.jointB;
         if(!joints[a]||!joints[b])return;
         _vFrom.copy(joints[a].position);_vTo.copy(joints[b].position);
         const mid=_vFrom.clone().add(_vTo).multiplyScalar(.5);
-        bone.position.copy(mid);bone.scale.y=_vFrom.distanceTo(_vTo);
-        bone.lookAt(_vTo);bone.rotateX(Math.PI/2);
+        const len=_vFrom.distanceTo(_vTo);
+        bone.position.copy(mid);
+        bone.scale.set(1,len,1);
+        _dir.copy(_vTo).sub(_vFrom).normalize();
+        // Handle the degenerate case: bone is nearly vertical (parallel to Y axis)
+        if(Math.abs(_dir.dot(_yAxis))>0.9999){
+            _q.identity(); // no rotation needed, cylinder already along Y
+        }else{
+            _q.setFromUnitVectors(_yAxis,_dir);
+        }
+        bone.setRotationFromQuaternion(_q);
     });
+    // BUG 5 fix: use setFromUnitVectors for body segments too (no lookAt+rotateX)
     segments.forEach(seg=>{
         const a=seg.userData.jointA,b=seg.userData.jointB,pa=joints[a]?.position,pb=joints[b]?.position;
         if(!pa||!pb)return;
-        if(seg.userData.isHead){seg.position.copy(pa)}else{const mid=pa.clone().add(pb).multiplyScalar(.5);seg.position.copy(mid);seg.scale.y=pa.distanceTo(pb);seg.lookAt(pb);seg.rotateX(Math.PI/2)}
+        if(seg.userData.isHead){
+            seg.position.copy(pa);
+        }else{
+            const mid=pa.clone().add(pb).multiplyScalar(.5);
+            const len=pa.distanceTo(pb);
+            seg.position.copy(mid);
+            seg.scale.set(1,len,1);
+            _dir.copy(pb).sub(pa).normalize();
+            if(Math.abs(_dir.dot(_yAxis))>0.9999){
+                _q.identity();
+            }else{
+                _q.setFromUnitVectors(_yAxis,_dir);
+            }
+            seg.setRotationFromQuaternion(_q);
+        }
     });
 }
 
@@ -790,19 +837,54 @@ function updateFigures(poses){
 function animate(){
     animFrameId=requestAnimationFrame(animate);
     if(currentView!=='skeleton'||!renderer)return;
-    animationTime+=.016;
+    // Use clock-based delta to avoid pose jump after tab re-focus (BUG 11 fix)
+    const now=performance.now()/1000;
+    if(!animateLastTime)animateLastTime=now;
+    const dt=Math.min(now-animateLastTime,0.1); // cap at 100ms to avoid huge jumps
+    animateLastTime=now;
+    animationTime+=dt;
+
     let poses=[];
-    if(latestData&&latestData.pose_keypoints&&latestData.pose_keypoints.length>0){
-        poses.push(latestData.pose_keypoints.map(k=>[k[0],-k[1],k[2]]));
-    }else{
-        const numPeople=latestTriage?.survivors?.length?Math.min(latestTriage.survivors.length,3):1;
-        const motionScore=latestData?.classification?.motion_score??(latestData?.classification?.motion_level==='high'?0.8:latestData?.classification?.motion_level==='medium'?0.3:0.05);
+    // Priority 1: Real person detections from sensing pipeline (BUG 1 fix)
+    if(latestData&&latestData.persons&&latestData.persons.length>0){
+        for(const person of latestData.persons){
+            // Server serializes PersonDetection.keypoints (not pose_keypoints).
+            // PoseKeypoint is a named struct: {name, x, y, z, confidence}.
+            if(person.keypoints&&person.keypoints.length>=17){
+                // Three.js Y-up coordinates from server; use object property access
+                poses.push(person.keypoints.map(k=>[k.x,k.y,k.z]));
+            }
+        }
+    }
+    // Priority 2: Raw pose_keypoints from sensing update (synthetic, server-generated)
+    if(poses.length===0&&latestData&&latestData.pose_keypoints&&latestData.pose_keypoints.length>0){
+        if(Array.isArray(latestData.pose_keypoints[0])){
+            // [[x,y,z,conf], ...] — server now sends Three.js Y-up coords
+            poses.push(latestData.pose_keypoints.map(k=>[k[0],k[1],k[2]]));
+        }
+    }
+    // Priority 3: Procedural fallback when no sensor data available
+    if(poses.length===0){
+        // Person count: prefer persons data, then triage survivors, then estimated_persons (BUG 4 fix)
+        let numPeople=1;
+        if(latestData?.persons?.length)numPeople=Math.min(latestData.persons.length,3);
+        else if(latestTriage?.survivors?.length)numPeople=Math.min(latestTriage.survivors.length,3);
+        else if(latestData?.estimated_persons)numPeople=Math.min(latestData.estimated_persons,3);
+
+        // Motion score: map server motion_level to numeric (BUG 3 fix)
+        const ml=latestData?.classification?.motion_level;
+        let motionScore=0.05; // default: still/absent
+        if(ml==='active')motionScore=0.8;
+        else if(ml==='present_moving')motionScore=0.35;
+        else if(ml==='present_still')motionScore=0.08;
+
         const breathAmp=latestData?.vital_signs?.breathing_rate_bpm?Math.sin(animationTime*latestData.vital_signs.breathing_rate_bpm/60*Math.PI*2):0;
         for(let i=0;i<numPeople;i++)poses.push(generatePose17(i,animationTime*60,motionScore,breathAmp));
     }
     updateFigures(poses);
     controls.update();renderer.render(scene,camera);
 }
+let animateLastTime=null;
 
 function onWindowResize(){
     const cont=document.getElementById('skeletonContainer');
@@ -810,15 +892,25 @@ function onWindowResize(){
 }
 
 function dispose3D(){
+    window.removeEventListener('resize',onWindowResize);
     if(animFrameId){cancelAnimationFrame(animFrameId);animFrameId=null}
     figureGroups.forEach(g=>{
         if(!g.userData)return;
         const{joints,bones,segments}=g.userData;
         joints?.forEach(j=>{if(j.geometry)j.geometry.dispose();if(j.material)j.material.dispose()});
         bones?.forEach(b=>{if(b.geometry)b.geometry.dispose();if(b.material)b.material.dispose()});
-        segments?.forEach(s=>{if(s.geometry)s.geometry.dispose();if(s.material)s.material.dispose()});
+        // BUG 9 fix: dispose child meshes (capsule sphere caps) recursively
+        segments?.forEach(s=>{
+            s.traverse(child=>{
+                if(child.geometry)child.geometry.dispose();
+                if(child.material){
+                    if(Array.isArray(child.material))child.material.forEach(m=>m.dispose());
+                    else child.material.dispose();
+                }
+            });
+        });
     });
-    figureGroups=[];smoothedPoses=[];
+    figureGroups=[];
     if(renderer){renderer.dispose();renderer=null}
     scene=null;camera=null;controls=null;
 }
@@ -850,7 +942,9 @@ function switchView(view){
 function resetView(){currentView==='map'?drawMap():resetCamera()}
 function resetCamera(){if(camera&&controls){camera.position.set(0,1.2,4);controls.target.set(0,1,0);controls.update()}}
 function toggleAutoRotate(){autoRotate=!autoRotate;if(controls)controls.autoRotate=autoRotate}
-function toggleWireframe(){isWireframe=!isWireframe;figureGroups.forEach(g=>{const ud=g.userData;ud.joints?.forEach(j=>j.material.wireframe=isWireframe);ud.bones?.forEach(b=>b.material.wireframe=isWireframe);ud.segments?.forEach(s=>s.material.wireframe=isWireframe)})}
+function toggleWireframe(){isWireframe=!isWireframe;figureGroups.forEach(g=>{const ud=g.userData;ud.joints?.forEach(j=>j.material.wireframe=isWireframe);ud.bones?.forEach(b=>b.material.wireframe=isWireframe);
+    // BUG 6 fix: recursively toggle child mesh materials (capsule sphere caps)
+    ud.segments?.forEach(s=>{s.traverse(child=>{if(child.material){if(Array.isArray(child.material))child.material.forEach(m=>m.wireframe=isWireframe);else child.material.wireframe=isWireframe}})})})}
 function toggleHeatmap(){showHeatmap=!showHeatmap;document.getElementById('heatmapBtn').classList.toggle('active',showHeatmap);if(currentView==='map')drawMap()}
 
 // ═══════════════════════════════════════════════════════════
@@ -873,7 +967,7 @@ function drawSparklines(){
         const valid=data.filter(v=>v!==null);
         if(valid.length<2){cx.fillStyle='#636366';cx.font='10px -apple-system,sans-serif';cx.textAlign='center';cx.fillText('等待数据...',w/2,28);return}
         cx.strokeStyle=color;cx.lineWidth=1.8;cx.beginPath();
-        valid.forEach((v,i)=>{const x=(i/(valid.length-1))*w,y=c.height-4-(v-min)/(max-min)*(c.height-12);i===0?cx.moveTo(x,y):cx.lineTo(x,y)});
+        valid.forEach((v,i)=>{const x=(i/(valid.length-1))*w;let y=c.height-4-(v-min)/(max-min)*(c.height-12);y=Math.max(4,Math.min(c.height-4,y));i===0?cx.moveTo(x,y):cx.lineTo(x,y)});
         cx.stroke();
         // Fill gradient
         cx.globalAlpha=.08;cx.fillStyle=color;cx.lineTo(w,c.height);cx.lineTo(0,c.height);cx.closePath();cx.fill();cx.globalAlpha=1;
@@ -1036,6 +1130,17 @@ function toggleTheme(){document.documentElement.classList.toggle('light');try{lo
 // ═══════════════════════════════════════════════════════════
 function handleUpdate(data){
     latestData=data;
+    // Update per-node runtime state from NodeInfo array
+    if(data.nodes&&Array.isArray(data.nodes)){
+        data.nodes.forEach(n=>{
+            const meta=NODES.find(m=>m.id===n.node_id);
+            if(meta){
+                meta.alive=n.active===true;meta.rssi=n.rssi_dbm;
+                meta.br=n.breathing_rate_bpm??null;meta.hr=n.heart_rate_bpm??null;
+                meta.motion=n.motion_level??null;
+            }
+        });
+    }
     if(data.triage_update){latestTriage=data.triage_update;renderFromServer();enableAnalyzeButton()}
 }
 function connectWebSocket(){

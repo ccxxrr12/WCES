@@ -176,12 +176,20 @@ impl Esp32CsiParser {
             }
         }
 
-        // Determine bandwidth from subcarrier count
+        // Determine bandwidth from subcarrier count.
+        // NOTE: WiFi 6 HE40 (802.11ax) has 484 subcarriers at 40 MHz — the same
+        // count as HT160. For 2.4 GHz, 484 subcarriers → HE40; for 5 GHz → HT160.
         let bandwidth = match n_subcarriers {
             0..=56 => Bandwidth::Bw20,
             57..=114 => Bandwidth::Bw40,
             115..=242 => Bandwidth::Bw80,
-            _ => Bandwidth::Bw160,
+            _ => {
+                if channel_freq_mhz < 3000 {
+                    Bandwidth::Bw40  // HE40 on 2.4 GHz (ESP32-C5)
+                } else {
+                    Bandwidth::Bw160
+                }
+            }
         };
 
         let frame = CsiFrame {

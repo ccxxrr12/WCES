@@ -26,7 +26,7 @@ mod state_ops;
 // Training pipeline modules (exposed via lib.rs)
 use wifi_densepose_sensing_server::{graph_transformer, trainer, dataset, embedding};
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -307,6 +307,8 @@ pub(crate) struct AppStateInner {
     medical_agent: Arc<tokio::sync::Mutex<MedicalAgent>>,
     /// Medical knowledge base for vital-pattern matching.
     medical_kb: MedicalKb,
+    /// Per-node independent processing state (keyed by node_id 1/2/3).
+    node_states: HashMap<u8, crate::types::PerNodeState>,
 }
 
 impl AppStateInner {
@@ -1084,7 +1086,7 @@ async fn main() {
     let initial_recordings = handlers::recording_routes::scan_recording_files(&data_dir);
     info!("Discovered {} model files, {} recording files", initial_models.len(), initial_recordings.len());
 
-    let (tx, _) = broadcast::channel::<String>(256);
+    let (tx, _) = broadcast::channel::<String>(2048);
     let state: SharedState = Arc::new(RwLock::new(AppStateInner {
         data_dir: data_dir.clone(),
         latest_update: None,
@@ -1141,13 +1143,14 @@ async fn main() {
         llm_engine: llm_engine.clone(),
         medical_agent: Arc::new(tokio::sync::Mutex::new(medical_agent)),
         medical_kb,
+        node_states: HashMap::new(),
     }));
 
     // Start background tasks based on source
     match source {
         "esp32" => {
             tokio::spawn(tasks::udp_receiver::udp_receiver_task(state.clone(), args.udp_port));
-            tokio::spawn(tasks::broadcast_tick::broadcast_tick_task(state.clone(), args.tick_ms));
+            tokio::spawn(tasks::broadcast_tick::broadcast_tick_task(state.clone(), 500)); // 0.5 Hz rebroadcast, primary data via UDP
         }
         _ => {
             tokio::spawn(tasks::simulated_data::simulated_data_task(state.clone(), args.tick_ms));
