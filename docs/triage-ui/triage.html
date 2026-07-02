@@ -200,7 +200,7 @@
         .triage-badge.yellow{background:rgba(255,149,0,.15);color:var(--warning-orange)}
         .triage-badge.green{background:rgba(52,199,89,.15);color:var(--success-green)}
         .triage-badge.black{background:rgba(142,142,147,.15);color:var(--gray)}
-        .deteriorating-badge{display:inline-flex;align-items:center;gap:3px;padding:3px 7px;background:rgba(255,149,0,.15);color:var(--warning-orange);border-radius:5px;font-size:10px;font-weight:500;animation:pulse 1.5s infinite}
+        .deteriorating-badge{display:inline-flex;align-items:center;gap:3px;padding:3px 7px;background:rgba(255,149,0,.15);color:var(--warning-orange);border-radius:5px;font-size:10px;font-weight:500;animation:pulse 1.5s infinite}.reid-badge{display:inline-flex;align-items:center;gap:3px;padding:3px 7px;background:rgba(0,122,255,.15);color:var(--accent-blue);border-radius:5px;font-size:10px;font-weight:500}
         .vitals-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
         .vital-item{background:var(--bg-secondary);border-radius:8px;padding:8px;display:flex;align-items:center;gap:8px}
         .vital-icon{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px}
@@ -337,6 +337,7 @@
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText">等待连接</span>
         </div>
+        <span id="modelStatus" style="font-size:10px;color:var(--text-secondary);margin-left:8px;"></span>
     </div>
 </header>
 
@@ -418,6 +419,8 @@
                     <canvas id="sparkBreathing"></canvas>
                     <canvas id="sparkHeart"></canvas>
                 </div>
+                <div id="vitalsConfidence" style="margin-top:4px;"></div>
+                <span id="classificationConf" style="font-size:11px;color:var(--text-secondary);"></span>
             </div>
         </div>
 
@@ -456,6 +459,19 @@
             <div class="section-body" id="wasmBody">
                 <div id="wasmAlertsList">
                     <div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Node Vitals (collapsible) -->
+        <div class="sidebar-section">
+            <div class="section-header collapsible" onclick="toggleSection('nodeVitalsBody','nodeVitalsToggle')">
+                <span class="section-title">📡 Node Vitals</span>
+                <span class="section-toggle open" id="nodeVitalsToggle">▶</span>
+            </div>
+            <div class="section-body" id="nodeVitalsBody">
+                <div id="nodeVitalsList" style="font-size:11px;color:var(--text-secondary);">
+                    <div class="empty-state"><div class="empty-icon">📡</div><div class="empty-text">Waiting for node data...</div></div>
                 </div>
             </div>
         </div>
@@ -542,10 +558,12 @@ window.addEventListener('unhandledrejection',function(e){
 // GLOBAL STATE
 // ═══════════════════════════════════════════════════════════
 const NODES = [
-    {id:1,x:350,y:120,label:'C5 #1',alive:false,rssi:null,br:null,hr:null,motion:null},
-    {id:2,x:120,y:420,label:'C5 #2',alive:false,rssi:null,br:null,hr:null,motion:null},
-    {id:3,x:580,y:420,label:'C5 #3',alive:false,rssi:null,br:null,hr:null,motion:null}
+    {id:1,x:350,y:120,label:'C5 #1',alive:false,rssi:null,br:null,hr:null,motion:null,pos:null},
+    {id:2,x:120,y:420,label:'C5 #2',alive:false,rssi:null,br:null,hr:null,motion:null,pos:null},
+    {id:3,x:580,y:420,label:'C5 #3',alive:false,rssi:null,br:null,hr:null,motion:null,pos:null}
 ];
+let NODE_POSITIONS={}; // {node_id: [x,y,z]} — read from server NodeInfo.position
+let MAP_BOUNDS={minX:-1.5,maxX:1.5,minY:-1,maxY:1.5,sizeX:3,sizeY:2.5}; // auto-computed
 let latestTriage=null, latestData=null, showHeatmap=false, ws=null, currentView='map';
 let selectedPatientId=null, registeredPatients={}, agentStreamBuffer={};
 let lastRenderStamp=0; const MIN_RENDER_MS=150;
@@ -582,6 +600,12 @@ function resizeMap(){
     if(maxW/ratio<=maxH){mapW=maxW;mapH=maxW/ratio}else{mapH=maxH;mapW=maxH*ratio}
     canvas.width=mapW;canvas.height=mapH;
     margin=Math.max(30,mapW*0.07);
+}
+
+function physToCanvas(px,py){
+    const normX=(px-MAP_BOUNDS.minX)/MAP_BOUNDS.sizeX;
+    const normY=(py-MAP_BOUNDS.minY)/MAP_BOUNDS.sizeY;
+    return [margin+normX*(mapW-2*margin),margin+normY*(mapH-2*margin)];
 }
 
 function drawMap(){
@@ -644,10 +668,9 @@ function drawMap(){
     // Survivors
     if(latestTriage&&latestTriage.survivors){
         latestTriage.survivors.forEach((s,i)=>{
-            const px=s.position?margin+(s.position[0]+2)/4*(mapW-2*margin):mapW/2;
-            const py=s.position?margin+(s.position[1]+1.5)/3*(mapH-2*margin):mapH/2;
-            const cx=Math.max(margin,Math.min(mapW-margin,px));
-            const cy=Math.max(margin,Math.min(mapH-margin,py));
+            const [rawCx,rawCy]=s.position?physToCanvas(s.position[0],s.position[1]):[mapW/2,mapH/2];
+            const cx=Math.max(margin,Math.min(mapW-margin,rawCx));
+            const cy=Math.max(margin,Math.min(mapH-margin,rawCy));
             if(s.triage_color==='red'||s.is_deteriorating){
                 ctx.beginPath();ctx.arc(cx,cy,28,0,Math.PI*2);
                 ctx.fillStyle=s.is_deteriorating?'rgba(255,149,0,0.2)':'rgba(255,59,48,0.15)';ctx.fill();
@@ -670,14 +693,12 @@ canvas.addEventListener('click',(e)=>{
     if(!latestTriage||!latestTriage.survivors)return;
     const rect=canvas.getBoundingClientRect();
     const clickX=e.clientX-rect.left,clickY=e.clientY-rect.top;
-    const scaleX=(mapW-2*margin)/700,scaleY=(mapH-2*margin)/550;
     latestTriage.survivors.forEach(s=>{
-        const px=s.position?margin+(s.position[0]+2)/4*(mapW-2*margin):mapW/2;
-        const py=s.position?margin+(s.position[1]+1.5)/3*(mapH-2*margin):mapH/2;
-        const cx=Math.max(margin,Math.min(mapW-margin,px));
-        const cy=Math.max(margin,Math.min(mapH-margin,py));
-        const dx=clickX-cx,dy=clickY-cy;
-        if(dx*dx+dy*dy<400){openEhr(s)}
+        const [cx,cy]=physToCanvas(s.position?.[0]??0,s.position?.[1]??0);
+        const clx=Math.max(margin,Math.min(mapW-margin,cx));
+        const cly=Math.max(margin,Math.min(mapH-margin,cy));
+        const dx=clickX-clx,dy=clickY-cly;
+        if(dx*dx+dy*dy<400)openEhr(s)
     });
 });
 
@@ -983,7 +1004,9 @@ function drawSparklines(){
 function renderFromServer(){
     if(!latestTriage)return;
     console.log('[TRIAGE] renderFromServer: survivors=',latestTriage.survivors?.length,'alerts=',latestTriage.alerts?.length);
-    const a=latestTriage.assessment,now=performance.now();
+    const a=latestTriage.assessment;
+    if(!a)return;
+    const now=performance.now();
     document.getElementById('statTotal').textContent=a.total;
     document.getElementById('statRed').textContent=a.immediate;
     document.getElementById('statYellow').textContent=a.delayed;
@@ -995,6 +1018,12 @@ function renderFromServer(){
     if(now-lastRenderStamp>=MIN_RENDER_MS){
         lastRenderStamp=now;
 
+        // Sort survivors by severity before rendering
+        if(latestTriage.survivors){
+            const sev={red:0,yellow:1,green:2,black:3};
+            latestTriage.survivors.sort((a,b)=>(sev[a.triage_color]??9)-(sev[b.triage_color]??9));
+        }
+
         // Survivors list — only redraw if content changed
         let newSurvivorHtml;
         if(!latestTriage.survivors||latestTriage.survivors.length===0){
@@ -1004,11 +1033,12 @@ function renderFromServer(){
                 <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" onclick="selectSurvivor('${escapeHtml(s.id)}');openEhr(latestTriage.survivors[${idx}])">
                     <div class="survivor-header">
                         <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(s.id.substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p></div></div>
-                        <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
+                        <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}${s.reidentified?'<span class="reid-badge">🔄 重识别</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
                     </div>
                     <div class="vitals-row">
                         <div class="vital-item"><div class="vital-icon breathing">🫁</div><div class="vital-data"><div class="vital-value">${s.breathing_rate?.toFixed(1)??'--'}</div><div class="vital-unit">呼吸/分</div></div></div>
                         <div class="vital-item"><div class="vital-icon heart">❤️</div><div class="vital-data"><div class="vital-value">${s.heart_rate?.toFixed(0)??'--'}</div><div class="vital-unit">心率BPM</div></div></div>
+                    ${s.position_confidence!=null?`<span style="font-size:9px;color:${s.position_confidence>0.5?'#34C759':'#FF9500'}">📍${(s.position_confidence*100).toFixed(0)}%</span>`:''}
                     </div>
                 </div>`).join('');
         }
@@ -1033,7 +1063,7 @@ function renderFromServer(){
         let newWasmHtml;
         if(latestData&&latestData.wasm_alerts&&latestData.wasm_alerts.length>0){
             const icons={gait:'🚶',loitering:'⏳',vibration:'🏗️',ltl:'⚡',meta_adapt:'🧠',sparse_recovery:'🔧',vital_trend:'💓',attractor:'🌀',coherence:'📶',resp_distress:'🫁',confined_space:'🚧',panic_motion:'🏃',sleep_apnea:'😴',cardiac:'❤️',seizure:'⚡',intrusion:'🔒',occupancy:'👥',mincut:'🆔',weapon_detect:'🔪'};
-            newWasmHtml=latestData.wasm_alerts.slice(0,12).map(a=>`<div class="wasm-alert ${escapeHtml(a.severity)}"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${escapeHtml(a.module)}">[${escapeHtml(a.module)}]</span><span>${escapeHtml(a.event_name)}</span><span class="wasm-value">${a.value.toFixed(0)}</span></div>`).join('');
+            newWasmHtml=latestData.wasm_alerts.slice(0,12).map(a=>`<div class="wasm-alert ${escapeHtml(a.severity)}"><span class="wasm-icon">${icons[a.module]||'📡'}</span><span class="wasm-module ${escapeHtml(a.module)}">[${escapeHtml(a.module)}]</span><span>${escapeHtml(a.event_name)}</span><span class="wasm-value">${(a.value??0).toFixed(0)}</span></div>`).join('');
         }else{
             newWasmHtml='<div class="empty-state"><div class="empty-icon">🔬</div><div class="empty-text">边缘模块就绪</div></div>';
         }
@@ -1059,6 +1089,31 @@ function renderFromServer(){
             if(selectedPatientId){selEl.textContent='📍 '+selectedPatientId;selEl.style.display=''}
             else{selEl.style.display='none'}
         }
+        // Signal quality + confidence display
+        const sq=latestData?.vital_signs?.signal_quality;
+        const brConf=latestData?.vital_signs?.breathing_confidence;
+        const hrConf=latestData?.vital_signs?.heartbeat_confidence;
+        if(sq!=null||brConf!=null||hrConf!=null){
+            let confHtml='';
+            if(brConf!=null)confHtml+=`<span style="font-size:10px;color:${brConf>0.5?'#34C759':brConf>0.25?'#FF9500':'#FF3B30'}">BR conf:${(brConf*100).toFixed(0)}%</span> `;
+            if(hrConf!=null)confHtml+=`<span style="font-size:10px;color:${hrConf>0.5?'#34C759':hrConf>0.25?'#FF9500':'#FF3B30'}">HR conf:${(hrConf*100).toFixed(0)}%</span> `;
+            if(sq!=null)confHtml+=`<span style="font-size:10px;color:${sq>0.5?'#34C759':sq>0.25?'#FF9500':'#FF3B30'}">Sig:${(sq*100).toFixed(0)}%</span>`;
+            document.getElementById('vitalsConfidence').innerHTML=confHtml;
+        }
+    }
+    // Classification confidence
+    const clsConf=latestData?.classification?.confidence;
+    if(clsConf!=null){
+        document.getElementById('classificationConf').textContent=`Detection: ${(clsConf*100).toFixed(0)}%`;
+    }
+    // Per-node vitals panel
+    const nvList=document.getElementById('nodeVitalsList');
+    if(nvList&&latestData?.nodes){
+        nvList.innerHTML=latestData.nodes.filter(n=>n.active).map(n=>
+            `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border-subtle);">
+            <span style="font-weight:500;">C5 #${n.node_id}</span>
+            <span>RSSI ${n.rssi_dbm?.toFixed(0)??'--'} | BR ${n.breathing_rate_bpm?.toFixed(1)??'--'} | HR ${n.heart_rate_bpm?.toFixed(0)??'--'}</span>
+            </div>`).join('')||'<div class="empty-state">No active nodes</div>';
     }
 }
 
@@ -1087,7 +1142,7 @@ function openEhr(survivor){
     html+=`<canvas id="ehrVitalTrend" class="ehr-vital-trend"></canvas></div>`;
 
     html+='<div class="ehr-section"><h3>🤖 Agent 分析</h3>';
-    const agentCard=document.getElementById('agent-card-'+survivor.id);
+    const agentCard=document.getElementById('agent-card-'+CSS.escape(survivor.id));
     if(agentCard)html+=agentCard.outerHTML;
     else{html+='<div class="empty-state"><div class="empty-icon">🧠</div><div class="empty-text">点击 Agent 分析按钮生成报告</div></div>'}
     html+=`<button class="agent-analyze-btn" data-patient-id="${escapeHtml(survivor.id)}">🤖 Agent 分析此伤员</button>`;
@@ -1130,22 +1185,36 @@ function toggleTheme(){document.documentElement.classList.toggle('light');try{lo
 // ═══════════════════════════════════════════════════════════
 function handleUpdate(data){
     latestData=data;
-    // Update per-node runtime state from NodeInfo array
     if(data.nodes&&Array.isArray(data.nodes)){
+        let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
         data.nodes.forEach(n=>{
             const meta=NODES.find(m=>m.id===n.node_id);
             if(meta){
                 meta.alive=n.active===true;meta.rssi=n.rssi_dbm;
                 meta.br=n.breathing_rate_bpm??null;meta.hr=n.heart_rate_bpm??null;
                 meta.motion=n.motion_level??null;
+                if(n.position&&n.position.length>=2){
+                    meta.pos=n.position;
+                    NODE_POSITIONS[n.node_id]=n.position;
+                    minX=Math.min(minX,n.position[0]);maxX=Math.max(maxX,n.position[0]);
+                    minY=Math.min(minY,n.position[1]);maxY=Math.max(maxY,n.position[1]);
+                }
             }
         });
+        if(isFinite(minX)&&isFinite(maxX)){
+            const padX=(maxX-minX)*0.3||1,padY=(maxY-minY)*0.3||1;
+            MAP_BOUNDS={minX:minX-padX,maxX:maxX+padX,minY:minY-padY,maxY:maxY+padY,
+                sizeX:(maxX-minX)+2*padX,sizeY:(maxY-minY)+2*padY};
+        }
     }
+    const ms=document.getElementById('modelStatus');
+    if(ms&&latestData?.model_status)ms.textContent='🧠 Model Active';else if(ms)ms.textContent='';
     if(data.triage_update){latestTriage=data.triage_update;renderFromServer();enableAnalyzeButton()}
 }
 function connectWebSocket(){
     if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
-    const wsUrl=`ws://${location.hostname}:${location.port||8080}/ws/sensing`;
+    const wsProto=location.protocol==='https:'?'wss:':'ws:';
+    const wsUrl=`${wsProto}//${location.hostname}:${location.port||8080}/ws/sensing`;
     console.log('[TRIAGE] WS connecting to:',wsUrl);
     ws=new WebSocket(wsUrl);
     ws.onopen=()=>{
@@ -1197,25 +1266,31 @@ function requestAgentAnalysis(){
     else generateLocalAnalysis(selectedPatientId,survivor);
 }
 function handleAgentStream(data){
-    const pid=data.survivor_id||data.patient_id;if(!pid)return;
+    const pid=data.patient_id||data.survivor_id;if(!pid)return;
     if(!agentStreamBuffer[pid])agentStreamBuffer[pid]={text:'',isStreaming:true};
     if(data.is_complete){agentStreamBuffer[pid].isStreaming=false;return}
     agentStreamBuffer[pid].text+=data.text||'';renderAgentStreamCard(pid,agentStreamBuffer[pid].text,true);
 }
-function handleAgentComplete(data){const pid=data.survivor_id||data.patient_id;if(!pid)return;agentStreamBuffer[pid]={text:'',isStreaming:false};if(data.analysis_json)renderAgentAnalysisCard(pid,data.analysis_json,data.generated_by||'agent');const btn=document.getElementById('agentAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成Agent分析报告'}}
+function handleAgentComplete(data){const pid=data.patient_id||data.survivor_id;if(!pid)return;
+    const buf=agentStreamBuffer[pid];agentStreamBuffer[pid]={text:'',isStreaming:false};
+    // Try to parse accumulated stream text as structured analysis JSON
+    if(buf&&buf.text){try{const parsed=JSON.parse(buf.text);if(parsed.findings||parsed.triage_opinion)renderAgentAnalysisCard(pid,parsed,'llm');return}catch(e){/* not valid JSON, show raw text */}}
+    if(data.text)renderAgentStreamCard(pid,data.text,false);
+    const btn=document.getElementById('agentAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成Agent分析报告'}
+}
 function handleAgentFallback(data){const pid=data.patient_id;if(!pid)return;renderAgentAnalysisCard(pid,data.analysis_json||data,data.generated_by||'fallback');const btn=document.getElementById('agentAnalyzeBtn');if(btn){btn.disabled=false;btn.textContent='🤖 生成Agent分析报告'}}
 
 function renderAgentStreamCard(patientId,text,isStreaming){
     const container=document.getElementById('agentAnalysisContainer');
-    let card=document.getElementById('agent-card-'+patientId);
-    if(!card){card=document.createElement('div');card.id='agent-card-'+patientId;card.className='agent-card streaming';container.innerHTML='';container.appendChild(card)}
+    let card=document.getElementById('agent-card-'+CSS.escape(patientId));
+    if(!card){card=document.createElement('div');card.id='agent-card-'+CSS.escape(patientId);card.className='agent-card streaming';container.innerHTML='';container.appendChild(card)}
     card.innerHTML=`<div class="agent-card-header"><span class="patient-tag">${patientId}</span><span class="agent-badge generating">⚡ 生成中...</span></div><div class="agent-stream-text${isStreaming?' typing-cursor':''}">${escapeHtml(text)}</div>`;
 }
 function renderAgentAnalysisCard(patientId,analysis,generatedBy){
     const container=document.getElementById('agentAnalysisContainer'),a=analysis;
     const isAgent=generatedBy==='agent',badgeClass=isAgent?'agent':'fallback',badgeText=isAgent?'🤖 Agent分析':'📋 模板分析';
     const riskLevel=a.risk_assessment?.overall_level||'moderate',riskEmoji={critical:'🔴',high:'🟠',moderate:'🟡',low:'🟢'}[riskLevel]||'⚪';
-    let html=`<div class="agent-card" id="agent-card-${patientId}"><div class="agent-card-header"><span class="patient-tag">${patientId}</span><span class="agent-badge ${badgeClass}">${badgeText}</span></div>`;
+    let html=`<div class="agent-card" id="agent-card-${CSS.escape(patientId)}"><div class="agent-card-header"><span class="patient-tag">${patientId}</span><span class="agent-badge ${badgeClass}">${badgeText}</span></div>`;
     html+=`<div class="agent-risk-badge ${riskLevel}">${riskEmoji} 综合风险评估: ${riskLevel.toUpperCase()}</div>`;
     if(a.risk_assessment?.primary_concern)html+=`<div style="font-size:13px;font-weight:500;margin-bottom:3px;">⚠️ ${escapeHtml(a.risk_assessment.primary_concern)}</div>`;
     if(a.risk_assessment?.deteriorating)html+=`<div style="font-size:11px;color:var(--danger-red);margin-bottom:6px;">📈 ${escapeHtml(a.risk_assessment.deterioration_evidence||'存在恶化趋势')}</div>`;
@@ -1271,7 +1346,7 @@ function refreshPatientList(){
     const ids=Object.keys(registeredPatients);
     if(ids.length===0){sec.style.display='none';return}
     sec.style.display='block';
-    list.innerHTML=ids.map(id=>{const p=registeredPatients[id];return`<div class="patient-list-item${id===selectedPatientId?' active':''}" onclick="selectPatientForAnalysis('${id}')"><div><div style="font-weight:500;font-size:12px;">${id}</div><div style="font-size:10px;color:var(--text-secondary);">${p.age?p.age+'岁 ':''}${(p.pre_existing||[]).slice(0,2).join(', ')||'无病史'}</div></div><button class="btn btn-ghost" style="font-size:9px;padding:2px 6px;" onclick="event.stopPropagation();deletePatient('${id}')">✕</button></div>`}).join('');
+    list.innerHTML=ids.map(id=>{const p=registeredPatients[id];return`<div class="patient-list-item${id===selectedPatientId?' active':''}" onclick="selectPatientForAnalysis('${escapeHtml(id)}')"><div><div style="font-weight:500;font-size:12px;">${id}</div><div style="font-size:10px;color:var(--text-secondary);">${p.age?p.age+'岁 ':''}${(p.pre_existing||[]).slice(0,2).join(', ')||'无病史'}</div></div><button class="btn btn-ghost" style="font-size:9px;padding:2px 6px;" onclick="event.stopPropagation();deletePatient('${escapeHtml(id)}')">✕</button></div>`}).join('');
 }
 function deletePatient(patientId){delete registeredPatients[patientId];try{localStorage.setItem('wces_patients',JSON.stringify(registeredPatients))}catch(e){}if(selectedPatientId===patientId)selectedPatientId=null;refreshPatientList();enableAnalyzeButton()}
 

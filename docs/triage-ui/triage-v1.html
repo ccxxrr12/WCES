@@ -1033,6 +1033,13 @@
     </div>
 
     <script>
+        // ==================== Security Utilities ====================
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            var div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+        }
         // ==================== Global State ====================
         const NODES = [
             { id: 1, x: 350, y: 120, label: 'C5 #1' },
@@ -1545,13 +1552,13 @@
                 `;
             } else {
                 survivorsList.innerHTML = latestTriage.survivors.map((s, idx) => `
-                    <div class="survivor-card ${s.triage_color} animate-in" style="animation-delay: ${idx * 50}ms">
+                    <div class="survivor-card ${escapeHtml(s.triage_color)} animate-in" style="animation-delay: ${idx * 50}ms">
                         <div class="survivor-header">
                             <div class="survivor-id">
-                                <div class="survivor-avatar">${s.id.substring(5, 7)}</div>
+                                <div class="survivor-avatar">${escapeHtml(s.id.substring(5, 7))}</div>
                                 <div class="survivor-info">
-                                    <h3>${s.id}</h3>
-                                    <p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${s.estimated_age}</p>
+                                    <h3>${escapeHtml(s.id)}</h3>
+                                    <p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p>
                                 </div>
                             </div>
                             <div style="display: flex; gap: 8px; align-items: center;">

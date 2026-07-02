@@ -171,7 +171,9 @@ impl BreathingDetector {
         // Calculate confidence
         let confidence = self.calculate_confidence(amplitude, regularity);
 
-        if confidence < self.config.confidence_threshold {
+        // NaN confidence passes all comparison checks silently (NaN < x = false).
+        // Guard before threshold comparison to prevent garbage breathing patterns.
+        if !confidence.is_finite() || confidence < self.config.confidence_threshold {
             return None;
         }
 

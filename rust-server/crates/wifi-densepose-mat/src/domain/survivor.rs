@@ -283,9 +283,11 @@ impl Survivor {
         self.triage_status = TriageCalculator::calculate(&reading);
         self.last_updated = Utc::now();
 
-        // Log triage change for audit; reset alert on any triage shift
+        // Reset alert only on clinical escalation (worsening), not improvement.
         if previous_triage != self.triage_status {
-            self.alert_sent = false;
+            if self.triage_status.is_escalation_from(&previous_triage) {
+                self.alert_sent = false;
+            }
             tracing::info!(
                 survivor_id = %self.id,
                 previous = ?previous_triage,

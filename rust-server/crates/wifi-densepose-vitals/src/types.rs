@@ -61,10 +61,12 @@ pub struct CsiFrame {
 }
 
 impl CsiFrame {
-    /// Create a new CSI frame, validating that amplitude and phase
-    /// vectors match the declared subcarrier count.
+    /// Create a new CSI frame, validating:
+    /// - amplitude and phase vectors match the declared subcarrier count.
+    /// - n_subcarriers > 0.
+    /// - sample_rate_hz > 0.0.
     ///
-    /// Returns `None` if the lengths are inconsistent.
+    /// Returns `None` if any validation fails.
     pub fn new(
         amplitudes: Vec<f64>,
         phases: Vec<f64>,
@@ -73,6 +75,11 @@ impl CsiFrame {
         sample_rate_hz: f64,
     ) -> Option<Self> {
         if amplitudes.len() != n_subcarriers || phases.len() != n_subcarriers {
+            return None;
+        }
+        // Zero or negative sample rate causes division by zero in IIR filters
+        // (heartrate.rs + breathing.rs), permanently corrupting filter state.
+        if n_subcarriers == 0 || sample_rate_hz <= 0.0 {
             return None;
         }
         Some(Self {

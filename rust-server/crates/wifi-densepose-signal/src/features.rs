@@ -495,7 +495,11 @@ impl PowerSpectralDensity {
             })
             .map(|(i, _)| i)
             .unwrap_or(0);
-        let peak_frequency = positive_freq[peak_idx];
+        let peak_frequency = if peak_idx < positive_freq.len() {
+            positive_freq[peak_idx]
+        } else {
+            0.0 // empty spectrum (fft_size <= 1), return DC
+        };
 
         // Spectral centroid
         let centroid = if total_power > 1e-10 {

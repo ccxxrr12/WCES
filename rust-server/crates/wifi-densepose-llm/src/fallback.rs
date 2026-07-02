@@ -191,7 +191,8 @@ fn determine_overall_level(
         .map(|(c, s)| c.urgency == "critical" && *s > 0.5)
         .unwrap_or(false);
 
-    if has_critical_match || (trend_danger && base_level != "critical") {
+    // Critical patients must never be downgraded — skip elevation when already at "critical".
+    if (has_critical_match || trend_danger) && base_level != "critical" {
         if base_level == "low" { "moderate" } else { "high" }.into()
     } else {
         base_level.into()

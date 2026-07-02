@@ -19,7 +19,6 @@
 
 #include "edge_processing.h"
 #include "nvs_config.h"
-#include "mmwave_sensor.h"
 
 /* Runtime config — declared in main.c, loaded from NVS at boot. */
 extern nvs_config_t g_nvs_config;
@@ -58,6 +57,9 @@ static const char *TAG = "edge_proc";
  * ====================================================================== */
 
 static edge_ring_buf_t s_ring;
+
+/** Spinlock protecting s_persons[] against concurrent read/write (S3 dual-core). */
+static portMUX_TYPE s_persons_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 static inline bool ring_push(const uint8_t *iq, uint16_t len,
                              int8_t rssi, uint8_t channel)
@@ -113,10 +115,11 @@ static inline bool ring_pop(edge_ring_slot_t *out)
 static void biquad_bandpass_design(edge_biquad_t *bq, float fs,
                                    float f_lo, float f_hi)
 {
-    /* Bug 1 fix: guard against fs==0 which produces Inf/NaN coefficients via
-     * division by zero. Currently fs is hardcoded to 20.0f at init, but if
-     * future code makes it configurable this prevents silent garbage. */
-    if (fs <= 0.0f) {
+    /* Validate all parameters: fs must be positive, f_lo must be positive,
+     * f_hi must be below Nyquist (fs/2), and f_lo must be less than f_hi.
+     * Any violation produces Inf/NaN coefficients that propagate through
+     * the entire DSP pipeline. Reset to pass-through on invalid input. */
+    if (fs <= 0.0f || f_lo <= 0.0f || f_hi >= fs * 0.5f || f_lo >= f_hi) {
         memset(bq, 0, sizeof(*bq));
         return;
     }
@@ -140,6 +143,18 @@ static inline float biquad_process(edge_biquad_t *bq, float x)
 {
     float y = bq->b0 * x + bq->b1 * bq->x1 + bq->b2 * bq->x2
             - bq->a1 * bq->y1 - bq->a2 * bq->y2;
+
+    /* Guard against NaN/Inf propagation: once a biquad produces a non-finite
+     * output (e.g., from fs==0 or extreme coefficients), all subsequent outputs
+     * will also be non-finite, silently corrupting the entire DSP pipeline.
+     * Detect and reset the state on first occurrence.
+     * Uses portable checks: NaN (y != y) and Inf (magnitude exceeds float max). */
+    if (y != y || y > 3.4e38f || y < -3.4e38f) {
+        y = 0.0f;
+        bq->x1 = bq->x2 = 0.0f;
+        bq->y1 = bq->y2 = 0.0f;
+    }
+
     bq->x2 = bq->x1;
     bq->x1 = x;
     bq->y2 = bq->y1;
@@ -196,7 +211,7 @@ static inline void welford_reset(edge_welford_t *w)
 
 static inline void welford_update(edge_welford_t *w, double x)
 {
-    w->count++;
+    if (w->count < UINT64_MAX) w->count++;
     double delta = x - w->mean;
     w->mean += delta / (double)w->count;
     double delta2 = x - w->mean;
@@ -530,6 +545,7 @@ static void update_multi_person_vitals(const uint8_t *iq_data, uint16_t n_sc,
 
     uint8_t subs_per_person = s_top_k_count / n_persons;
 
+    taskENTER_CRITICAL(&s_persons_spinlock);
     for (uint8_t p = 0; p < n_persons; p++) {
         edge_person_vitals_t *pv = &s_persons[p];
         pv->active = true;
@@ -575,8 +591,8 @@ static void update_multi_person_vitals(const uint8_t *iq_data, uint16_t n_sc,
              * phases[], amplitudes[], variances[]) — approaches the 8 KB task
              * stack limit. If stack overflow symptoms appear (LoadProhibited in
              * edge_dsp), move these to static (safe: single-task DSP pipeline). */
-            float br_buf[EDGE_PHASE_HISTORY_LEN];
-            float hr_buf[EDGE_PHASE_HISTORY_LEN];
+            static float br_buf[EDGE_PHASE_HISTORY_LEN];
+            static float hr_buf[EDGE_PHASE_HISTORY_LEN];
             uint16_t buf_len = pv->history_len;
 
             for (uint16_t i = 0; i < buf_len; i++) {
@@ -599,6 +615,7 @@ static void update_multi_person_vitals(const uint8_t *iq_data, uint16_t n_sc,
     for (uint8_t p = n_persons; p < EDGE_MAX_PERSONS; p++) {
         s_persons[p].active = false;
     }
+    taskEXIT_CRITICAL(&s_persons_spinlock);
 }
 
 /* ======================================================================
@@ -649,58 +666,8 @@ static void send_vitals_packet(void)
     s_pkt_valid = true;
     taskEXIT_CRITICAL(&s_vitals_spinlock);
 
-    /* ADR-063: If mmWave is active, send fused 48-byte packet instead. */
-    mmwave_state_t mw;
-    if (mmwave_sensor_get_state(&mw) && mw.detected) {
-        edge_fused_vitals_pkt_t fpkt;
-        memset(&fpkt, 0, sizeof(fpkt));
-
-        fpkt.magic = EDGE_FUSED_MAGIC;
-        fpkt.node_id = pkt.node_id;
-        fpkt.flags = pkt.flags;
-        if (mw.person_present) fpkt.flags |= 0x08;  /* Bit3 = mmwave_present */
-        fpkt.rssi = pkt.rssi;
-        fpkt.n_persons = pkt.n_persons;
-        fpkt.mmwave_type = (uint8_t)mw.type;
-        fpkt.motion_energy = pkt.motion_energy;
-        fpkt.presence_score = pkt.presence_score;
-        fpkt.timestamp_ms = pkt.timestamp_ms;
-
-        /* Kalman-style fusion: prefer mmWave when available, CSI as fallback. */
-        if (mw.heart_rate_bpm > 0.0f && s_heartrate_bpm > 0.0f) {
-            /* Weighted average: mmWave 80%, CSI 20% (mmWave is more accurate). */
-            float fused_hr = mw.heart_rate_bpm * 0.8f + s_heartrate_bpm * 0.2f;
-            fpkt.heartrate = (uint32_t)(fused_hr * 10000.0f);
-            fpkt.fusion_confidence = 90;
-        } else if (mw.heart_rate_bpm > 0.0f) {
-            fpkt.heartrate = (uint32_t)(mw.heart_rate_bpm * 10000.0f);
-            fpkt.fusion_confidence = 85;
-        } else {
-            fpkt.heartrate = pkt.heartrate;
-            fpkt.fusion_confidence = 50;
-        }
-
-        if (mw.breathing_rate > 0.0f && s_breathing_bpm > 0.0f) {
-            float fused_br = mw.breathing_rate * 0.8f + s_breathing_bpm * 0.2f;
-            fpkt.breathing_rate = (uint16_t)(fused_br * 100.0f);
-        } else if (mw.breathing_rate > 0.0f) {
-            fpkt.breathing_rate = (uint16_t)(mw.breathing_rate * 100.0f);
-        } else {
-            fpkt.breathing_rate = pkt.breathing_rate;
-        }
-
-        /* Raw mmWave values for server-side analysis. */
-        fpkt.mmwave_hr_bpm = mw.heart_rate_bpm;
-        fpkt.mmwave_br_bpm = mw.breathing_rate;
-        fpkt.mmwave_distance = mw.distance_cm;
-        fpkt.mmwave_targets = mw.target_count;
-        fpkt.mmwave_confidence = (mw.frame_count > 10) ? 80 : 40;
-
-        stream_sender_send((const uint8_t *)&fpkt, sizeof(fpkt));
-    } else {
-        /* No mmWave — send standard 32-byte packet. */
-        stream_sender_send((const uint8_t *)&pkt, sizeof(pkt));
-    }
+    /* Send standard 32-byte vitals packet. */
+    stream_sender_send((const uint8_t *)&pkt, sizeof(pkt));
 }
 
 /* ======================================================================
@@ -712,10 +679,24 @@ static void process_frame(const edge_ring_slot_t *slot)
     uint16_t n_subcarriers = slot->iq_len / 2;
     if (n_subcarriers == 0 || n_subcarriers > EDGE_MAX_SUBCARRIERS) return;
 
+    /* Reset top-K when subcarrier count changes (e.g., bandwidth switch).
+     * Stale indices past the new n_subcarriers would read garbage phase data. */
+    static uint16_t s_prev_n_sc = 0;
+    if (n_subcarriers != s_prev_n_sc) {
+        s_top_k_count = 0;
+        s_prev_n_sc = n_subcarriers;
+    }
+
     s_frame_count++;
     s_latest_rssi = slot->rssi;
 
-    /* Assumed CSI sample rate (~20 Hz for typical ESP32 CSI). */
+    /* Assumed CSI sample rate (~20 Hz for typical ESP32 CSI).
+     * KNOWN LIMITATION: This is hardcoded to 20.0 Hz because there is no
+     * reliable dynamic rate measurement in the current implementation.
+     * If actual callback rate differs (e.g., 10 Hz on quiet networks or
+     * 50+ Hz in promiscuous mode), BPM estimates and biquad filter design
+     * will be inaccurate. A future improvement would measure the inter-frame
+     * interval and use a moving average for the effective sample rate. */
     const float sample_rate = 20.0f;
 
     /* --- Step 1-2: Phase extraction + unwrapping per subcarrier --- */
@@ -767,13 +748,10 @@ static void process_frame(const edge_ring_slot_t *slot)
     /* --- Step 7: BPM estimation (zero-crossing) --- */
     if (s_history_len >= 64) {
         /* Build contiguous buffers from ring.
-         * Bug 3 note: br_buf + hr_buf = 2048 bytes on the stack. Combined with
-         * phases[], amplitudes[], variances[] (static locals, ~6 KB) and the
-         * FreeRTOS context frame, the total approaches the 8 KB task stack limit.
-         * If LoadProhibited crashes appear in edge_dsp, move these to static
-         * (safe: single-task DSP pipeline). */
-        float br_buf[EDGE_PHASE_HISTORY_LEN];
-        float hr_buf[EDGE_PHASE_HISTORY_LEN];
+         * Moved to static: br_buf + hr_buf = 2048 bytes — would overflow
+         * the 8 KB task stack when combined with static locals (~6 KB). */
+        static float br_buf[EDGE_PHASE_HISTORY_LEN];
+        static float hr_buf[EDGE_PHASE_HISTORY_LEN];
         uint16_t buf_len = s_history_len;
 
         for (uint16_t i = 0; i < buf_len; i++) {
@@ -951,9 +929,8 @@ bool edge_get_vitals(edge_vitals_pkt_t *pkt)
 
 void edge_get_multi_person(edge_person_vitals_t *persons, uint8_t *n_active)
 {
-    /* BUG 3 fix: acquire spinlock to prevent tearing on the 1032+ byte
-     * s_persons struct during concurrent writes from the DSP task. */
-    static portMUX_TYPE s_persons_spinlock = portMUX_INITIALIZER_UNLOCKED;
+    /* Acquire spinlock to prevent tearing on the 1032+ byte s_persons struct
+     * during concurrent writes (file-scope s_persons_spinlock). */
     uint8_t active = 0;
     taskENTER_CRITICAL(&s_persons_spinlock);
     for (uint8_t p = 0; p < EDGE_MAX_PERSONS; p++) {
@@ -1033,7 +1010,7 @@ esp_err_t edge_processing_init(const edge_config_t *cfg)
     s_prev_phase_velocity = 0.0f;
     s_fall_consec_count = 0;
     s_fall_last_alert_us = 0;
-    s_last_vitals_send_us = 0;
+    s_last_vitals_send_us = esp_timer_get_time();
     s_has_prev_iq = false;
     s_prev_iq_len = 0;
     s_pkt_valid = false;

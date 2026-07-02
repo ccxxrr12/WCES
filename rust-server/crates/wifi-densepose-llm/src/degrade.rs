@@ -109,7 +109,7 @@ impl DegradationManager {
     pub fn on_analysis_complete(&mut self, patient_id: u32, result: AnalysisResult) {
         self.cooldowns.insert(patient_id, Instant::now());
         self.analysis_cache.retain(|(id, _, _)| *id != patient_id);
-        if self.analysis_cache.len() >= self.config.max_cache_size {
+        if self.analysis_cache.len() >= self.config.max_cache_size && !self.analysis_cache.is_empty() {
             self.analysis_cache.remove(0);
         }
         self.analysis_cache.push((patient_id, result, Instant::now()));

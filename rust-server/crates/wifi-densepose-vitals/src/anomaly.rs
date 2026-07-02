@@ -123,6 +123,12 @@ impl VitalAnomalyDetector {
         let rr = reading.respiratory_rate.value_bpm;
         let hr = reading.heart_rate.value_bpm;
 
+        // Guard: NaN/Inf values permanently poison Welford statistics —
+        // skip this reading entirely if either vital sign is not finite.
+        if !rr.is_finite() || !hr.is_finite() {
+            return alerts;
+        }
+
         // Update histories
         self.rr_history.push(rr);
         if self.rr_history.len() > self.window {

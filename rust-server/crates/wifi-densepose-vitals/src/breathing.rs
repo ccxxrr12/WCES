@@ -57,6 +57,12 @@ impl BreathingExtractor {
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn new(n_subcarriers: usize, sample_rate: f64, window_secs: f64) -> Self {
+        // Guard against zero/negative sample_rate: division by zero in bandpass_filter()
+        // would produce Inf filter coefficients, permanently corrupting IIR state.
+        let sample_rate = if sample_rate > 0.0 { sample_rate } else {
+            tracing::warn!("BreathingExtractor: sample_rate={sample_rate} invalid, clamping to 1.0 Hz");
+            1.0
+        };
         let capacity = (sample_rate * window_secs) as usize;
         Self {
             filtered_history: Vec::with_capacity(capacity),
@@ -85,6 +91,10 @@ impl BreathingExtractor {
     /// Returns a `VitalEstimate` with the breathing rate in BPM, or
     /// `None` if insufficient history has been accumulated.
     pub fn extract(&mut self, residuals: &[f64], weights: &[f64]) -> Option<VitalEstimate> {
+        // Guard: NaN/Inf in input permanently poisons IIR filter state
+        if residuals.iter().any(|v| !v.is_finite()) || weights.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
         let n = residuals.len().min(self.n_subcarriers);
         if n == 0 {
             return None;
@@ -157,7 +167,7 @@ impl BreathingExtractor {
         let bw = omega_high - omega_low;
         let center = f64::midpoint(omega_low, omega_high);
 
-        let r = 1.0 - bw / 2.0;
+        let r = (1.0 - bw / 2.0).clamp(0.5, 0.999);
         let cos_w0 = center.cos();
 
         let output =
@@ -190,9 +200,9 @@ impl BreathingExtractor {
     }
 }
 
-/// Count zero crossings in a signal.
+/// Count zero crossings in a signal. Uses sign comparison robust to -0.0.
 fn count_zero_crossings(signal: &[f64]) -> usize {
-    signal.windows(2).filter(|w| w[0] * w[1] < 0.0).count()
+    signal.windows(2).filter(|w| w[0].signum() * w[1].signum() < 0.0).count()
 }
 
 /// Compute confidence in the breathing estimate based on signal regularity.

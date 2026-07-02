@@ -147,6 +147,10 @@ pub fn compute_multi_subcarrier_spectrogram(
 
 /// Generate a window function.
 fn make_window(kind: WindowFunction, size: usize) -> Vec<f64> {
+    // Guard against division by (size - 1) when size <= 1
+    if size <= 1 {
+        return vec![1.0; size];
+    }
     match kind {
         WindowFunction::Rectangular => vec![1.0; size],
         WindowFunction::Hann => (0..size)

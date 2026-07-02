@@ -66,6 +66,23 @@ impl TriageStatus {
     pub fn is_urgent(&self) -> bool {
         matches!(self, TriageStatus::Immediate | TriageStatus::Delayed)
     }
+
+    /// Severity ordinal for escalation comparison (higher = worse).
+    /// Deceased(4) > Immediate(3) > Delayed(2) > Minor(1) > Unknown(0).
+    pub fn severity_ordinal(&self) -> u8 {
+        match self {
+            TriageStatus::Unknown => 0,
+            TriageStatus::Minor => 1,
+            TriageStatus::Delayed => 2,
+            TriageStatus::Immediate => 3,
+            TriageStatus::Deceased => 4,
+        }
+    }
+
+    /// True if `self` is a clinical escalation from `other`.
+    pub fn is_escalation_from(&self, other: &TriageStatus) -> bool {
+        self.severity_ordinal() > other.severity_ordinal()
+    }
 }
 
 impl std::fmt::Display for TriageStatus {

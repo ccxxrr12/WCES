@@ -74,6 +74,8 @@ pub struct SurvivorSnapshot {
     pub node_id: u8,
     pub estimated_age: String,
     pub status: String,
+    /// True if this survivor was re-identified from a previously lost track.
+    pub reidentified: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,12 +122,27 @@ impl Default for TriageConfig {
 
 impl TriageConfig {
     pub fn competition() -> Self {
-        let mut pos = HashMap::new();
-        pos.insert(1, (0.0, 1.15, 1.0));
-        pos.insert(2, (-1.0, -0.58, 1.0));
-        pos.insert(3, (1.0, -0.58, 1.0));
-        Self { node_positions: pos, ..Default::default() }
+        Self { node_positions: node_positions(), ..Default::default() }
     }
+}
+
+/// Single source of truth for ESP32-C5 node positions in the room coordinate frame.
+///
+/// Nodes form an equilateral triangle (2m side length) at 1m height, centred at origin.
+/// - Node 1: top (north)
+/// - Node 2: bottom-left (southwest)
+/// - Node 3: bottom-right (southeast)
+pub fn node_positions() -> HashMap<u8, (f64, f64, f64)> {
+    let mut pos = HashMap::new();
+    pos.insert(1, (0.0, 1.15, 1.0));
+    pos.insert(2, (-1.0, -0.58, 1.0));
+    pos.insert(3, (1.0, -0.58, 1.0));
+    pos
+}
+
+/// Convenience: node positions as `[f64; 3]` for bridges that use that format.
+pub fn node_positions_arr() -> HashMap<u8, [f64; 3]> {
+    node_positions().into_iter().map(|(k, (x, y, z))| (k, [x, y, z])).collect()
 }
 
 // ── START 分诊规则 ──────────────────────────────────────────────────────────
@@ -171,32 +188,37 @@ pub fn calculate_triage(input: &VitalSignsInput) -> TriageLevel {
     let br = input.breathing_rate_bpm;
     let hr = input.heart_rate_bpm;
 
-    // 无有效生命体征 → Deceased
+    // 无有效生命体征 → Deceased or Unknown
     if br.is_none() && hr.is_none() {
         return TriageLevel::Deceased;
     }
 
-    let br = br.unwrap_or(0.0);
-    let hr = hr.unwrap_or(0.0);
-
     // Immediate (红): START 协议 — 呼吸 >30/min 或 <10/min
-    if br > 30.0 || (br > 0.0 && br < 10.0) {
-        return TriageLevel::Immediate;
+    if let Some(b) = br {
+        if b > 30.0 || b < 10.0 {
+            return TriageLevel::Immediate;
+        }
     }
 
     // Immediate (红): 心率 >120 或 <40 BPM
-    if hr > 120.0 || (hr > 0.0 && hr < 40.0) {
-        return TriageLevel::Immediate;
+    if let Some(h) = hr {
+        if h > 120.0 || h < 40.0 {
+            return TriageLevel::Immediate;
+        }
     }
 
     // Minor (绿): 能自主移动 (motion_score 高) + 生命体征正常
-    if br >= 12.0 && br <= 24.0 && hr >= 50.0 && hr <= 100.0 && input.motion_score > 0.3 {
-        return TriageLevel::Minor;
+    if let (Some(b), Some(h)) = (br, hr) {
+        if b >= 12.0 && b <= 24.0 && h >= 50.0 && h <= 100.0 && input.motion_score > 0.3 {
+            return TriageLevel::Minor;
+        }
     }
 
     // Minor (绿): 生命体征正常 (即使不动)
-    if br >= 12.0 && br <= 20.0 && hr >= 60.0 && hr <= 100.0 {
-        return TriageLevel::Minor;
+    if let (Some(b), Some(h)) = (br, hr) {
+        if b >= 12.0 && b <= 20.0 && h >= 60.0 && h <= 100.0 {
+            return TriageLevel::Minor;
+        }
     }
 
     // Delayed (黄): 其余情况 — 稳定但需观察
@@ -229,6 +251,11 @@ struct TrackedSurvivor {
     person_id: Option<u32>,
     deterioration_count: u32,
     status: &'static str,  // "active" | "rescued" | "lost" | "deceased"
+    /// 8-dim biometric embedding for cross-time re-identification.
+    /// Generated from vital signs + RSSI + motion pattern at creation time.
+    embedding: Vec<f64>,
+    /// True if this survivor was re-identified from a previous lost track.
+    reidentified: bool,
 }
 
 impl TrackedSurvivor {
@@ -240,7 +267,11 @@ impl TrackedSurvivor {
             motion_history: Vec::new(),
             first_seen: now, last_updated: now, node_id, person_id,
             deterioration_count: 0, status: "active",
+            embedding: Vec::new(), reidentified: false,
         }
+    }
+    fn new_with_embedding(id: String, now: f64, node_id: u8, person_id: Option<u32>, embedding: Vec<f64>) -> Self {
+        Self { embedding, ..Self::new(id, now, node_id, person_id) }
     }
 }
 
@@ -248,6 +279,8 @@ impl TrackedSurvivor {
 pub struct TriageEngine {
     config: TriageConfig,
     survivors: HashMap<String, TrackedSurvivor>,
+    /// Lost survivors preserved for re-ID. Pruned after 300s.
+    lost_pool: Vec<(TrackedSurvivor, f64)>,
     alerts: Vec<AlertSnapshot>,
     counter: u32,
     start_time: f64,
@@ -258,7 +291,7 @@ pub struct TriageEngine {
 impl TriageEngine {
     pub fn new(config: TriageConfig) -> Self {
         Self {
-            config, survivors: HashMap::new(), alerts: Vec::new(),
+            config, survivors: HashMap::new(), lost_pool: Vec::new(), alerts: Vec::new(),
             counter: 0, start_time: now_secs(),
             node_observations: HashMap::new(),
         }
@@ -333,8 +366,9 @@ impl TriageEngine {
             };
             s.triage = calculate_triage(&smooth_input);
 
-            // 恶化检测 (分诊等级向更紧急方向变化，排除从Unknown的变化)
-            if s.triage.priority() < s.prev_triage.priority() && s.prev_triage != TriageLevel::Unknown {
+            // 恶化检测: 向更紧急变化，或转为Deceased（死亡是终极恶化）
+            if s.triage == TriageLevel::Deceased ||
+               (s.triage.priority() < s.prev_triage.priority() && s.prev_triage != TriageLevel::Unknown) {
                 s.deterioration_count += 1;
                 if s.deterioration_count >= self.config.deterioration_window {
                     s.deterioration_count = 0;
@@ -345,6 +379,12 @@ impl TriageEngine {
                         message: format!("{} → {}", s.prev_triage.name(), s.triage.name()),
                         priority: s.triage.priority(),
                     });
+                    // Cap alerts to prevent unbounded memory growth in long-running deployments
+                    const MAX_ALERTS: usize = 500;
+                    if self.alerts.len() > MAX_ALERTS {
+                        let drop_count = self.alerts.len() - MAX_ALERTS;
+                        self.alerts.drain(0..drop_count);
+                    }
                 }
             } else {
                 s.deterioration_count = s.deterioration_count.saturating_sub(1);
@@ -352,13 +392,62 @@ impl TriageEngine {
         }
 
         // 清理过期
-        self.survivors.retain(|_, s| (now - s.last_updated) < self.config.survivor_timeout_secs);
+        // Move timed-out survivors to lost_pool for potential re-ID
+        let timeout = self.config.survivor_timeout_secs;
+        let timed_out: Vec<TrackedSurvivor> = self.survivors.iter()
+            .filter(|(_, s)| (now - s.last_updated) >= timeout)
+            .map(|(_, s)| s.clone())
+            .collect();
+        for s in timed_out {
+            self.survivors.remove(&s.id);
+            if !s.embedding.is_empty() {
+                self.lost_pool.push((s, now));
+            }
+        }
+        self.prune_lost_pool(now);
 
         self.build_update()
     }
 
+    /// Generate a lightweight 8-dim biometric embedding from vitals + RSSI + motion.
+    /// Used for cross-time person re-identification (inspired by RuView AETHER).
+    fn generate_embedding(input: &VitalSignsInput) -> Vec<f64> {
+        let br = input.breathing_rate_bpm.unwrap_or(0.0);
+        let hr = input.heart_rate_bpm.unwrap_or(0.0);
+        let motion = input.motion_score;
+        let sq = input.signal_quality;
+        let rssi_norm = (input.rssi as f64 + 90.0).clamp(0.0, 60.0) / 60.0; // normalize RSSI
+        // 8-dim: [br/60, hr/200, motion, sq, br_vs_hr_ratio, rssi, node_parity, 0]
+        vec![
+            (br / 60.0).clamp(0.0, 1.0),
+            (hr / 200.0).clamp(0.0, 1.0),
+            motion.clamp(0.0, 1.0),
+            sq.clamp(0.0, 1.0),
+            if hr > 0.0 { (br / hr * 60.0 / 200.0).clamp(0.0, 2.0) } else { 0.0 },
+            rssi_norm,
+            (input.node_id as f64 % 2.0) / 2.0,
+            0.0,
+        ]
+    }
+
+    /// Cosine similarity between two equal-length vectors.
+    fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+        let n = a.len().min(b.len());
+        if n == 0 { return 0.0; }
+        let (dot, na, nb) = (0..n).fold((0.0, 0.0, 0.0), |(d, na, nb), i| {
+            (d + a[i] * b[i], na + a[i] * a[i], nb + b[i] * b[i])
+        });
+        let denom = (na * nb).sqrt();
+        if denom < 1e-12 { 0.0 } else { (dot / denom).clamp(-1.0, 1.0) }
+    }
+
+    /// Prune lost_pool entries older than 300 seconds.
+    fn prune_lost_pool(&mut self, now: f64) {
+        self.lost_pool.retain(|(_, t)| now - *t < 300.0);
+    }
+
     fn match_or_create(&mut self, input: &VitalSignsInput, now: f64) -> String {
-        // 已有伤员: person_id + node_id + 时间窗口匹配
+        // Step 1: Exact match — same person_id + same node + recent (<5s).
         if let Some(pid) = input.person_id {
             for (id, s) in &self.survivors {
                 if s.person_id == Some(pid) && s.node_id == input.node_id && s.last_updated > now - 5.0 {
@@ -366,10 +455,59 @@ impl TriageEngine {
                 }
             }
         }
-        // 新建伤员
+
+        let current_emb = Self::generate_embedding(input);
+
+        // Step 2: Cross-node biometric match against ACTIVE survivors.
+        // When multiple nodes detect the same person, their vital-sign embeddings
+        // will be similar even though person_id differs (per-node tick counters).
+        let active_thresh = 0.80; // stricter than lost-pool re-ID
+        let mut best_active: Option<(String, f64)> = None;
+        for (id, s) in &self.survivors {
+            if s.embedding.is_empty() || s.last_updated < now - 5.0 { continue; }
+            let sim = Self::cosine_similarity(&current_emb, &s.embedding);
+            if sim > active_thresh && sim > best_active.as_ref().map(|m| m.1).unwrap_or(0.0) {
+                best_active = Some((id.clone(), sim));
+            }
+        }
+        if let Some((match_id, _)) = best_active {
+            // Update the matched survivor with this node's observation.
+            if let Some(s) = self.survivors.get_mut(&match_id) {
+                s.node_id = input.node_id;
+                s.person_id = input.person_id;
+                s.last_updated = now;
+                s.embedding = current_emb; // update embedding with latest vitals
+                return match_id;
+            }
+        }
+
+        // Step 3: Re-ID — check lost pool for biometric match.
+        self.prune_lost_pool(now);
+        let lost_thresh = 0.75;
+        let mut best_lost: Option<(String, f64)> = None;
+        for (lost, _) in &self.lost_pool {
+            if lost.embedding.is_empty() { continue; }
+            let sim = Self::cosine_similarity(&current_emb, &lost.embedding);
+            if sim > lost_thresh && sim > best_lost.as_ref().map(|m| m.1).unwrap_or(0.0) {
+                best_lost = Some((lost.id.clone(), sim));
+            }
+        }
+        if let Some((reid_id, _)) = best_lost {
+            self.lost_pool.retain(|(s, _)| s.id != reid_id);
+            let mut react = TrackedSurvivor::new_with_embedding(
+                reid_id.clone(), now, input.node_id, input.person_id, current_emb,
+            );
+            react.reidentified = true;
+            self.survivors.insert(reid_id.clone(), react);
+            return reid_id;
+        }
+
+        // Step 4: Create new survivor.
         self.counter += 1;
         let id = format!("SURV-{:08x}", self.counter);
-        self.survivors.insert(id.clone(), TrackedSurvivor::new(id.clone(), now, input.node_id, input.person_id));
+        self.survivors.insert(id.clone(), TrackedSurvivor::new_with_embedding(
+            id.clone(), now, input.node_id, input.person_id, current_emb,
+        ));
         id
     }
 
@@ -401,6 +539,7 @@ impl TriageEngine {
                 node_id: s.node_id,
                 estimated_age: estimate_age(average_last(&s.breathing_history, 3), average_last(&s.heart_rate_history, 3)),
                 status: s.status.to_string(),
+                reidentified: s.reidentified,
             }
         }).collect();
 

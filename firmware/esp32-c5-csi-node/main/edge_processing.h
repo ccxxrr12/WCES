@@ -79,7 +79,7 @@ typedef struct {
 typedef struct {
     double mean;
     double m2;
-    uint32_t count;
+    uint64_t count;  /* uint64_t prevents overflow (~5.8M years at 100 Hz) */
 } edge_welford_t;
 
 /* ---- Per-person vitals state (multi-person mode) ---- */
@@ -110,35 +110,6 @@ typedef struct __attribute__((packed)) {
 } edge_vitals_pkt_t;
 
 _Static_assert(sizeof(edge_vitals_pkt_t) == 32, "vitals packet must be 32 bytes");
-
-/* ---- ADR-063: Fused vitals packet (48 bytes, wire format) ---- */
-#define EDGE_FUSED_MAGIC  0xC5110004  /**< Fused vitals packet magic. */
-
-typedef struct __attribute__((packed)) {
-    /* First 32 bytes match edge_vitals_pkt_t layout */
-    uint32_t magic;          /**< EDGE_FUSED_MAGIC = 0xC5110004. */
-    uint8_t  node_id;
-    uint8_t  flags;          /**< Bit0=presence, Bit1=fall, Bit2=motion, Bit3=mmwave_present. */
-    uint16_t breathing_rate; /**< Fused BPM * 100 (CSI + mmWave Kalman). */
-    uint32_t heartrate;      /**< Fused BPM * 10000. */
-    int8_t   rssi;
-    uint8_t  n_persons;
-    uint8_t  mmwave_type;    /**< mmwave_type_t enum. */
-    uint8_t  fusion_confidence; /**< 0-100 fusion quality score. */
-    float    motion_energy;
-    float    presence_score;
-    uint32_t timestamp_ms;
-    /* mmWave extension (16 bytes) */
-    float    mmwave_hr_bpm;  /**< Raw mmWave heart rate. */
-    float    mmwave_br_bpm;  /**< Raw mmWave breathing rate. */
-    float    mmwave_distance;/**< Distance to nearest target (cm). */
-    uint8_t  mmwave_targets; /**< Target count from mmWave. */
-    uint8_t  mmwave_confidence; /**< mmWave signal quality 0-100. */
-    uint16_t reserved3;
-    uint32_t reserved4;     /**< Pad to 48 bytes for alignment. */
-} edge_fused_vitals_pkt_t;
-
-_Static_assert(sizeof(edge_fused_vitals_pkt_t) == 48, "fused vitals must be 48 bytes");
 
 /* ---- Edge configuration (from NVS) ---- */
 typedef struct {

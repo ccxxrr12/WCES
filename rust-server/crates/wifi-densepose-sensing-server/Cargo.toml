@@ -49,7 +49,12 @@ anyhow.workspace = true
 # MAT triage pipeline (competition core)
 wifi-densepose-mat = { version = "0.3.0", path = "../wifi-densepose-mat" }
 wifi-densepose-signal = { version = "0.3.0", path = "../wifi-densepose-signal" }
+wifi-densepose-core = { version = "0.3.0", path = "../wifi-densepose-core" }
 wifi-densepose-vitals = { version = "0.3.0", path = "../wifi-densepose-vitals" }
+
+# Numerical computing (CIR estimation)
+ndarray = "0.15"
+num-complex = "0.4"
 
 # LLM intelligent analysis engine (competition P10)
 wifi-densepose-llm = { version = "0.3.0", path = "../wifi-densepose-llm" }

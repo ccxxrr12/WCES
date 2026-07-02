@@ -20,6 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Signal processing
 ndarray = { workspace = true }
+ndarray-linalg = { workspace = true, optional = true }
 rustfft.workspace = true
 num-complex.workspace = true
 num-traits.workspace = true
@@ -38,6 +39,10 @@ midstreamer-attractor = { workspace = true }
 
 # Internal
 wifi-densepose-core = { version = "0.3.0", path = "../wifi-densepose-core" }
+
+[features]
+default = []
+eigenvalue = ["ndarray-linalg"]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

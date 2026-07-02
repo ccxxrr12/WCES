@@ -224,6 +224,18 @@ pub(crate) struct AppStateInner {
     vital_detector: VitalSignDetector,
     /// MAT triage engine (START triage + survivor tracking + alerts).
     triage_engine: TriageEngine,
+    /// Field model calibration for physics-grounded signal mapping.
+    field_bridge: Option<wifi_densepose_sensing_server::field_bridge::FieldBridge>,
+    /// Per-node vitals crate pipeline instances (Butterworth filtering).
+    vitals_bridges: HashMap<u8, wifi_densepose_sensing_server::vitals_bridge::VitalsBridge>,
+    /// Per-node CIR estimation bridges (ISTA sparse recovery).
+    cir_bridges: HashMap<u8, wifi_densepose_sensing_server::cir_bridge::CirBridge>,
+    /// Multi-node RSSI+ToF triangulation for survivor positioning.
+    localization_bridge: wifi_densepose_sensing_server::localization_bridge::LocalizationBridge,
+    /// Kalman-filtered survivor tracking with biometric re-ID.
+    tracking_bridge: wifi_densepose_sensing_server::tracking_bridge::TrackingBridge,
+    /// Structured alert management (lifecycle + escalation).
+    alerting_bridge: wifi_densepose_sensing_server::alerting_bridge::AlertingBridge,
     /// Most recent vital sign reading for the REST endpoint.
     latest_vitals: VitalSigns,
     /// RVF container info if a model was loaded via `--load-rvf`.
@@ -784,7 +796,9 @@ async fn main() {
 
         // Save checkpoint
         if let Some(ref ckpt_dir) = args.checkpoint_dir {
-            let _ = std::fs::create_dir_all(ckpt_dir);
+            if let Err(e) = std::fs::create_dir_all(ckpt_dir) {
+                tracing::warn!("Failed to create directory {}: {}", ckpt_dir.display(), e);
+            }
             let ckpt_path = ckpt_dir.join("best_checkpoint.json");
             let ckpt = t.checkpoint();
             match ckpt.save_to_file(&ckpt_path) {
@@ -854,7 +868,11 @@ async fn main() {
 
     // Shared state
     // Vital sign sample rate derives from tick interval (e.g. 500ms tick => 2 Hz)
-    let vital_sample_rate = 1000.0 / args.tick_ms as f64;
+    let tick_ms = if args.tick_ms > 0 { args.tick_ms } else {
+        warn!("--tick-ms must be > 0, clamping to 100");
+        100
+    };
+    let vital_sample_rate = 1000.0 / tick_ms as f64;
     info!("Vital sign detector sample rate: {vital_sample_rate:.1} Hz");
 
     // Load RVF container if --load-rvf was specified
@@ -925,9 +943,18 @@ async fn main() {
     }
 
     // Ensure data directories exist for models, recordings, and LLM data
-    let _ = std::fs::create_dir_all(data_dir.join("data/models"));
-    let _ = std::fs::create_dir_all(data_dir.join("data/recordings"));
-    let _ = std::fs::create_dir_all(data_dir.join("data/patients"));
+    let models_dir = data_dir.join("data/models");
+    if let Err(e) = std::fs::create_dir_all(&models_dir) {
+        tracing::warn!("Failed to create directory {}: {}", models_dir.display(), e);
+    }
+    let recordings_dir = data_dir.join("data/recordings");
+    if let Err(e) = std::fs::create_dir_all(&recordings_dir) {
+        tracing::warn!("Failed to create directory {}: {}", recordings_dir.display(), e);
+    }
+    let patients_dir = data_dir.join("data/patients");
+    if let Err(e) = std::fs::create_dir_all(&patients_dir) {
+        tracing::warn!("Failed to create directory {}: {}", patients_dir.display(), e);
+    }
 
     // Initialize LLM analysis engine (template-only mode — no model needed)
     let llm_engine = {
@@ -1100,6 +1127,12 @@ async fn main() {
         start_time: std::time::Instant::now(),
         vital_detector: VitalSignDetector::new(vital_sample_rate),
         triage_engine: TriageEngine::new(TriageConfig::competition()),
+        field_bridge: wifi_densepose_sensing_server::field_bridge::FieldBridge::new().ok(),
+        vitals_bridges: HashMap::new(),
+        cir_bridges: HashMap::new(),
+        localization_bridge: wifi_densepose_sensing_server::localization_bridge::LocalizationBridge::competition_default(),
+        tracking_bridge: wifi_densepose_sensing_server::tracking_bridge::TrackingBridge::new(),
+        alerting_bridge: wifi_densepose_sensing_server::alerting_bridge::AlertingBridge::new(),
         latest_vitals: VitalSigns::default(),
         rvf_info,
         save_rvf_path: args.save_rvf.clone(),
@@ -1153,7 +1186,7 @@ async fn main() {
             tokio::spawn(tasks::broadcast_tick::broadcast_tick_task(state.clone(), 500)); // 0.5 Hz rebroadcast, primary data via UDP
         }
         _ => {
-            tokio::spawn(tasks::simulated_data::simulated_data_task(state.clone(), args.tick_ms));
+            tokio::spawn(tasks::simulated_data::simulated_data_task(state.clone(), tick_ms));
         }
     }
 
@@ -1219,7 +1252,7 @@ async fn main() {
                 interval.tick().await;
 
                 // Gather current state under read lock
-                let (vitals, triage_label, alerts, smoothed_motion) = {
+                let (vitals, triage_label, alerts, smoothed_motion, vitals_snapshot, kb_matches) = {
                     let s = agent_state.read().await;
                     let triage = s.latest_update.as_ref()
                         .and_then(|u| u.triage_update.as_ref())
@@ -1229,24 +1262,24 @@ async fn main() {
                         .and_then(|u| u.wasm_alerts.as_ref())
                         .map(|alerts| alerts.iter().map(|al| al.event_name.clone()).collect())
                         .unwrap_or_default();
-                    (s.latest_vitals.clone(), triage, a, s.smoothed_motion)
+                    let vitals_snapshot = AgentVitalSnapshot {
+                        breathing_rate_bpm: s.latest_vitals.breathing_rate_bpm.map(|v| v as f32),
+                        heart_rate_bpm: s.latest_vitals.heart_rate_bpm.map(|v| v as f32),
+                        breathing_confidence: s.latest_vitals.breathing_confidence as f32,
+                        heartbeat_confidence: s.latest_vitals.heartbeat_confidence as f32,
+                        signal_quality: s.latest_vitals.signal_quality as f32,
+                        motion_class: Some(if s.smoothed_motion > 0.6 { "active" } else if s.smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
+                        person_count_estimate: Some(1),
+                        rssi: s.rssi_history.back().map(|&v| v as i16),
+                    };
+                    let kb_matches = s.medical_kb.match_vitals(&vitals_snapshot);
+                    (s.latest_vitals.clone(), triage, a, s.smoothed_motion, vitals_snapshot, kb_matches)
                 };
 
                 // Skip if no vitals data
                 if vitals.breathing_rate_bpm.is_none() && vitals.heart_rate_bpm.is_none() {
                     continue;
                 }
-
-                let vitals_snapshot = AgentVitalSnapshot {
-                    breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
-                    heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
-                    breathing_confidence: vitals.breathing_confidence as f32,
-                    heartbeat_confidence: vitals.heartbeat_confidence as f32,
-                    signal_quality: vitals.signal_quality as f32,
-                    motion_class: Some(if smoothed_motion > 0.6 { "active" } else if smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
-                    person_count_estimate: Some(1),
-                    rssi: Some(-45),
-                };
 
                 let ctx = StructuredContext {
                     patient_id: 1,
@@ -1270,7 +1303,7 @@ async fn main() {
                     triage_trajectory: vec![],
                     patient_history: None,
                     recent_alerts: alerts,
-                    kb_matches: vec![],
+                    kb_matches,
                     triggered_by: TriggerSource::PeriodicScan,
                     built_at_ms: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1326,9 +1359,16 @@ async fn main() {
     }
 
     // ADR-050: Parse bind address once, use for all listeners
-    let bind_ip: std::net::IpAddr = args.bind_addr.parse()
-        .expect("Invalid --bind-addr (use 127.0.0.1 or 0.0.0.0)");
+    let bind_ip: std::net::IpAddr = match args.bind_addr.parse() {
+        Ok(ip) => ip,
+        Err(e) => {
+            error!("Invalid --bind-addr '{}': {e} (use 127.0.0.1 or 0.0.0.0)", args.bind_addr);
+            std::process::exit(1);
+        }
+    };
 
-    server::run_server(state, &args, bind_ip).await
-        .expect("Server error");
+    if let Err(e) = server::run_server(state, &args, bind_ip).await {
+        error!("Server fatal error: {e:#}");
+        std::process::exit(1);
+    }
 }

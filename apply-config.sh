@@ -105,7 +105,7 @@ echo ""
 # ── 1. 固件 sdkconfig ──────────────────────────
 echo "[1/3] 生成固件 sdkconfig.defaults ..."
 
-SDKCONFIG="$SCRIPT_DIR/firmware/esp32-c5-csi-node/sdkconfig.defaults.competition"
+SDKCONFIG="$SCRIPT_DIR/firmware/esp32-c5-csi-node/sdkconfig.defaults"
 TMPFILE="$SDKCONFIG.tmp"
 
 cat > "$TMPFILE" << SDKEOF

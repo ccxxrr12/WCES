@@ -35,7 +35,6 @@
 #include "wasm_runtime.h"
 #include "wasm_upload.h"
 #include "display_task.h"
-#include "mmwave_sensor.h"
 #include "swarm_bridge.h"
 #ifdef CONFIG_CSI_MOCK_ENABLED
 #include "mock_csi.h"
@@ -73,10 +72,25 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < MAX_RETRY) {
-            esp_wifi_connect();
+        wifi_event_sta_disconnected_t *evt = (wifi_event_sta_disconnected_t *)event_data;
+        /* Permanent failures: wrong password (202/15), auth expired (2), etc.
+         * Reboot immediately instead of wasting retry cycles. */
+        bool is_permanent = (evt->reason == WIFI_REASON_AUTH_EXPIRE ||
+                             evt->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+                             evt->reason == WIFI_REASON_HANDSHAKE_TIMEOUT ||
+                             evt->reason == WIFI_REASON_NO_AP_FOUND ||
+                             evt->reason == WIFI_REASON_ASSOC_LEAVE ||
+                             evt->reason == WIFI_REASON_ASSOC_NOT_AUTHED);
+        if (s_retry_num < MAX_RETRY && !is_permanent) {
             s_retry_num++;
-            ESP_LOGI(TAG, "Retrying WiFi connection (%d/%d)", s_retry_num, MAX_RETRY);
+            ESP_LOGI(TAG, "Retrying WiFi connection (%d/%d) reason=%d",
+                     s_retry_num, MAX_RETRY, evt->reason);
+            /* Backoff: increase delay with each retry to avoid AP rate-limiting. */
+            vTaskDelay(pdMS_TO_TICKS(500 * s_retry_num));
+            esp_err_t ret = esp_wifi_connect();
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "esp_wifi_connect() failed: %s", esp_err_to_name(ret));
+            }
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
@@ -90,9 +104,9 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 
 static void wifi_init_sta(void)
 {
-    s_wifi_event_group = xEventGroupCreate();
-
     ESP_ERROR_CHECK(esp_netif_init());
+
+    s_wifi_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
 
@@ -106,6 +120,11 @@ static void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &instance_got_ip));
 
+    /* Suppress unused-variable warnings — handles are required by the API
+     * but not needed after registration in this firmware. */
+    (void)instance_any_id;
+    (void)instance_got_ip;
+
     wifi_config_t wifi_config = {
         .sta = {
             .threshold.authmode = WIFI_AUTH_WPA2_PSK,
@@ -115,6 +134,7 @@ static void wifi_init_sta(void)
     /* Copy runtime SSID/password from NVS config */
     strncpy((char *)wifi_config.sta.ssid, g_nvs_config.wifi_ssid, sizeof(wifi_config.sta.ssid) - 1);
     strncpy((char *)wifi_config.sta.password, g_nvs_config.wifi_password, sizeof(wifi_config.sta.password) - 1);
+    wifi_config.sta.password[sizeof(wifi_config.sta.password) - 1] = '\0';
 
     /* If password is empty, use open auth */
     if (strlen((char *)wifi_config.sta.password) == 0) {
@@ -152,7 +172,9 @@ static void wifi_init_sta(void)
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Connected to WiFi");
     } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGE(TAG, "Failed to connect to WiFi after %d retries", MAX_RETRY);
+        ESP_LOGE(TAG, "Failed to connect to WiFi after %d retries; rebooting", MAX_RETRY);
+        vTaskDelay(pdMS_TO_TICKS(500));  // flush serial log
+        esp_restart();
     }
 }
 
@@ -183,8 +205,9 @@ void app_main(void)
     ESP_LOGI(TAG, "Mock CSI mode: skipping UDP sender init (no network)");
 #else
     if (stream_sender_init_with(g_nvs_config.target_ip, g_nvs_config.target_port) != 0) {
-        ESP_LOGE(TAG, "Failed to initialize UDP sender");
-        return;
+        ESP_LOGE(TAG, "UDP sender init failed, rebooting in 3s...");
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        esp_restart();
     }
 #endif
 
@@ -200,6 +223,15 @@ void app_main(void)
 #else
     csi_collector_init();
 #endif
+
+    /* Enable channel-hopping across 2.4+5 GHz channels for multi-band CSI diversity. */
+    if (g_nvs_config.channel_hop_count > 0 && g_nvs_config.channel_hop_count <= 16) {
+        csi_collector_set_hop_table(g_nvs_config.channel_list, g_nvs_config.channel_hop_count, g_nvs_config.dwell_ms);
+    } else {
+        static const uint8_t default_hop[] = {1, 6, 11, 36, 40, 44};
+        csi_collector_set_hop_table(default_hop, sizeof(default_hop)/sizeof(default_hop[0]), 50);
+    }
+    csi_collector_start_hop_timer();
 
     /* ADR-039: Initialize edge processing pipeline. */
     edge_config_t edge_cfg = {
@@ -263,18 +295,6 @@ void app_main(void)
         }
     }
 
-    /* ADR-063: Initialize mmWave sensor (auto-detect on UART). */
-    esp_err_t mmwave_ret = mmwave_sensor_init(-1, -1);  /* -1 = use default GPIO pins */
-    if (mmwave_ret == ESP_OK) {
-        mmwave_state_t mw;
-        if (mmwave_sensor_get_state(&mw)) {
-            ESP_LOGI(TAG, "mmWave sensor: %s (caps=0x%04x)",
-                     mmwave_type_name(mw.type), mw.capabilities);
-        }
-    } else {
-        ESP_LOGI(TAG, "No mmWave sensor detected (CSI-only mode)");
-    }
-
     /* ADR-066: Initialize swarm bridge to Cognitum Seed (if configured). */
     esp_err_t swarm_ret = ESP_ERR_INVALID_ARG;
 #ifndef CONFIG_CSI_MOCK_SKIP_WIFI_CONNECT
@@ -309,12 +329,11 @@ void app_main(void)
     }
 #endif
 
-    ESP_LOGI(TAG, "CSI streaming active → %s:%d (edge_tier=%u, OTA=%s, WASM=%s, mmWave=%s, swarm=%s)",
+    ESP_LOGI(TAG, "CSI streaming active → %s:%d (edge_tier=%u, OTA=%s, WASM=%s, swarm=%s)",
              g_nvs_config.target_ip, g_nvs_config.target_port,
              g_nvs_config.edge_tier,
              (ota_ret == ESP_OK) ? "ready" : "off",
              (wasm_ret == ESP_OK) ? "ready" : "off",
-             (mmwave_ret == ESP_OK) ? "active" : "off",
              (swarm_ret == ESP_OK) ? g_nvs_config.seed_url : "off");
 
     /* Main loop — keep alive */

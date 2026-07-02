@@ -441,7 +441,8 @@ impl PhaseSanitizer {
         }
     }
 
-    /// Custom 1D phase unwrapping with tolerance
+    /// Custom 1D phase unwrapping with tolerance.
+    /// Uses original wrapped values for jump detection (matches unwrap_1d pattern).
     fn unwrap_1d_custom(&self, data: &mut [f64]) {
         if data.len() < 2 {
             return;
@@ -449,15 +450,19 @@ impl PhaseSanitizer {
 
         let tolerance = 0.9 * PI; // Slightly less than pi for robustness
         let mut correction = 0.0;
+        let mut prev_raw = data[0]; // track original wrapped value
 
         for i in 1..data.len() {
-            let diff = data[i] - data[i - 1] + correction;
+            let current_raw = data[i];
+            // Compare original wrapped values — correction is NOT added
+            let diff = current_raw - prev_raw;
             if diff > tolerance {
                 correction -= 2.0 * PI;
             } else if diff < -tolerance {
                 correction += 2.0 * PI;
             }
-            data[i] += correction;
+            data[i] = current_raw + correction;
+            prev_raw = current_raw;
         }
     }
 

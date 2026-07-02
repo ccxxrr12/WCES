@@ -10,6 +10,29 @@ pub(crate) async fn broadcast_tick_task(state: SharedState, tick_ms: u64) {
 
     loop {
         interval.tick().await;
+
+        // Drain and broadcast pending alerts from AlertingBridge
+        // (dead data flow fix #4: wire alerting_bridge → WebSocket).
+        {
+            let mut s = state.write().await;
+            let alerts = s.alerting_bridge.drain_alerts();
+            for alert in &alerts {
+                if let Ok(json) = serde_json::to_string(&serde_json::json!({
+                    "type": "alert",
+                    "id": alert.id,
+                    "survivor_id": alert.survivor_id,
+                    "title": alert.title,
+                    "message": alert.message,
+                    "priority": alert.priority,
+                    "status": alert.status,
+                    "triage_status": alert.triage_status,
+                    "created_at_secs": alert.created_at_secs,
+                })) {
+                    let _ = s.tx.send(json);
+                }
+            }
+        }
+
         let s = state.read().await;
         if let Some(ref update) = s.latest_update {
             if s.tx.receiver_count() > 0 {

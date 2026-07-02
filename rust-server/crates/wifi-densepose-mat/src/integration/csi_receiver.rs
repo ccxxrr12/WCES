@@ -654,7 +654,13 @@ impl PcapCsiReader {
             )
         };
 
-        // Read packet data
+        // Read packet data — guard against unbounded allocation from malformed PCAP
+        const MAX_PACKET_SIZE: u32 = 10_000_000; // 10 MB
+        if incl_len > MAX_PACKET_SIZE {
+            return Err(AdapterError::Hardware(format!(
+                "PCAP packet size {} exceeds maximum {}", incl_len, MAX_PACKET_SIZE
+            )));
+        }
         let mut data = vec![0u8; incl_len as usize];
         reader.read_exact(&mut data).map_err(|e| {
             AdapterError::Hardware(format!("Failed to read packet data: {}", e))
@@ -707,9 +713,14 @@ impl PcapCsiReader {
             };
             let packet_offset = packet.timestamp - start_time;
             let real_offset = Utc::now() - playback_time;
+            // Clamp playback_speed to range (0.001, 100.0] to prevent:
+            // - Division by zero (speed = 0.0)
+            // - Float-to-i64 overflow UB (speed * 1000.0 exceeds i64::MAX)
+            let speed = (pcap_config.playback_speed * 1000.0)
+                .clamp(1.0, 100_000.0) as i64;
             let scaled_offset = packet_offset
                 .num_milliseconds()
-                .checked_div((pcap_config.playback_speed * 1000.0) as i64)
+                .checked_div(speed)
                 .unwrap_or(0);
 
             let delay_ms = scaled_offset - real_offset.num_milliseconds();

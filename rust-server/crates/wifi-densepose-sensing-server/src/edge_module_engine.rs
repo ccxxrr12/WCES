@@ -228,7 +228,8 @@ pub struct EdgeModuleEngine {
 
     // Module 7: med_sleep_apnea — 睡眠呼吸暂停
     sa_no_br_ctr: u32, sa_apnea_active: bool,
-    sa_apnea_events: u32, sa_sleep_secs: u32,
+    sa_apnea_events: u32,
+    sa_start: Option<std::time::Instant>,
 
     // Module 8: med_cardiac_arrhythmia — 心律失常
     ca_hr_buf: RingBuf<60>,
@@ -290,7 +291,7 @@ impl EdgeModuleEngine {
             pm_energy_buf: RingBuf::new(), pm_var_buf: RingBuf::new(),
             pm_cooldown: 0,
             sa_no_br_ctr: 0, sa_apnea_active: false,
-            sa_apnea_events: 0, sa_sleep_secs: 0,
+            sa_apnea_events: 0, sa_start: None,
             ca_hr_buf: RingBuf::new(),
             ca_tachy_ctr: 0, ca_brady_ctr: 0, ca_missed_ctr: 0, ca_prev_hr: 0.0,
             sz_energy_buf: RingBuf::new(), sz_band_buf: RingBuf::new(),
@@ -600,7 +601,7 @@ impl EdgeModuleEngine {
             self.cs_no_br_ctr += 1;
             if self.cs_no_br_ctr > 300 { // 15s @ 20Hz
                 alerts.push(EdgeAlert { module: "confined_space".into(), event_type: 513,
-                    event_name: "ExtractionAlert".into(), value: self.cs_no_br_ctr as f32 / 20.0,
+                    event_name: "ExtractionAlert".into(), value: self.cs_no_br_ctr as f32 / 20.0, // TODO: use actual sample_rate instead of hardcoded 20Hz
                     severity: "critical".into() });
             }
         } else { self.cs_no_br_ctr = 0; }
@@ -636,29 +637,35 @@ impl EdgeModuleEngine {
         }
 
         // ── Module 7: med_sleep_apnea ──────────────────────────────────
-        self.sa_sleep_secs += 1;
+        // Track elapsed wall-clock time (replaces fixed 20 Hz frame-counter assumption)
+        let sa_start = self.sa_start.get_or_insert_with(std::time::Instant::now);
+        let sa_elapsed = sa_start.elapsed().as_secs_f64();
         if br_valid && br < 4.0 { self.sa_no_br_ctr += 1; }
         else {
             if self.sa_apnea_active {
                 alerts.push(EdgeAlert { module: "sleep_apnea".into(), event_type: 101,
-                    event_name: "ApneaEnd".into(), value: self.sa_no_br_ctr as f32 / 20.0,
+                    event_name: "ApneaEnd".into(), value: self.sa_no_br_ctr as f32,
                     severity: "info".into() });
             }
             self.sa_no_br_ctr = 0;
             self.sa_apnea_active = false;
         }
-        if self.sa_no_br_ctr > 200 && !self.sa_apnea_active { // 10s @ 20Hz
+        // Apnea detection: >10s without breathing (~200 frames at 20Hz)
+        if self.sa_no_br_ctr > 200 && !self.sa_apnea_active {
             self.sa_apnea_active = true;
             self.sa_apnea_events += 1;
             alerts.push(EdgeAlert { module: "sleep_apnea".into(), event_type: 100,
-                event_name: "ApneaStart".into(), value: self.sa_no_br_ctr as f32 / 20.0,
+                event_name: "ApneaStart".into(), value: sa_elapsed as f32,
                 severity: "critical".into() });
         }
-        // AHI report every hour
-        if self.sa_sleep_secs % 72000 == 0 { // 3600s * 20Hz
-            let ahi = self.sa_apnea_events as f32 / (self.sa_sleep_secs as f32 / 72000.0);
+        // AHI report every hour (3600 s wall-clock)
+        if sa_elapsed >= 3600.0 {
+            let ahi = self.sa_apnea_events as f32 / (sa_elapsed as f32 / 3600.0);
             alerts.push(EdgeAlert { module: "sleep_apnea".into(), event_type: 102,
                 event_name: "AHIUpdate".into(), value: ahi, severity: "info".into() });
+            // Reset for next hour window
+            self.sa_apnea_events = 0;
+            self.sa_start = Some(std::time::Instant::now());
         }
 
         // ── Module 8: med_cardiac_arrhythmia ───────────────────────────

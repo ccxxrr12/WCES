@@ -279,6 +279,10 @@ pub fn solve_fresnel_geometry(
     let solver = NeumannSolver::new(1e-5, 300);
     match solver.solve(&ata, &atb) {
         Ok(result) => {
+            // Guard: room geometry must admit physically valid path lengths
+            if d_total < 0.2 {
+                return None;
+            }
             let d1 = result.solution[0].abs().clamp(0.1, d_total - 0.1);
             let d2 = (d_total - d1).clamp(0.1, d_total - 0.1);
             Some((d1, d2))

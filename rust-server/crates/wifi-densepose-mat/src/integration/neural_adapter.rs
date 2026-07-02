@@ -105,6 +105,11 @@ impl NeuralAdapter {
 
         let rate_bpm = (peak_freq * 60.0) as f32;
 
+        // Guard against NaN from corrupted FFT output
+        if !rate_bpm.is_finite() {
+            return None;
+        }
+
         // Validate rate
         if rate_bpm < 4.0 || rate_bpm > 60.0 {
             return None;
@@ -146,6 +151,11 @@ impl NeuralAdapter {
         }
 
         let rate_bpm = (peak_freq * 60.0) as f32;
+
+        // Guard against NaN from corrupted FFT output
+        if !rate_bpm.is_finite() {
+            return None;
+        }
 
         // Validate rate (30-200 BPM)
         if rate_bpm < 30.0 || rate_bpm > 200.0 {

@@ -34,6 +34,8 @@
 //! - ADR-029: Project RuvSense
 //! - IEEE 802.11bf-2024 WLAN Sensing
 
+// ADR-134: CIR estimation
+pub mod cir;
 // ADR-030: Exotic sensing tiers
 pub mod adversarial;
 pub mod cross_room;

@@ -239,10 +239,14 @@ impl MedicalAgent {
         let prompt = self.prompt_compiler.compile(ctx, route);
 
         // 2. Call LLM via gateway (streaming → collect full text)
-        let stream_result = self
-            .gateway
-            .as_ref()
-            .unwrap()
+        let gateway = match self.gateway.as_ref() {
+            Some(gw) => gw,
+            None => {
+                tracing::warn!("Gateway unavailable for LLM analysis; falling back to template");
+                return self.template_with_kb(ctx);
+            }
+        };
+        let stream_result = gateway
             .stream(&prompt, route.max_output_tokens)
             .await;
 

@@ -106,12 +106,14 @@ pub fn hampel_filter_2d(
     data.iter().map(|row| hampel_filter(row, config)).collect()
 }
 
-/// Compute median of a slice (sorts a copy).
+/// Compute median of a slice (sorts a copy, filters NaN).
 fn median(data: &[f64]) -> f64 {
-    if data.is_empty() {
+    // Filter NaN values which would corrupt the sort order
+    let valid: Vec<f64> = data.iter().copied().filter(|x| x.is_finite()).collect();
+    if valid.is_empty() {
         return 0.0;
     }
-    let mut sorted = data.to_vec();
+    let mut sorted = valid;
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
     if sorted.len() % 2 == 0 {

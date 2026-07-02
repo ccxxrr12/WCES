@@ -254,8 +254,11 @@ impl CrossRoomTracker {
                 continue;
             }
 
-            // Temporal constraint
-            let gap_us = entry.timestamp_us.saturating_sub(exit.timestamp_us);
+            // Temporal constraint: exit must precede entry
+            if entry.timestamp_us <= exit.timestamp_us {
+                continue;
+            }
+            let gap_us = entry.timestamp_us - exit.timestamp_us;
             let gap_s = gap_us as f64 / 1_000_000.0;
             if gap_s > self.config.max_gap_s {
                 continue;

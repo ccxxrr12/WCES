@@ -86,15 +86,22 @@ pub fn extract_bvp(
     if config.hop_size == 0 || config.window_size == 0 {
         return Err(BvpError::InvalidConfig("window_size and hop_size must be > 0".into()));
     }
+    if sample_rate <= 0.0 {
+        return Err(BvpError::InvalidConfig("sample_rate must be > 0".into()));
+    }
 
     let wavelength = 2.998e8 / config.carrier_frequency;
     let n_frames = (n_samples - config.window_size) / config.hop_size + 1;
     let n_fft_bins = config.window_size / 2 + 1;
 
-    // Hann window
-    let window: Vec<f64> = (0..config.window_size)
-        .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (config.window_size - 1) as f64).cos()))
-        .collect();
+    // Hann window — guard against window_size <= 1 (division by zero)
+    let window: Vec<f64> = if config.window_size <= 1 {
+        vec![1.0_f64; config.window_size]
+    } else {
+        (0..config.window_size)
+            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (config.window_size - 1) as f64).cos()))
+            .collect()
+    };
 
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(config.window_size);

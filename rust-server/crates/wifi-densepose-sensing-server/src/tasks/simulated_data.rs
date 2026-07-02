@@ -176,6 +176,8 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             model_status,
             persons: None,
             estimated_persons: if est_persons > 0 { Some(est_persons) } else { None },
+            tracked_survivors: None,
+            alerts: None,
         };
 
         // Populate persons from the sensing update.

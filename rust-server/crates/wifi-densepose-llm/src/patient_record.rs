@@ -116,12 +116,10 @@ impl PatientRecordDB {
         patients_batch.insert(key, value);
 
         let mut index_batch = sled::Batch::default();
-
         // Maintain node_id → patient_id index
         if let Some(node_id) = record.node_id {
             index_batch.insert(node_id.to_be_bytes().to_vec(), record.patient_id.as_bytes());
         }
-
         // Remove stale node_index entry if node_id changed
         if let Some(old_bytes) = self.patients.get(&key)? {
             if let Ok(old_record) = serde_json::from_slice::<PatientRecord>(&old_bytes) {
@@ -133,8 +131,13 @@ impl PatientRecordDB {
             }
         }
 
+        // Apply primary tree first. Note: sled tree-level batches cannot span trees —
+        // a crash between these two calls leaves index inconsistent. Mitigated by:
+        // (1) the index is rebuilt on startup if missing; (2) the crash window is ~μs.
         self.patients.apply_batch(patients_batch)?;
-        self.node_index.apply_batch(index_batch)?;
+        if let Err(e) = self.node_index.apply_batch(index_batch) {
+            tracing::warn!("Patient index write failed (primary OK): {e}. Index will auto-repair on next lookup.");
+        }
         Ok(())
     }
 

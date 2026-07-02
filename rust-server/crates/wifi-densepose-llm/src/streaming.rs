@@ -137,8 +137,8 @@ impl StreamingGenerator {
         // ── Setup logits processor ───────────────────────────────
         let mut logits_processor = {
             let temperature = if temperature <= 0.0 { None } else { Some(temperature) };
-            let sampling = if temperature.is_some() {
-                candle_transformers::generation::Sampling::All { temperature: temperature.unwrap() }
+            let sampling = if let Some(t) = temperature {
+                candle_transformers::generation::Sampling::All { temperature: t }
             } else {
                 candle_transformers::generation::Sampling::ArgMax
             };

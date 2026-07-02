@@ -298,7 +298,9 @@ fn parse_rule_conditions(rule: &str, value: f64) -> bool {
     parts.iter().any(|part| {
         let part = part.trim();
         if part.starts_with(">=") || part.starts_with("≥") {
-            if let Ok(threshold) = part[2..].trim().parse::<f64>() {
+            // UTF-8 safe: strip_prefix avoids slicing into multi-byte characters
+            let num_str = part.strip_prefix(">=").or_else(|| part.strip_prefix("≥")).unwrap_or(part).trim();
+            if let Ok(threshold) = num_str.parse::<f64>() {
                 return value >= threshold;
             }
         } else if part.starts_with('>') {
@@ -306,7 +308,8 @@ fn parse_rule_conditions(rule: &str, value: f64) -> bool {
                 return value > threshold;
             }
         } else if part.starts_with("<=") || part.starts_with("≤") {
-            if let Ok(threshold) = part[2..].trim().parse::<f64>() {
+            let num_str = part.strip_prefix("<=").or_else(|| part.strip_prefix("≤")).unwrap_or(part).trim();
+            if let Ok(threshold) = num_str.parse::<f64>() {
                 return value <= threshold;
             }
         } else if part.starts_with('<') {

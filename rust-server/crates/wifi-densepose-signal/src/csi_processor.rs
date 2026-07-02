@@ -396,7 +396,7 @@ impl CsiPreprocessor {
     /// Remove noise from CSI data based on amplitude threshold
     pub fn remove_noise(&self, csi_data: &CsiData) -> Result<CsiData, CsiProcessorError> {
         // Convert amplitude to dB
-        let amplitude_db = csi_data.amplitude.mapv(|a| 20.0 * (a + 1e-12).log10());
+        let amplitude_db = csi_data.amplitude.mapv(|a| 20.0 * (a.max(0.0) + 1e-12).log10());
 
         // Create noise mask
         let noise_mask = amplitude_db.mapv(|db| db > self.noise_threshold);
@@ -477,6 +477,9 @@ impl CsiPreprocessor {
 
     /// Generate Hamming window
     fn hamming_window(n: usize) -> Vec<f64> {
+        if n <= 1 {
+            return vec![1.0; n];
+        }
         (0..n)
             .map(|i| 0.54 - 0.46 * (2.0 * PI * i as f64 / (n - 1) as f64).cos())
             .collect()

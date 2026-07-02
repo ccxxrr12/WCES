@@ -1,6 +1,14 @@
 //! HTTP and WebSocket server setup with graceful shutdown support.
 //!
 //! Extracted from `main.rs` to keep the entry point slim.
+//!
+//! SECURITY NOTE (2026-06-29): In the current competition/demo configuration,
+//! there is NO authentication on:
+//!   - UDP CSI ingest (port 5005): any host on the network can inject fake frames.
+//!   - WebSocket /ws/sensing (ports 8080/8765): any client can receive all vital signs.
+//!   - HTTP GET endpoints: patient data, sensing state, health metrics exposed.
+//! These are acceptable for a closed competition WiFi network. Before any deployment
+//! on a shared or public network, add UDP HMAC, WebSocket token auth, and TLS.
 
 use std::net::SocketAddr;
 
@@ -254,10 +262,15 @@ pub(crate) async fn run_server(
     let shutdown_state = state.clone();
     let server = axum::serve(http_listener, http_app)
         .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to install CTRL+C handler");
-            info!("Shutdown signal received");
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => info!("Shutdown signal received (Ctrl+C)"),
+                Err(e) => {
+                    // Headless/Docker environments may not support ctrl_c.
+                    // Fall back to SIGTERM sent by the OS on container stop.
+                    warn!("Ctrl+C handler unavailable ({e}); server will shut down on SIGTERM");
+                    std::future::pending::<()>().await;
+                }
+            }
         });
 
     server.await?;

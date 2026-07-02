@@ -125,15 +125,19 @@ impl KeypointState {
         // Velocity variances: + q * dt^2
         let vel_q = q * dt2;
         // Position-velocity cross: + q * dt^3 / 2
-        let _cross_q = q * dt3 / 2.0;
+        let cross_q = q * dt3 / 2.0;
 
-        // Simplified: only update diagonal for numerical stability
-        self.covariance[0] += pos_q;   // xx
-        self.covariance[6] += pos_q;   // yy
-        self.covariance[11] += pos_q;  // zz
-        self.covariance[15] += vel_q;  // vxvx
-        self.covariance[18] += vel_q;  // vyvy
-        self.covariance[20] += vel_q;  // vzvz
+        // Diagonal position and velocity process noise
+        self.covariance[0] += pos_q;   // cov(x,x)
+        self.covariance[6] += pos_q;   // cov(y,y)
+        self.covariance[11] += pos_q;  // cov(z,z)
+        self.covariance[15] += vel_q;  // cov(vx,vx)
+        self.covariance[18] += vel_q;  // cov(vy,vy)
+        self.covariance[20] += vel_q;  // cov(vz,vz)
+        // Position-velocity cross-coupling: enables Kalman to correct velocity
+        self.covariance[3] += cross_q;   // cov(x,vx)
+        self.covariance[9] += cross_q;   // cov(y,vy)
+        self.covariance[14] += cross_q;  // cov(z,vz)
     }
 
     /// Measurement update: incorporate a position observation [x, y, z].
@@ -401,9 +405,12 @@ impl PoseTrack {
                 }
             }
             TrackLifecycleState::Lost => {
-                // Re-acquired: promote back to Active
-                self.lifecycle = TrackLifecycleState::Active;
-                self.consecutive_hits = 1;
+                // Re-acquired: require ≥2 consecutive hits.
+                // consecutive_hits was already incremented in update() before this call.
+                if self.consecutive_hits >= 2 {
+                    self.lifecycle = TrackLifecycleState::Active;
+                    self.consecutive_hits = 0; // reset for next lifecycle transition
+                }
             }
             _ => {}
         }

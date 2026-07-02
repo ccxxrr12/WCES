@@ -25,6 +25,8 @@
 #include "edge_processing.h"
 
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_timer.h"
@@ -45,6 +47,10 @@ extern nvs_config_t g_nvs_config;
 
 static const char *TAG = "csi_collector";
 
+/* KNOWN LIMITATION: s_sequence is uint32_t and wraps after ~4.3e9 frames.
+ * At 50 Hz send rate this occurs after ~2.5 years of continuous operation.
+ * The downstream aggregator treats sequence numbers as opaque and does not
+ * depend on monotonicity, so wrap is harmless in practice. */
 static uint32_t s_sequence = 0;
 static uint32_t s_cb_count = 0;
 static uint32_t s_send_ok = 0;
@@ -60,8 +66,20 @@ static uint32_t s_rate_skip = 0;
 #define CSI_MIN_SEND_INTERVAL_US  (20 * 1000)
 static int64_t s_last_send_us = 0;
 
+/** Mutex to serialize esp_wifi_set_channel() calls from timer context.
+ *  Prevents potential deadlock with the WiFi subsystem when channel-hopping
+ *  fires concurrently with WiFi internal channel management. */
+static SemaphoreHandle_t s_wifi_sem = NULL;
+
+/** Ring buffer overflow drop counter — increments each time edge_enqueue_csi
+ *  returns false because the SPSC ring is full. Used for diagnostics. */
+static uint32_t s_ring_drops = 0;
+
 /** Wi-Fi band detected at init time. Used to disambiguate 6 GHz channel
- *  numbers (1-233) from 2.4 GHz (1-13) since they overlap. */
+ *  numbers (1-233) from 2.4 GHz (1-13) since they overlap.
+ *  KNOWN LIMITATION: Set once at boot and never updated. If the device
+ *  roams from 2.4 GHz to 5 GHz (or vice versa), frequency derivation in
+ *  csi_serialize_frame() will be wrong for the new band until reboot. */
 static wifi_band_t s_wifi_band = WIFI_BAND_2G;
 
 /* ---- ADR-029: Channel-hop state ---- */
@@ -103,8 +121,10 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
     }
 
     /* BUG 11 fix: read actual antenna count from rx_ctrl instead of hardcoding.
-     * C5 is single-antenna but other targets (S3) may have 2+. Fall back to 1. */
-    uint8_t n_antennas = (info->rx_ctrl.rx_ant > 0) ? (uint8_t)(info->rx_ctrl.rx_ant + 1) : 1;
+     * C5 is single-antenna but other targets (S3) may have 2+.
+     * Clamp to [1, 8] to prevent uint8_t wraparound (255+1=0 → div-by-zero). */
+    uint8_t raw_ant = info->rx_ctrl.rx_ant;
+    uint8_t n_antennas = (raw_ant < 8) ? (uint8_t)(raw_ant + 1) : 1;
 
     /* ADR-060: C5/C6/C61 may report first_word_invalid when AGC corrupts lead I/Q. */
     uint16_t iq_offset = 0;
@@ -150,6 +170,7 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
         { WIFI_BAND_2G,   1,  13, 2412, true,  false },
         { WIFI_BAND_2G,  14,  14, 2484, false, true  },  /* Japan ch14 = 2484 MHz fixed */
         { WIFI_BAND_5G,  36, 177, 5000, false, false },
+        { WIFI_BAND_6G,   1, 233, 5950, false, false },  /* WiFi 6E 6 GHz — ESP32-C5 supported */
     };
 
     uint8_t  channel  = info->rx_ctrl.channel;
@@ -235,6 +256,10 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
          * We only need 20-50 Hz for the sensing pipeline. */
         int64_t now = esp_timer_get_time();
         if ((now - s_last_send_us) >= CSI_MIN_SEND_INTERVAL_US) {
+            /* NOTE: sendto() may block briefly on ARP resolution.
+             * Rate-limiting via CSI_MIN_SEND_INTERVAL_US mitigates this
+             * but cannot eliminate the worst-case latency of ~1-2s for
+             * ARP timeout. */
             int ret = stream_sender_send(frame_buf, frame_len);
             if (ret > 0) {
                 s_send_ok++;
@@ -253,8 +278,13 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
 
     /* ADR-039: Enqueue raw I/Q into edge processing ring buffer. */
     if (info->buf && info->len > 0) {
-        edge_enqueue_csi((const uint8_t *)info->buf, (uint16_t)info->len,
-                         (int8_t)info->rx_ctrl.rssi, info->rx_ctrl.channel);
+        if (!edge_enqueue_csi((const uint8_t *)info->buf, (uint16_t)info->len,
+                             (int8_t)info->rx_ctrl.rssi, info->rx_ctrl.channel)) {
+            s_ring_drops++;
+            if ((s_ring_drops & 0xFFF) == 0) {
+                ESP_LOGW(TAG, "Ring overflow: %lu drops", (unsigned long)s_ring_drops);
+            }
+        }
     }
 }
 /* BUG 9: wifi_promiscuous_cb removed — dead code.
@@ -272,6 +302,11 @@ void csi_collector_init(void)
              s_wifi_band == WIFI_BAND_2G ? "2.4 GHz" :
              s_wifi_band == WIFI_BAND_5G ? "5 GHz" :
              "unknown");
+
+    /* Create mutex to serialize esp_wifi_set_channel() access from timer callback. */
+    if (s_wifi_sem == NULL) {
+        s_wifi_sem = xSemaphoreCreateMutex();
+    }
 
     /* ADR-060: Determine the CSI channel.
      * Priority: 1) NVS override (--channel), 2) connected AP channel, 3) Kconfig default. */
@@ -397,14 +432,21 @@ void csi_hop_next_channel(void)
      * esp_wifi_set_channel() changes the primary channel.
      * The second parameter is the secondary channel offset for HT40;
      * we use HT20 (no secondary) for sensing.
+     * Guarded by a mutex to prevent race conditions with the WiFi subsystem
+     * when the hop timer fires concurrently with internal channel management.
      */
-    esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Channel hop to %u failed: %s", (unsigned)channel, esp_err_to_name(err));
-    } else if ((s_cb_count % 200) == 0) {
-        /* Periodic log to confirm hopping is working (not every hop). */
-        ESP_LOGI(TAG, "Hopped to channel %u (index %u/%u)",
-                 (unsigned)channel, (unsigned)s_hop_index, (unsigned)s_hop_count);
+    if (s_wifi_sem && xSemaphoreTake(s_wifi_sem, pdMS_TO_TICKS(100))) {
+        esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        xSemaphoreGive(s_wifi_sem);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Channel hop to %u failed: %s", (unsigned)channel, esp_err_to_name(err));
+        } else if ((s_cb_count % 200) == 0) {
+            /* Periodic log to confirm hopping is working (not every hop). */
+            ESP_LOGI(TAG, "Hopped to channel %u (index %u/%u)",
+                     (unsigned)channel, (unsigned)s_hop_index, (unsigned)s_hop_count);
+        }
+    } else {
+        ESP_LOGW(TAG, "Channel hop skipped: semaphore busy (WiFi subsystem may be blocked)");
     }
 }
 

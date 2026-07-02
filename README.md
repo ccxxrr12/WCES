@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10f 完成 ✅ | MAT 分诊 + 19 边缘模块 + Medical Agent + 代码重构 + UI 全面优化 | main.rs 3868→1331 行（-66%），拆分为 31 个模块
+> 状态：P0-P10f 完成 ✅ | 52 bugs 已修复（5轮审查 2026-06-27~30）| Rust 98,430行 223文件 | C固件 8,322行 33文件 | ESP-IDF v6.0.1
 
 ---
 
@@ -295,17 +295,17 @@ CSI 采集          UDP:5005 →
 ├── firmware/
 │   └── esp32-c5-csi-node/            ← C5 CSI 固件 (完整, 含竞赛配置)
 ├── rust-server/
-│   ├── Cargo.toml                     ← Rust workspace (9 crates + 1 wasm32 独立编译)
+│   ├── Cargo.toml                     ← Rust workspace (10 crates, 98,430行, 223文件)
 │   └── crates/
 │       ├── wifi-densepose-core/       ← 基础类型 (2596行)
-│       ├── wifi-densepose-signal/     ← CSI 信号处理 (15176行)
-│       ├── wifi-densepose-vitals/     ← 生命体征提取 (1863行)
-│       ├── wifi-densepose-hardware/   ← CSI 帧解析 (4007行)
-│       ├── wifi-densepose-llm/        ← Medical Agent 分析引擎 ⭐ (5807行)
-│       ├── wifi-densepose-nn/         ← ONNX 推理 (DensePose 3D 骨架) (2959行)
-│       ├── wifi-densepose-mat/        ← 分诊系统 ⭐ (19614行)
-│       ├── wifi-densepose-sensing-server/ ← 主服务 (2026-05 重构模块化)
-│       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (1331行)
+│       ├── wifi-densepose-signal/     ← CSI 信号处理 (15,214行, 28文件)
+│       ├── wifi-densepose-vitals/     ← 生命体征提取 (1,894行, 7文件)
+│       ├── wifi-densepose-hardware/   ← CSI 帧解析 (4,017行, 12文件)
+│       ├── wifi-densepose-llm/        ← Medical Agent 分析引擎 ⭐ (6,216行, 21文件)
+│       ├── wifi-densepose-nn/         ← ONNX 推理 (2,959行, 7文件)
+│       ├── wifi-densepose-mat/        ← 分诊系统 ⭐ (19,667行, 43文件)
+│       ├── wifi-densepose-sensing-server/ ← 主服务 (16,956行, 31文件)
+│       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (1,341行)
 │       │   ├── src/lib.rs                  ← crate 入口
 │       │   ├── src/types.rs                ← 数据类型 + 常量
 │       │   ├── src/signal_processing.rs    ← 14 个纯信号处理函数

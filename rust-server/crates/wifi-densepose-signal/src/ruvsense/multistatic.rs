@@ -242,6 +242,8 @@ fn attention_weighted_fusion(
     phases: &[&[f32]],
     temperature: f32,
 ) -> (Vec<f32>, Vec<f32>, f32) {
+    // Clamp temperature to prevent division by zero → NaN cascade
+    let temperature = temperature.max(1e-6_f32);
     let n_nodes = amplitudes.len();
     let n_sub = amplitudes[0].len();
 

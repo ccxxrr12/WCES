@@ -218,7 +218,8 @@ fn compute_mean_std(data: &[f64]) -> (f64, f64) {
 fn sanitize_phase(phase: &[f64]) -> Vec<f64> {
     if phase.is_empty() { return Vec::new(); }
 
-    // Unwrap
+    // Unwrap — compare against the PREVIOUS UNWRAPPED value, not the
+    // original wrapped phase, to correctly handle multi-wrap signals.
     let mut uw = phase.to_vec();
     let mut correction = 0.0;
     let mut prev = uw[0];
@@ -227,7 +228,7 @@ fn sanitize_phase(phase: &[f64]) -> Vec<f64> {
         if diff > PI { correction -= 2.0 * PI; }
         else if diff < -PI { correction += 2.0 * PI; }
         uw[i] = phase[i] + correction;
-        prev = phase[i];
+        prev = uw[i];
     }
 
     // Remove linear trend: y = slope*x + intercept

@@ -552,12 +552,16 @@ fn greedy_assign(costs: &[Vec<f64>], n_tracks: usize, n_obs: usize) -> Vec<Optio
 /// Complexity: O(n_tracks · n_obs · (n_tracks + n_obs)) which is ≤ O(n³) for
 /// square matrices.  Safe to call for n ≤ 10.
 fn hungarian_assign(costs: &[Vec<f64>], n_tracks: usize, n_obs: usize) -> Vec<Option<usize>> {
-    // Build adjacency: for each track, list the observations it can match.
+    // Build adjacency sorted by cost (ascending) so DFS prefers cheaper edges.
+    // This produces approximate minimum-cost assignments instead of arbitrary ones.
     let adj: Vec<Vec<usize>> = (0..n_tracks)
         .map(|ti| {
-            (0..n_obs)
+            let mut obs: Vec<usize> = (0..n_obs)
                 .filter(|&oi| costs[ti][oi] < f64::MAX)
-                .collect()
+                .collect();
+            obs.sort_by(|&a, &b| costs[ti][a].partial_cmp(&costs[ti][b])
+                .unwrap_or(std::cmp::Ordering::Equal));
+            obs
         })
         .collect();
 

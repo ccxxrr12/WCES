@@ -75,6 +75,12 @@ pub struct SensingUpdate {
     pub persons: Option<Vec<PersonDetection>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_persons: Option<usize>,
+    /// Kalman-smoothed survivor tracking data from TrackingBridge (dead data flow fix #3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracked_survivors: Option<Vec<TrackedSurvivor>>,
+    /// Pending alerts from AlertingBridge (dead data flow fix #4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alerts: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +124,23 @@ pub struct ClassificationInfo {
 pub struct SignalField {
     pub grid_size: [usize; 3],
     pub values: Vec<f64>,
+}
+
+// ── Tracking & Alerting ────────────────────────────────────────────────────────
+
+/// Survivor tracking data from Kalman filter (for UI map rendering).
+/// Populated from TrackingBridge::active_track_snapshots().
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackedSurvivor {
+    pub survivor_id: String,
+    /// Kalman-smoothed 3D position [x, y, z].
+    pub position: Option<[f64; 3]>,
+    /// Velocity vector [vx, vy, vz] in m/s.
+    pub velocity: Option<[f64; 3]>,
+    /// Whether this survivor was re-identified in the last update.
+    pub reidentified: bool,
+    /// Tracking confidence [0-1].
+    pub tracking_confidence: f64,
 }
 
 // ── Pose / Person Detection ────────────────────────────────────────────────────
@@ -186,17 +209,13 @@ pub struct WasmOutputPacket {
 // ── Per-node state (multi-node support) ──────────────────────────────────────────
 
 use std::collections::VecDeque;
-use crate::vital_signs::VitalSignDetector;
-use crate::mat_pipeline::TriageEngine;
 
 /// Independent state tracked for each ESP32-C5 sensing node.
-/// When multiple nodes stream CSI data, each gets its own processing pipeline.
-#[derive(Clone)]
+/// When multiple nodes stream CSI data, each gets its own signal processing pipeline.
+/// Triage decisions are made by the shared `AppStateInner.triage_engine`.
 pub(crate) struct PerNodeState {
     pub frame_history: VecDeque<Vec<f64>>,
     pub rssi_history: VecDeque<f64>,
-    pub vital_detector: VitalSignDetector,
-    pub triage_engine: TriageEngine,
     pub latest_vitals: VitalSigns,
     pub tick: u64,
     pub last_frame_time: Option<std::time::Instant>,
@@ -227,6 +246,9 @@ pub(crate) struct PerNodeState {
     // Edge/wasm
     pub edge_vitals: Option<crate::types::Esp32VitalsPacket>,
     pub latest_wasm_events: Option<crate::types::WasmOutputPacket>,
+
+    // Signal processing pipeline (phase sanitize + normalize + hampel + motion + coherence)
+    pub signal_pipeline: wifi_densepose_sensing_server::signal_pipeline::SignalPipeline,
 }
 
 impl PerNodeState {
@@ -234,8 +256,6 @@ impl PerNodeState {
         Self {
             frame_history: VecDeque::with_capacity(FRAME_HISTORY_CAPACITY),
             rssi_history: VecDeque::with_capacity(60),
-            vital_detector: VitalSignDetector::new(vital_sample_rate),
-            triage_engine: TriageEngine::new(crate::mat_pipeline::TriageConfig::competition()),
             latest_vitals: VitalSigns::default(),
             tick: 0,
             last_frame_time: None,
@@ -256,6 +276,7 @@ impl PerNodeState {
             measured_sample_rate: vital_sample_rate,
             edge_vitals: None,
             latest_wasm_events: None,
+            signal_pipeline: wifi_densepose_sensing_server::signal_pipeline::SignalPipeline::new(),
         }
     }
 }

@@ -448,9 +448,9 @@ impl MotionDetector {
             0.0
         };
 
-        // Phase indicator
-        let phase_std = features.phase.variance.iter().sum::<f64>().sqrt()
-            / features.phase.variance.len() as f64;
+        // Phase indicator: sqrt of mean variance (not sqrt(sum) / N)
+        let phase_std = (features.phase.variance.iter().sum::<f64>()
+            / features.phase.variance.len() as f64).sqrt();
         let phase_indicator = if phase_std > self.config.phase_threshold {
             1.0
         } else {

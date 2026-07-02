@@ -467,11 +467,17 @@ pub fn bandpass_filter(data: &[f64], low_hz: f64, high_hz: f64, sample_rate: f64
 
 /// Compute the magnitude spectrum of a real-valued signal using radix-2 DIT FFT.
 ///
-/// Input must be power-of-2 length (caller should zero-pad).
+/// If input is not power-of-2 length, it is zero-padded to the next power of 2.
 /// Returns magnitudes for bins 0..N/2+1.
 fn fft_magnitude(signal: &[f64]) -> Vec<f64> {
     let n = signal.len();
-    debug_assert!(n.is_power_of_two(), "FFT input must be power-of-2 length");
+    // Runtime guard: zero-pad non-power-of-2 inputs instead of corrupting output
+    if !n.is_power_of_two() {
+        let padded_len = n.next_power_of_two();
+        let mut padded = vec![0.0f64; padded_len];
+        padded[..n].copy_from_slice(signal);
+        return fft_magnitude(&padded);
+    }
 
     if n <= 1 {
         return signal.to_vec();

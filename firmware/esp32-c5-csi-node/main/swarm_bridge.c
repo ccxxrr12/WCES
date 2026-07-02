@@ -23,7 +23,7 @@
 static const char *TAG = "swarm";
 
 /* ---- Task parameters ---- */
-#define SWARM_TASK_STACK   3072   /**< 3 KB stack — HTTP client uses ~2.5 KB. */
+#define SWARM_TASK_STACK   5120   /**< 5 KB stack — HTTP+TLS client uses ~3-4 KB. */
 #define SWARM_TASK_PRIO    3
 #define SWARM_TASK_CORE    0
 #define SWARM_HTTP_TIMEOUT 3000  /**< HTTP timeout in ms (Seed responds <100ms on LAN). */
@@ -254,6 +254,7 @@ static void swarm_task(void *arg)
             "{\"vectors\":[[%lu,[0,0,0,0,0,0,0,0]]]}",
             (unsigned long)reg_id);
 
+        if (len < 0 || len >= (int)sizeof(json)) len = (int)sizeof(json) - 1;
         if (swarm_post_json(client, json, len) == ESP_OK) {
             s_cnt_regs++;
             ESP_LOGI(TAG, "registered node %u with seed (id=%lu)", s_node_id, (unsigned long)reg_id);
@@ -324,7 +325,8 @@ static void swarm_task(void *arg)
                 (unsigned long)hb_id,
                 hv[0], hv[1], hv[2], hv[3], hv[4], hv[5], hv[6], hv[7]);
 
-            if (swarm_post_json(client, json, len) == ESP_OK) {
+            if (len < 0 || len >= (int)sizeof(json)) len = (int)sizeof(json) - 1;
+        if (swarm_post_json(client, json, len) == ESP_OK) {
                 s_cnt_heartbeats++;
             }
         }
@@ -343,7 +345,8 @@ static void swarm_task(void *arg)
                     (unsigned long)h_id,
                     hv[0], hv[1], hv[2], hv[3], hv[4], hv[5], hv[6], hv[7]);
 
-                if (swarm_post_json(client, json, len) == ESP_OK) {
+                if (len < 0 || len >= (int)sizeof(json)) len = (int)sizeof(json) - 1;
+        if (swarm_post_json(client, json, len) == ESP_OK) {
                     s_cnt_ingests++;
                 }
             }

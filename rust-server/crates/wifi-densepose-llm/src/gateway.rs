@@ -92,11 +92,14 @@ impl CircuitBreaker {
                 if self.failure_count.fetch_add(1, Ordering::AcqRel) + 1
                     >= self.config.failure_threshold as u64
                 {
-                    let _ = self.state.compare_exchange(
+                    // Only the winning CAS sets the cooldown timer;
+                    // a losing CAS means another thread already opened the breaker.
+                    if self.state.compare_exchange(
                         STATE_CLOSED, STATE_OPEN,
                         Ordering::AcqRel, Ordering::Acquire,
-                    );
-                    self.opened_at_ms.store(now_ms(), Ordering::Release);
+                    ).is_ok() {
+                        self.opened_at_ms.store(now_ms(), Ordering::Release);
+                    }
                 }
             }
             STATE_HALF_OPEN => {
@@ -254,8 +257,11 @@ impl LlmGateway {
 
         let status = resp.status();
         if !status.is_success() {
-            let _body = resp.text().await.unwrap_or_default();
-            tracing::warn!("HTTP {} from LLM API: {}", status.as_u16(), _body);
+            let body = resp.text().await.unwrap_or_default();
+            // Truncate to prevent accidental API key / credential leak in logs
+            let truncated: String = body.chars().take(200).collect();
+            tracing::warn!("HTTP {} from LLM API: {}{}", status.as_u16(), truncated,
+                if body.len() > 200 { "…" } else { "" });
             self.circuit_breaker.on_failure();
             return Err(GatewayError::HttpStatus(status.as_u16()));
         }
@@ -370,8 +376,10 @@ impl LlmGateway {
 
         let status = resp.status();
         if !status.is_success() {
-            let _body = resp.text().await.unwrap_or_default();
-            tracing::warn!("HTTP {} from LLM API: {}", status.as_u16(), _body);
+            let body = resp.text().await.unwrap_or_default();
+            let truncated: String = body.chars().take(200).collect();
+            tracing::warn!("HTTP {} from LLM API: {}{}", status.as_u16(), truncated,
+                if body.len() > 200 { "…" } else { "" });
             self.circuit_breaker.on_failure();
             return Err(GatewayError::HttpStatus(status.as_u16()));
         }

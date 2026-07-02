@@ -9,12 +9,15 @@ use std::sync::Arc;
 use tracing::{info, warn, debug, error};
 
 use crate::types::{
-    NodeInfo, SensingUpdate,
-    FRAME_HISTORY_CAPACITY,
+    NodeInfo, SensingUpdate, FeatureInfo, ClassificationInfo,
+    TrackedSurvivor, FRAME_HISTORY_CAPACITY, MOTION_EMA_ALPHA,
 };
+use crate::vital_signs::VitalSigns;
+use wifi_densepose_sensing_server::signal_pipeline::SignalPipelineOutput;
+use crate::edge_module_engine::EdgeAlert;
 use crate::SharedState;
 use crate::signal_processing::*;
-use crate::state_ops::{adaptive_override, smooth_and_classify_node, smooth_vitals_node};
+use crate::state_ops::adaptive_override;
 use crate::parser::{parse_esp32_frame, parse_esp32_vitals, parse_wasm_output};
 use crate::mat_pipeline::VitalSignsInput;
 
@@ -102,21 +105,25 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                     let (features, classification, breathing_rate_hz, sub_variances,
                          _raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
-                         prev_triage, agent_handle, node_snapshot) =
+                         prev_triage, agent_handle, node_snapshot,
+                         field_perturbation, tracked_survivors) =
                     {
                         let mut s = state.write().await;
                         s.source = "esp32".to_string();
                         s.last_esp32_frame = Some(std::time::Instant::now());
 
-                        let vitals;
-                        let features;
-                        let mut classification;
-                        let br_hz;
-                        let variances;
-                        let raw_motion;
-                        let tick;
-                        let motion_score;
-                        let smoothed_motion;
+                        let mut vitals: VitalSigns;
+                        let features: FeatureInfo;
+                        let mut classification: ClassificationInfo;
+                        let br_hz: f64;
+                        let variances: Vec<f64>;
+                        let raw_motion: f64;
+                        let tick: u64;
+                        let motion_score: f64;
+                        let smoothed_motion: f64;
+                        let cir_distance_m: Option<f64>;
+                        let signal_out: Option<SignalPipelineOutput>;
+                        let sample_rate_hz: f64;
                         {
                             // ── Per-node independent pipeline ──
                             let ns = s.node_states.entry(frame.node_id)
@@ -140,36 +147,86 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             ns.frame_history.push_back(frame.amplitudes.clone());
                             if ns.frame_history.len() > FRAME_HISTORY_CAPACITY { ns.frame_history.pop_front(); }
 
+                            // ── Signal pipeline: phase sanitize → normalize → hampel → motion → coherence gate ──
+                            signal_out = ns.signal_pipeline.process(&frame.amplitudes, &frame.phases);
+
                             // Use dynamically-measured sample rate instead of hardcoded 20 Hz
-                            let sample_rate_hz = ns.measured_sample_rate;
-                            ns.vital_detector.set_sample_rate(sample_rate_hz);
-                            let (f, mut c, b, v, rm) = extract_features_from_frame(&frame, &ns.frame_history, sample_rate_hz);
-                            features = f; classification = c; br_hz = b; variances = v; raw_motion = rm;
-                            smooth_and_classify_node(ns, &mut classification, raw_motion);
+                            sample_rate_hz = ns.measured_sample_rate;
+                            let (f, _c, b, v, rm) = extract_features_from_frame(&frame, &ns.frame_history, sample_rate_hz);
+                            features = f; br_hz = b; variances = v; raw_motion = rm;
 
                             ns.rssi_history.push_back(features.mean_rssi);
                             if ns.rssi_history.len() > 60 { ns.rssi_history.pop_front(); }
 
                             tick = ns.tick;
-                            motion_score = if classification.motion_level == "active" { 0.8 }
-                                else if classification.motion_level == "present_still" { 0.3 } else { 0.05 };
+                            // ── Motion detection: fully from signal_pipeline ──
+                            // PhaseSanitizer→Hampel→MotionDetector pipeline (ADR-142).
+                            // More accurate than the old hand-written 4-factor blend thanks to
+                            // phase unwrapping, Hampel outlier filtering, and adaptive thresholding.
+                            motion_score = signal_out.as_ref().map(|so| so.motion_score).unwrap_or(0.05);
+                            classification = ClassificationInfo {
+                                motion_level: if motion_score > 0.15 { "active".into() }
+                                    else if motion_score > 0.08 { "present_moving".into() }
+                                    else if motion_score > 0.03 { "present_still".into() }
+                                    else { "absent".into() },
+                                presence: motion_score > 0.03,
+                                confidence: (0.4 + motion_score * 0.6).clamp(0.0, 1.0),
+                            };
+                            // EMA-smoothed motion for global backward-compat (used by periodic agent)
+                            ns.smoothed_motion = ns.smoothed_motion * (1.0 - MOTION_EMA_ALPHA)
+                                               + motion_score * MOTION_EMA_ALPHA;
 
-                            let sensitive_sc = select_sensitive_subcarriers(&ns.frame_history, frame.n_subcarriers as usize, 30);
-                            let selected_amps = extract_selected_amplitudes(&frame.amplitudes, &sensitive_sc);
-                            let selected_phases = extract_selected_amplitudes(&frame.phases, &sensitive_sc);
-                            let raw_vitals = ns.vital_detector.process_frame(
-                                if selected_amps.len() >= 10 { &selected_amps } else { &frame.amplitudes },
-                                if selected_phases.len() >= 10 { &selected_phases } else { &frame.phases },
-                            );
-                            vitals = smooth_vitals_node(ns, &raw_vitals);
+                            // ── Vital signs: upstream-standard IIR bandpass path (ADR-142) ──
+                            // VitalsBridge uses the same algorithm as wifi_densepose_wifiscan's
+                            // CoarseBreathingExtractor: IIR bandpass + zero-crossing (breathing)
+                            // and IIR bandpass + autocorrelation (heart rate).
+                            // The old FFT+Goertzel VitalSignDetector and MAT DetectionBridge paths
+                            // are removed — VitalsBridge is the sole vital sign source.
+                            vitals = VitalSigns::default();
+
                             ns.latest_vitals = vitals.clone();
                             // Capture per-node smoothed_motion for global backward-compat
                             smoothed_motion = ns.smoothed_motion;
                             // ns dropped here — releases borrow on s.node_states
                         }
 
+                        // Parallel: run vitals crate pipeline (Butterworth filtering).
+                        // Use signal_pipeline cleaned data when available (dead data flow fix #1).
+                        {
+                            let vb = s.vitals_bridges.entry(frame.node_id)
+                                .or_insert_with(|| wifi_densepose_sensing_server::vitals_bridge::VitalsBridge::new(
+                                    frame.n_subcarriers as usize, sample_rate_hz));
+                            vb.set_sample_rate(sample_rate_hz);
+                            let (use_amps, use_phases): (&[f64], &[f64]) = if let Some(ref so) = signal_out {
+                                (&so.cleaned_amplitudes, &so.cleaned_phases)
+                            } else {
+                                (&frame.amplitudes, &frame.phases)
+                            };
+                            let (vb_br, vb_hr, vb_br_conf, vb_hr_conf) = vb.extract(
+                                use_amps, use_phases, tick,
+                            );
+                            if vb_br.is_some() { vitals.breathing_rate_bpm = vb_br; }
+                            if vb_hr.is_some() { vitals.heart_rate_bpm = vb_hr; }
+                            vitals.breathing_confidence = vb_br_conf.max(vitals.breathing_confidence);
+                            vitals.heartbeat_confidence = vb_hr_conf.max(vitals.heartbeat_confidence);
+                        }
+
+                        // CIR bridge: ISTA sparse CIR estimation → ToF ranging
+                        {
+                            let cb = s.cir_bridges.entry(frame.node_id)
+                                .or_insert_with(|| wifi_densepose_sensing_server::cir_bridge::CirBridge::new());
+                            cb.process(&frame.amplitudes, &frame.phases);
+                            cir_distance_m = cb.ranging_distance_m()
+                                .or_else(|| cb.dominant_distance_m());
+                        }
+
                         // Update global fields for backward compatibility
                         s.smoothed_motion = smoothed_motion;
+
+                        // Field model calibration: learn empty-room electromagnetic baseline.
+                        // After calibration (~30s), perturbation energy improves signal field.
+                        let field_perturbation = s.field_bridge.as_mut()
+                            .and_then(|fb| fb.feed(&frame.amplitudes));
 
                         // Apply adaptive model override if a trained classifier is loaded
                         adaptive_override(&s, &features, &mut classification);
@@ -202,7 +259,8 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             node_id: frame.node_id,
                             rssi: features.mean_rssi,
                         };
-                        let triage_update = Some(s.node_states.get_mut(&frame.node_id).expect("node state missing").triage_engine.process(&triage_input));
+                        // Shared triage engine: all nodes feed the same survivors.
+                        let mut triage_update = Some(s.triage_engine.process(&triage_input));
 
                         // Edge module engine: run all 10 modules
                         let amps_f32: Vec<f32> = frame.amplitudes.iter().map(|a| *a as f32).collect();
@@ -215,18 +273,93 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
 
                         // Multi-person estimation with temporal smoothing (EMA α=0.10).
                         let raw_score = compute_person_score(&features);
-                        { let ns2 = s.node_states.get_mut(&frame.node_id).expect("node state missing");
-                          ns2.smoothed_person_score = ns2.smoothed_person_score * 0.90 + raw_score * 0.10; }
-                        let ns3 = s.node_states.get_mut(&frame.node_id).expect("node state missing");
-                        let est_persons = if classification.presence {
-                            let count = score_to_person_count(ns3.smoothed_person_score, ns3.prev_person_count);
-                            ns3.prev_person_count = count;
-                            count
-                        } else { ns3.prev_person_count = 0; 0 };
-                        // ns3 borrow released here
+                        let est_persons = s.node_states.get_mut(&frame.node_id).map(|ns| {
+                            ns.smoothed_person_score = ns.smoothed_person_score * 0.90 + raw_score * 0.10;
+                            if classification.presence {
+                                let count = score_to_person_count(ns.smoothed_person_score, ns.prev_person_count);
+                                ns.prev_person_count = count;
+                                count
+                            } else { ns.prev_person_count = 0; 0 }
+                        }).unwrap_or(0);
 
                         let model_loaded = s.model_loaded;
                         let rssi_mean = features.mean_rssi;
+
+                        // ── Localization bridge: feed multi-node RSSI + CIR → triangulate ──
+                        s.localization_bridge.feed_observation(
+                            frame.node_id, features.mean_rssi, cir_distance_m,
+                        );
+                        let triangulated_pos: Option<[f64; 3]> = s.localization_bridge.estimate_position();
+
+                        // ── Tracking bridge: Kalman + fingerprint re-ID ──
+                        let track_obs = wifi_densepose_sensing_server::tracking_bridge::TrackObservation {
+                            position: triangulated_pos,
+                            breathing_rate_bpm: vitals.breathing_rate_bpm,
+                            heart_rate_bpm: vitals.heart_rate_bpm,
+                            signal_quality: vitals.signal_quality,
+                            motion_score,
+                            confidence: vitals.breathing_confidence.max(vitals.heartbeat_confidence),
+                            node_id: frame.node_id,
+                            person_id: Some(tick as u32),
+                        };
+                        let _track_result = s.tracking_bridge.update(&[track_obs]);
+
+                        // Apply triangulated position from LocalizationBridge (cross-node)
+                        // and Kalman-smoothed position from TrackingBridge.
+                        if let Some(ref mut tu) = triage_update {
+                            for survivor in &mut tu.survivors {
+                                // Priority 1: Kalman-smoothed position from tracking bridge.
+                                if let Some(smoothed) = s.tracking_bridge.smoothed_position(&survivor.id) {
+                                    survivor.position = Some(smoothed);
+                                    survivor.position_confidence =
+                                        (survivor.position_confidence + 0.15).min(1.0);
+                                }
+                                // Priority 2: Raw triangulated position from localization bridge
+                                // (applies when tracking bridge hasn't converged yet).
+                                else if let Some(tri_pos) = triangulated_pos {
+                                    survivor.position = Some(tri_pos);
+                                    survivor.position_confidence =
+                                        (survivor.position_confidence + 0.1).min(0.9);
+                                }
+                                survivor.reidentified = s.tracking_bridge.was_reidentified(&survivor.id);
+                            }
+                        }
+
+                        // ── Collect tracked survivor snapshots from Kalman filter
+                        // (dead data flow fix #3: wire tracking_bridge → SensingUpdate).
+                        let tracked_survivors: Option<Vec<TrackedSurvivor>> = {
+                            let snapshots = s.tracking_bridge.active_track_snapshots();
+                            if snapshots.is_empty() {
+                                None
+                            } else {
+                                Some(snapshots.iter().map(|ts| {
+                                    TrackedSurvivor {
+                                        survivor_id: ts.display_id.clone(),
+                                        position: Some(ts.position),
+                                        velocity: Some(ts.velocity),
+                                        reidentified: s.tracking_bridge.was_reidentified(&ts.display_id),
+                                        tracking_confidence: 0.5,
+                                    }
+                                }).collect())
+                            }
+                        };
+
+                        // ── Alerting bridge: generate structured alert if triage warrants ──
+                        if let Some(ref tu) = triage_update {
+                            for survivor in &tu.survivors {
+                                if survivor.triage != "Minor" && survivor.triage != "Green"
+                                    && survivor.triage != "Unknown"
+                                {
+                                    let _alert = s.alerting_bridge.generate_alert(
+                                        &survivor.id,
+                                        &survivor.triage,
+                                        survivor.breathing_rate,
+                                        survivor.heart_rate,
+                                        survivor.position,
+                                    );
+                                }
+                            }
+                        }
 
                         // Capture previous triage for agent deterioration trigger
                         let prev_triage = s.latest_update.as_ref()
@@ -244,29 +377,33 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         (features, classification, br_hz, variances,
                          raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
-                         prev_triage, agent_handle, node_snapshot)
+                         prev_triage, agent_handle, node_snapshot,
+                         field_perturbation, tracked_survivors)
                     }; // ── write lock released ──
 
                     // Build multi-node info from snapshot (no lock held)
                     let now = Instant::now();
                     let timeout = Duration::from_secs(5);
-                    let all_nodes: Vec<NodeInfo> = node_snapshot.iter().map(|&(nid, last_t, rssi, br, hr, ref ml, pres)| {
+                    let all_nodes: Vec<NodeInfo> = node_snapshot.iter().map(|&(nid, last_t, rssi, br, hr, ref ml, pres): &(u8, Option<Instant>, f64, Option<f64>, Option<f64>, String, bool)| {
                         let active = last_t.map(|t| now.duration_since(t) < timeout).unwrap_or(false);
+                        // Node positions from competition config (node_id → (x,y,z))
+                        let pos = crate::mat_pipeline::node_positions_arr()
+                            .get(&nid).copied().unwrap_or([2.,0.,1.5]);
                         if nid == frame.node_id {
-                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: [2.,0.,1.5], amplitude: frame.amplitudes.iter().take(56).cloned().collect(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: frame.freq_mhz as u8, band: "5GHz".into() }
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: frame.amplitudes.iter().take(56).cloned().collect(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: frame.freq_mhz as u8, band: "5GHz".into() }
                         } else if active {
-                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: [2.,0.,1.5], amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: br, heart_rate_bpm: hr, motion_level: Some(ml.clone()), presence: pres, active: true, channel: 0, band: "5GHz".into() }
-                        } else { NodeInfo { node_id: nid, rssi_dbm: 0., position: [2.,0.,1.5], amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: None, heart_rate_bpm: None, motion_level: None, presence: false, active: false, channel: 0, band: "".into() } }
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: br, heart_rate_bpm: hr, motion_level: Some(ml.clone()), presence: pres, active: true, channel: 0, band: "5GHz".into() }
+                        } else { NodeInfo { node_id: nid, rssi_dbm: 0., position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: None, heart_rate_bpm: None, motion_level: None, presence: false, active: false, channel: 0, band: "".into() } }
                     }).collect();
 
                     // ── Agent trigger: spawn analysis on triage escalation only ──
-                    let curr_triage = triage_update.as_ref()
+                    let curr_triage: Option<String> = triage_update.as_ref()
                         .and_then(|t| t.survivors.first().map(|s| s.triage.clone()));
-                    if let (Some(prev), Some(curr)) = (prev_triage.clone(), curr_triage) {
+                    if let (Some(ref prev), Some(ref curr)) = (&prev_triage, &curr_triage) {
                         if is_triage_escalation(&prev, &curr) {
                             let trigger = TriggerSource::Deterioration {
                                 patient_id: frame.node_id as u32,
-                                from: prev,
+                                from: prev.clone(),
                                 to: curr.clone(),
                             };
 
@@ -281,7 +418,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                                 rssi: Some(rssi_mean as i16),
                             };
                             let alerts: Vec<String> = wasm_alerts.as_ref()
-                                .map(|a| a.iter().map(|al| al.event_name.clone()).collect())
+                                .map(|a: &Vec<EdgeAlert>| a.iter().map(|al| al.event_name.clone()).collect())
                                 .unwrap_or_default();
 
                             let ctx = StructuredContext {
@@ -298,7 +435,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                                     delta: 0.0, delta_pct: 0.0,
                                     anomaly_score: 1.0, data_points: 50,
                                 },
-                                triage_current: curr,
+                                triage_current: curr.clone(),
                                 triage_trajectory: vec![],
                                 patient_history: None,
                                 recent_alerts: alerts,
@@ -376,6 +513,18 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                     let densepose_keypoints = generate_synthetic_pose(tick, &frame.amplitudes, motion_score);
 
                     let cls_confidence = classification.confidence;
+                    // Build signal field grid, applying field-model perturbation when available
+                    // (dead data flow fix #2: wire field_bridge perturbation into signal_field).
+                    let mut signal_field_data = generate_signal_field(
+                        rssi_mean, motion_score, breathing_rate_hz,
+                        cls_confidence, &sub_variances,
+                    );
+                    if let Some(perturbation) = field_perturbation {
+                        let scale = (perturbation * 0.3).clamp(-0.5, 0.5);
+                        for v in &mut signal_field_data.values {
+                            *v = (*v + scale).clamp(0.0, 1.0);
+                        }
+                    }
                     let mut update = SensingUpdate {
                         msg_type: "sensing_update".to_string(),
                         timestamp: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
@@ -384,10 +533,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         nodes: all_nodes,
                         features: features.clone(),
                         classification,
-                        signal_field: generate_signal_field(
-                            rssi_mean, motion_score, breathing_rate_hz,
-                            cls_confidence, &sub_variances,
-                        ),
+                        signal_field: signal_field_data,
                         vital_signs: Some(vitals),
                         triage_update,
                         wasm_alerts,
@@ -395,6 +541,8 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         model_status: None,
                         persons: None,
                         estimated_persons: if est_persons > 0 { Some(est_persons) } else { None },
+                        tracked_survivors,
+                        alerts: None,  // populated by broadcast_tick via AlertingBridge drain
                     };
 
                     let persons = derive_pose_from_sensing(&update);

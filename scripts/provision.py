@@ -152,7 +152,7 @@ def main():
         epilog="Example: python provision.py --port COM7 --ssid MyWiFi --password secret --target-ip 192.168.1.20",
     )
     parser.add_argument("--port", required=True, help="Serial port (e.g. COM7, /dev/ttyUSB0)")
-    parser.add_argument("--chip", default="esp32s3", choices=["esp32s3", "esp32c5"],
+    parser.add_argument("--chip", default="esp32c5", choices=["esp32s3", "esp32c5"],
                         help="Target chip (default: esp32s3)")
     parser.add_argument("--baud", type=int, default=460800, help="Flash baud rate (default: 460800)")
     parser.add_argument("--ssid", help="WiFi SSID")

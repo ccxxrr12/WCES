@@ -97,31 +97,42 @@ impl VitalSignStore {
         let mut valid_count = 0_usize;
 
         for r in &self.readings {
+            // Skip Unavailable readings (value_bpm = 0.0) to prevent
+            // artificially lowering mean/min statistics with zero values.
+            if r.respiratory_rate.status != VitalStatus::Valid
+                || r.heart_rate.status != VitalStatus::Valid
+            {
+                continue;
+            }
             let rr = r.respiratory_rate.value_bpm;
             let hr = r.heart_rate.value_bpm;
+            // Guard against NaN poisoning all subsequent operations
+            if !rr.is_finite() || !hr.is_finite() {
+                continue;
+            }
             rr_sum += rr;
             hr_sum += hr;
             rr_min = rr_min.min(rr);
             rr_max = rr_max.max(rr);
             hr_min = hr_min.min(hr);
             hr_max = hr_max.max(hr);
-
-            if r.respiratory_rate.status == VitalStatus::Valid
-                && r.heart_rate.status == VitalStatus::Valid
-            {
-                valid_count += 1;
-            }
+            valid_count += 1;
         }
 
+        // Guard: no valid readings → return None to avoid sending f64::MAX sentinels
+        if valid_count == 0 {
+            return None;
+        }
+        let vc = valid_count as f64;
         Some(VitalStats {
-            count: self.readings.len(),
-            rr_mean: rr_sum / n,
-            hr_mean: hr_sum / n,
+            count: valid_count,
+            rr_mean: rr_sum / vc,
+            hr_mean: hr_sum / vc,
             rr_min,
             rr_max,
             hr_min,
             hr_max,
-            valid_fraction: valid_count as f64 / n,
+            valid_fraction: vc / n,
         })
     }
 

@@ -24,5 +24,6 @@ function escapeHtml(str) {
     if (str === null || str === undefined) return '';
     var div = document.createElement('div');
     div.textContent = String(str);
-    return div.innerHTML;
+    // Also encode quotes for safe use in attribute values (onclick handlers etc.)
+    return div.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
 }
