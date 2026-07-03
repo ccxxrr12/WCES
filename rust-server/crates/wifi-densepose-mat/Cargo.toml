@@ -25,7 +25,7 @@ drone = ["distributed"]
 # Workspace dependencies
 wifi-densepose-core = { version = "0.3.0", path = "../wifi-densepose-core" }
 wifi-densepose-signal = { version = "0.3.0", path = "../wifi-densepose-signal" }
-wifi-densepose-nn = { version = "0.3.0", path = "../wifi-densepose-nn" }
+wifi-densepose-nn = { version = "0.3.0", path = "../wifi-densepose-nn", default-features = false }
 ruvector-solver = { workspace = true, optional = true }
 ruvector-temporal-tensor = { workspace = true, optional = true }
 
