@@ -782,13 +782,25 @@ pub(crate) fn derive_single_person_pose(
 }
 
 pub(crate) fn derive_pose_from_sensing(update: &SensingUpdate) -> Vec<PersonDetection> {
-    let cls = &update.classification;
-    if !cls.presence {
+    // BUG 47 fix: decouple person generation from motion-based presence.
+    // signal_pipeline's motion_score can under-estimate (e.g. still/sitting
+    // person), which previously blocked ALL person dots on the 2D map even when
+    // the triage engine had correctly identified survivors.
+    //
+    // Primary signal: triage survivors count (most reliable).
+    // Fallback: estimated_persons from score-based person counting.
+    // Gate: if neither has a positive count, return empty (truly empty room).
+    let survivor_count = update.triage_update.as_ref()
+        .map(|t| t.survivors.len())
+        .unwrap_or(0);
+    let person_count = if survivor_count > 0 {
+        survivor_count.max(1)
+    } else {
+        update.estimated_persons.unwrap_or(0)
+    };
+    if person_count == 0 {
         return vec![];
     }
-
-    // Use estimated_persons if set by the tick loop; otherwise default to 1.
-    let person_count = update.estimated_persons.unwrap_or(1).max(1);
 
     (0..person_count)
         .map(|idx| derive_single_person_pose(update, idx, person_count))

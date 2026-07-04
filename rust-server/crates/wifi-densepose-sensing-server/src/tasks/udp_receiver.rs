@@ -209,6 +209,12 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             if vb_hr.is_some() { vitals.heart_rate_bpm = vb_hr; }
                             vitals.breathing_confidence = vb_br_conf.max(vitals.breathing_confidence);
                             vitals.heartbeat_confidence = vb_hr_conf.max(vitals.heartbeat_confidence);
+                            // BUG 46 fix: signal_quality was stuck at 0.0 (default) after
+                            // VitalSignDetector (FFT/Goertzel) removal. Wire VitalsBridge
+                            // confidences to signal_quality so triage engine accepts input.
+                            vitals.signal_quality = (vitals.breathing_confidence
+                                .max(vitals.heartbeat_confidence) * 0.8 + 0.2)
+                                .clamp(0.0, 1.0);
                         }
 
                         // CIR bridge: ISTA sparse CIR estimation → ToF ranging
