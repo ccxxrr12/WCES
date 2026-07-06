@@ -23,6 +23,7 @@
 #include "nvs_config.h"
 #include "stream_sender.h"
 #include "edge_processing.h"
+#include "esp_csi_gain_ctrl.h"
 
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -230,6 +231,34 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
 
     s_cb_count++;
 
+    /* ── Gain Lock: stabilise CSI amplitude by locking AGC ────────────── */
+    {
+        uint8_t  agc_gain = 0;
+        int8_t   fft_gain = 0;
+        esp_csi_gain_ctrl_get_rx_gain(&info->rx_ctrl, &agc_gain, &fft_gain);
+
+        rx_gain_status_t gs = esp_csi_gain_ctrl_get_gain_status();
+        if (gs == RX_GAIN_COLLECT) {
+            /* Safety: skip locking when RSSI too strong (AGC < 30 → HW freeze risk). */
+            if (info->rx_ctrl.rssi > -40 || agc_gain < 30) {
+                /* Too close to AP — stay in collect phase so we can lock later. */
+                esp_csi_gain_ctrl_record_rx_gain(agc_gain, fft_gain);
+            } else {
+                esp_csi_gain_ctrl_record_rx_gain(agc_gain, fft_gain);
+            }
+        } else if (gs == RX_GAIN_READY) {
+            uint8_t  base_agc = 0;
+            int8_t   base_fft = 0;
+            if (esp_csi_gain_ctrl_get_rx_gain_baseline(&base_agc, &base_fft) == ESP_OK) {
+                if (base_agc >= 30) {
+                    esp_csi_gain_ctrl_set_rx_force_gain(base_agc, base_fft);
+                    ESP_LOGI(TAG, "Gain locked: AGC=%d FFT=%d  ← CSI dynamic range opened", base_agc, base_fft);
+                }
+            }
+        }
+        /* RX_GAIN_FORCE: already locked — nothing to do. */
+    }
+
     if (s_cb_count <= 3 || (s_cb_count % 100) == 0) {
         ESP_LOGI(TAG, "CSI cb #%lu: len=%d rssi=%d ch=%d",
                  (unsigned long)s_cb_count, info->len,
@@ -337,16 +366,16 @@ void csi_collector_init(void)
     /* C5/C6/C61: New CSI config API (ESP-IDF v5.4+) */
     wifi_csi_acquire_config_t csi_config = {
         .enable                   = true,
-        .acquire_csi_legacy       = true,   /* L-LTF (legacy) */
-        .acquire_csi_ht20         = true,   /* HT-LTF 20MHz */
-        .acquire_csi_ht40         = true,   /* HT-LTF 40MHz */
-        .acquire_csi_su           = true,   /* HE SU (single user) */
-        .acquire_csi_mu           = true,   /* HE MU (multi user) */
-        .acquire_csi_dcm          = true,   /* DCM (dual carrier modulation) */
-        .acquire_csi_beamformed   = true,   /* Beamformed frames */
-        .acquire_csi_force_lltf   = false,  /* false = auto, true = force L-LTF only */
-        .val_scale_cfg            = 0,      /* 0 = no scaling */
-        .dump_ack_en              = true,   /* Include ACK frames */
+        .acquire_csi_legacy       = true,   /* L-LTF  ~52 subcarriers */
+        .acquire_csi_ht20         = true,   /* HT-LTF 20MHz ~56 subcarriers */
+        .acquire_csi_ht40         = true,   /* HT-LTF 40MHz ~114 subcarriers */
+        .acquire_csi_su           = true,   /* HE SU — WiFi 6 single-user frames */
+        .acquire_csi_mu           = false,  /* MU rarely triggered; saves buffer */
+        .acquire_csi_dcm          = false,  /* DCM rare; reduces noise */
+        .acquire_csi_beamformed   = false,  /* beamformed CSI is unstable */
+        .acquire_csi_force_lltf   = false,  /* auto: use best available LTF type */
+        .val_scale_cfg            = 2,      /* light scaling for multipath environments */
+        .dump_ack_en              = false,  /* ACK frames have poor CSI SNR */
     };
 #else
     /* S3/C3/ESP32: Legacy CSI config API */

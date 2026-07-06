@@ -187,6 +187,13 @@ impl BreathingExtractor {
         self.filter_state = IirState::default();
     }
 
+    /// Update sample rate without resetting filter state.
+    /// The bandpass coefficients are recomputed on every call to `bandpass_filter`,
+    /// so updating this field immediately re-tunes the filter to the correct band.
+    pub fn set_sample_rate(&mut self, rate: f64) {
+        self.sample_rate = rate.max(1.0);
+    }
+
     /// Current number of samples in the history buffer.
     #[must_use]
     pub fn history_len(&self) -> usize {

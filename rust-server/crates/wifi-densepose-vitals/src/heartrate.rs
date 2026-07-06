@@ -103,9 +103,10 @@ impl HeartRateExtractor {
             return None;
         }
 
-        // For cardiac signals, use phase-coherence weighted fusion.
-        // Compute mean phase differential as a proxy for body-surface
-        // displacement sensitivity.
+        // Phase-coherence weighted amplitude signal.
+        // Amplitude residuals weighted by inter-subcarrier phase coherence
+        // produce a cleaner cardiac signal than either raw amplitude or
+        // raw temporal phase diff on ESP32-C5 hardware.
         let phase_signal = compute_phase_coherence_signal(residuals, phases, n);
 
         // Apply cardiac-band IIR bandpass filter
@@ -190,6 +191,11 @@ impl HeartRateExtractor {
     pub fn reset(&mut self) {
         self.filtered_history.clear();
         self.filter_state = IirState::default();
+    }
+
+    /// Update sample rate without resetting filter state.
+    pub fn set_sample_rate(&mut self, rate: f64) {
+        self.sample_rate = rate.max(1.0);
     }
 
     /// Current number of samples in the history buffer.

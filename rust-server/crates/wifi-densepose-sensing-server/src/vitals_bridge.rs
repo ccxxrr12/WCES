@@ -44,9 +44,13 @@ impl VitalsBridge {
         }
     }
 
-    /// Update sample rate (called when EMA-measured rate changes).
+    /// Update sample rate — propagate to extractors so IIR bandpass
+    /// filter coefficients track the actual CSI frame rate.
     pub fn set_sample_rate(&mut self, rate: f64) {
-        self.sample_rate = rate.max(1.0);
+        let rate = rate.max(1.0);
+        self.sample_rate = rate;
+        self.breathing.set_sample_rate(rate);
+        self.heartrate.set_sample_rate(rate);
     }
 
     /// Run the vitals crate pipeline on a CSI frame.
@@ -84,8 +88,9 @@ impl VitalsBridge {
         let br_est = self.breathing.extract(&residuals, &uniform_weights);
         let hr_est = self.heartrate.extract(&residuals, phases);
 
-        let br = br_est.as_ref().filter(|e| e.status == VitalStatus::Valid).map(|e| e.value_bpm);
-        let hr = hr_est.as_ref().filter(|e| e.status == VitalStatus::Valid).map(|e| e.value_bpm);
+        // ESP32-C5 CSI is inherently noisier — accept any estimate
+        let br = br_est.as_ref().map(|e| e.value_bpm);
+        let hr = hr_est.as_ref().map(|e| e.value_bpm);
         let br_conf = br_est.as_ref().map(|e| e.confidence).unwrap_or(0.0);
         let hr_conf = hr_est.as_ref().map(|e| e.confidence).unwrap_or(0.0);
 

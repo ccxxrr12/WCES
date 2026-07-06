@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：P0-P10f 完成 ✅ | 52 bugs 已修复（5轮审查 2026-06-27~30）| Rust 98,430行 223文件 | C固件 8,322行 33文件 | ESP-IDF v6.0.1
+> 状态：58 bugs 已修复 | WhōFi+FieldBridge 混合定位 | Rust ~100K行 | C固件 8,322行 | ESP-IDF v6.0.1 | 2026-07-04
 
 ---
 
@@ -37,19 +37,19 @@ python provision.py --chip esp32c5 --node-id 1 --port COM3
 # 节点 2: --node-id 2 --port COM4
 # 节点 3: --node-id 3 --port COM5
 
-# 2. 编译服务端（在 rust-server 目录内）
+# 2. 编译服务端（RZ/G2L 交叉编译，在 WSL Kali 中）
 cd rust-server
-cargo build --release
-# RZ/G2L 交叉编译：
-# cargo build --target aarch64-unknown-linux-gnu --release
+cargo build --target aarch64-unknown-linux-gnu --release -p wifi-densepose-sensing-server --no-default-features
 
-# 3. 返回项目根目录，一键部署
-cd ..
-./deploy.sh
+# 3. 部署二进制到板子
+scp target/aarch64-unknown-linux-gnu/release/sensing-server root@<RZ_IP>:/opt/WCES/rust-server/target/aarch64-unknown-linux-gnu/release/
 
-# 4. 浏览器打开仪表盘
-# http://192.168.1.100:8080/ui/triage.html    ← 分诊仪表盘
-# http://192.168.1.100:8080/                  ← 3D 可视化
+# 4. SSH 到板子启动
+ssh root@<RZ_IP>
+cd /opt/WCES && ./rust-server/target/aarch64-unknown-linux-gnu/release/sensing-server --source esp32 --ui-path ./docs/triage-ui --bind-addr 0.0.0.0 --http-port 8080
+
+# 5. 浏览器打开仪表盘
+# http://<RZ_IP>:8080/ui/triage.html    ← 分诊仪表盘
 ```
 
 ### ⚡ 使用统一配置 (推荐)
@@ -71,7 +71,7 @@ idf.py set-target esp32c5 && idf.py build && idf.py -p COM3 flash
 
 # 4. 启动服务端
 cd ..\..\rust-server
-cargo run -p wifi-densepose-sensing-server -- --source auto --ui-path ../docs/triage-ui --bind-addr 0.0.0.0 --http-port 8080
+cargo run -p wifi-densepose-sensing-server -- --source simulate --ui-path ../docs/triage-ui --bind-addr 0.0.0.0 --http-port 8080
 ```
 
 ### 无硬件模拟运行（开发/演示）
