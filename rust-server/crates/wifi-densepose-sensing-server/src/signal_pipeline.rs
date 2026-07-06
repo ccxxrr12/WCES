@@ -157,7 +157,7 @@ impl SignalPipeline {
     /// Process one CSI frame through the full pipeline.
     ///
     /// Returns `None` if the input is empty or mismatched.
-    pub fn process(&mut self, amplitudes: &[f64], phases: &[f64]) -> Option<SignalPipelineOutput> {
+    pub fn process(&mut self, amplitudes: &[f64], phases: &[f64], freq_hz: f64, bw_hz: f64) -> Option<SignalPipelineOutput> {
         if amplitudes.is_empty() || phases.is_empty() || amplitudes.len() != phases.len() {
             return None;
         }
@@ -216,8 +216,8 @@ impl SignalPipeline {
         let csi_data = CsiData::builder()
             .amplitude(amp_arr)
             .phase(phase_arr)
-            .frequency(2.437e9) // 2.4 GHz WiFi channel 6
-            .bandwidth(20e6)    // HT20
+            .frequency(freq_hz)
+            .bandwidth(bw_hz)
             .build()
             .ok()?;
 
@@ -264,7 +264,7 @@ mod tests {
         let amps: Vec<f64> = (0..n).map(|i| 0.5 + 0.1 * (i as f64 * 0.3).sin()).collect();
         let phases: Vec<f64> = (0..n).map(|i| (i as f64 * 0.1).sin() * 0.5).collect();
 
-        let output = pipe.process(&amps, &phases);
+        let output = pipe.process(&amps, &phases, 2.437e9, 20e6);
         assert!(output.is_some(), "Pipeline should process valid frame");
         let out = output.unwrap();
         assert_eq!(out.cleaned_amplitudes.len(), 56); // canonical-56
@@ -275,6 +275,6 @@ mod tests {
     #[test]
     fn signal_pipeline_rejects_empty() {
         let mut pipe = SignalPipeline::new();
-        assert!(pipe.process(&[], &[]).is_none());
+        assert!(pipe.process(&[], &[], 2.437e9, 20e6).is_none());
     }
 }

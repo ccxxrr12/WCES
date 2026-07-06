@@ -45,6 +45,15 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
     let mut last_broadcast = Instant::now();
     const BROADCAST_INTERVAL_MS: u64 = 100; // 10 Hz max
 
+    // ── WhōFi + phase-doppler hybrid proximity tracking ──────────────────────
+    let mut node_prox: [f64; 4] = [0.0; 4];      // per-node EMA proximity [0,1]
+    let mut node_max: [f64; 4] = [1.0; 4];        // fixed baseline (peak, never decays)
+    let mut prev_phases: [Vec<f64>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut surv_pos: [(f64, f64, f64); 8] = [(0.0, 0.0, 0.0); 8];
+    const PROX_EMA: f64 = 0.12;
+    const POS_EMA: f64 = 0.12;
+    const TOP_K: usize = 12;
+
     let mut buf = [0u8; 2048];
     loop {
         match socket.recv_from(&mut buf).await {
@@ -148,7 +157,9 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             if ns.frame_history.len() > FRAME_HISTORY_CAPACITY { ns.frame_history.pop_front(); }
 
                             // ── Signal pipeline: phase sanitize → normalize → hampel → motion → coherence gate ──
-                            signal_out = ns.signal_pipeline.process(&frame.amplitudes, &frame.phases);
+                            let freq_hz = frame.freq_mhz as f64 * 1_000_000.0;
+                            let bw_hz = if frame.n_subcarriers > 60 { 40e6 } else { 20e6 };
+                            signal_out = ns.signal_pipeline.process(&frame.amplitudes, &frame.phases, freq_hz, bw_hz);
 
                             // Use dynamically-measured sample rate instead of hardcoded 20 Hz
                             sample_rate_hz = ns.measured_sample_rate;
@@ -184,7 +195,6 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             // are removed — VitalsBridge is the sole vital sign source.
                             vitals = VitalSigns::default();
 
-                            ns.latest_vitals = vitals.clone();
                             // Capture per-node smoothed_motion for global backward-compat
                             smoothed_motion = ns.smoothed_motion;
                             // ns dropped here — releases borrow on s.node_states
@@ -215,6 +225,11 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             vitals.signal_quality = (vitals.breathing_confidence
                                 .max(vitals.heartbeat_confidence) * 0.8 + 0.2)
                                 .clamp(0.0, 1.0);
+                        }
+
+                        // BUG 51: update per-node latest_vitals AFTER VitalsBridge
+                        if let Some(ns) = s.node_states.get_mut(&frame.node_id) {
+                            ns.latest_vitals = vitals.clone();
                         }
 
                         // CIR bridge: ISTA sparse CIR estimation → ToF ranging
@@ -396,7 +411,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         let pos = crate::mat_pipeline::node_positions_arr()
                             .get(&nid).copied().unwrap_or([2.,0.,1.5]);
                         if nid == frame.node_id {
-                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: frame.amplitudes.iter().take(56).cloned().collect(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: frame.freq_mhz as u8, band: "5GHz".into() }
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: frame.amplitudes.iter().take(56).cloned().collect(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: if frame.freq_mhz > 5000 { ((frame.freq_mhz - 5000) / 5) as u8 } else { ((frame.freq_mhz - 2407) / 5) as u8 }, band: if frame.freq_mhz > 5000 { "5GHz".into() } else { "2.4GHz".into() } }
                         } else if active {
                             NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: br, heart_rate_bpm: hr, motion_level: Some(ml.clone()), presence: pres, active: true, channel: 0, band: "5GHz".into() }
                         } else { NodeInfo { node_id: nid, rssi_dbm: 0., position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: None, heart_rate_bpm: None, motion_level: None, presence: false, active: false, channel: 0, band: "".into() } }
@@ -531,6 +546,65 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                             *v = (*v + scale).clamp(0.0, 1.0);
                         }
                     }
+                    // ── WhōFi (60%) + frame-phase-diff (40%) positioning ──────
+                    let nid = frame.node_id as usize;
+                    // WhōFi: top-K subcarrier variance → proximity
+                    let mut sv = sub_variances.clone();
+                    sv.sort_by(|a,b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+                    let topk: f64 = if sv.is_empty() { 0.0 } else {
+                        let k = TOP_K.min(sv.len());
+                        sv[..k].iter().sum::<f64>() / k as f64
+                    };
+                    let raw_var = topk;
+                    if raw_var > node_max[nid] { node_max[nid] = raw_var * 1.2; }
+                    let var_prox = (raw_var / node_max[nid]).clamp(0.0, 1.0);
+                    // Frame-phase-diff: mean |Δphase| per subcarrier → doppler proxy
+                    let phase_prox: f64 = if prev_phases[nid].len() == frame.phases.len() {
+                        let mut sum = 0.0f64; let n = frame.phases.len();
+                        for i in 0..n { sum += (frame.phases[i] - prev_phases[nid][i]).abs(); }
+                        (sum / n as f64 / std::f64::consts::PI).clamp(0.0, 1.0)
+                    } else { 0.0 };
+                    prev_phases[nid] = frame.phases.to_vec();
+                    // Blend: 60% WhōFi + 40% phase-doppler
+                    let prox = (var_prox * 0.6 + phase_prox * 0.4).clamp(0.0, 1.0);
+                    node_prox[nid] = node_prox[nid] * (1.0 - PROX_EMA) + prox * PROX_EMA;
+
+                    // Multi-node squared-weight centroid
+                    let npos = crate::mat_pipeline::node_positions();
+                    let (mut wx, mut wy, mut wz, mut tw) = (0.0, 0.0, 0.0, 0.0);
+                    for cid in 1u8..=3 {
+                        let w = node_prox[cid as usize];
+                        let w2 = w * w;
+                        if w2 > 0.005 {
+                            if let Some(&(nx, ny, nz)) = npos.get(&cid) {
+                                wx += nx * w2; wy += ny * w2; wz += nz * w2;
+                                tw += w2;
+                            }
+                        }
+                    }
+                    let centroid: [f64; 3] = if tw > 0.0 {
+                        [wx / tw, wy / tw, wz / tw]
+                    } else {
+                        npos.get(&1).map(|&(x,y,z)| [x,y,z]).unwrap_or([0.0,0.0,1.0])
+                    };
+                    let pos_conf = (tw / 0.5).clamp(0.15, 1.0);
+
+                    // Override survivor positions with EMA-smoothed centroid
+                    let mut triage_update = triage_update;
+                    if let Some(ref mut tu) = triage_update {
+                        let ns = tu.survivors.len();
+                        for (i, s) in tu.survivors.iter_mut().enumerate() {
+                            let stagger = if ns > 1 { (i as f64 - (ns-1) as f64/2.0) * 1.2 } else { 0.0 };
+                            let raw = [centroid[0] + stagger, centroid[1], centroid[2] + stagger * 0.6];
+                            if i < 8 {
+                                let p = surv_pos[i];
+                                surv_pos[i] = (p.0*(1.0-POS_EMA)+raw[0]*POS_EMA, p.1*(1.0-POS_EMA)+raw[1]*POS_EMA, p.2*(1.0-POS_EMA)+raw[2]*POS_EMA);
+                                s.position = Some([surv_pos[i].0, surv_pos[i].1, surv_pos[i].2]);
+                            } else { s.position = Some(raw); }
+                            s.position_confidence = pos_conf;
+                        }
+                    }
+
                     let mut update = SensingUpdate {
                         msg_type: "sensing_update".to_string(),
                         timestamp: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,

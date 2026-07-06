@@ -188,9 +188,9 @@ pub fn calculate_triage(input: &VitalSignsInput) -> TriageLevel {
     let br = input.breathing_rate_bpm;
     let hr = input.heart_rate_bpm;
 
-    // 无有效生命体征 → Deceased or Unknown
+    // BUG 50: no vital signs yet ≠ deceased.
     if br.is_none() && hr.is_none() {
-        return TriageLevel::Deceased;
+        return TriageLevel::Unknown;
     }
 
     // Immediate (红): START 协议 — 呼吸 >30/min 或 <10/min
@@ -351,9 +351,12 @@ impl TriageEngine {
                     s.position_confidence = (obs.len() as f64 / 3.0).min(1.0) * input.signal_quality;
                 }
             } else if let Some((nx, ny, nz)) = self.config.node_positions.get(&input.node_id) {
-                // 单节点: 基于RSSI的距离估计 (保留旧逻辑作为回退)
+                // BUG 48: single-node RSSI with EMA smoothing.
                 let d = rssi_to_distance(input.rssi);
-                s.position = (nx + d * 0.5, ny + d * 0.3, nz * 0.5);
+                let raw_x = nx + d * 0.5; let raw_y = ny + d * 0.3; let raw_z = nz * 0.5;
+                const POS_EMA: f64 = 0.15;
+                if s.position == (0.0, 0.0, 0.0) { s.position = (raw_x, raw_y, raw_z); }
+                else { s.position = (s.position.0*(1.0-POS_EMA)+raw_x*POS_EMA, s.position.1*(1.0-POS_EMA)+raw_y*POS_EMA, s.position.2*(1.0-POS_EMA)+raw_z*POS_EMA); }
                 s.position_confidence = input.signal_quality * 0.5;
             }
 
@@ -414,7 +417,7 @@ impl TriageEngine {
     fn generate_embedding(input: &VitalSignsInput) -> Vec<f64> {
         let br = input.breathing_rate_bpm.unwrap_or(0.0);
         let hr = input.heart_rate_bpm.unwrap_or(0.0);
-        let motion = input.motion_score;
+        let motion: f64 = if input.motion_score > 0.15 { 0.8 } else if input.motion_score > 0.05 { 0.3 } else { 0.0 };
         let sq = input.signal_quality;
         let rssi_norm = (input.rssi as f64 + 90.0).clamp(0.0, 60.0) / 60.0; // normalize RSSI
         // 8-dim: [br/60, hr/200, motion, sq, br_vs_hr_ratio, rssi, node_parity, 0]
@@ -461,7 +464,7 @@ impl TriageEngine {
         // Step 2: Cross-node biometric match against ACTIVE survivors.
         // When multiple nodes detect the same person, their vital-sign embeddings
         // will be similar even though person_id differs (per-node tick counters).
-        let active_thresh = 0.80; // stricter than lost-pool re-ID
+        let active_thresh = 0.65; // BUG 53: lowered from 0.80 for tolerance
         let mut best_active: Option<(String, f64)> = None;
         for (id, s) in &self.survivors {
             if s.embedding.is_empty() || s.last_updated < now - 5.0 { continue; }
@@ -504,7 +507,7 @@ impl TriageEngine {
 
         // Step 4: Create new survivor.
         self.counter += 1;
-        let id = format!("SURV-{:08x}", self.counter);
+        let id = format!("SURV-{:03x}", self.counter);
         self.survivors.insert(id.clone(), TrackedSurvivor::new_with_embedding(
             id.clone(), now, input.node_id, input.person_id, current_emb,
         ));
@@ -627,9 +630,9 @@ mod tests {
     }
 
     #[test]
-    fn test_start_deceased_no_vitals() {
+    fn test_start_unknown_no_vitals() {
         let v = VitalSignsInput { signal_quality: 0.5, ..Default::default() };
-        assert_eq!(calculate_triage(&v), TriageLevel::Deceased);
+        assert_eq!(calculate_triage(&v), TriageLevel::Unknown);
     }
 
     #[test]

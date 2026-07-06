@@ -24,13 +24,15 @@ pub struct FieldBridge {
     pub calibrated: bool,
     energy_history: VecDeque<f64>,
     pub smoothed_energy: f64,
+    configured_subcarriers: usize,
 }
 
 impl FieldBridge {
     pub fn new() -> Result<Self, FieldModelError> {
+        let n_sub = 56; // canonical; auto-adapted on first frame
         let config = FieldModelConfig {
             n_links: 1,
-            n_subcarriers: 64,
+            n_subcarriers: n_sub,
             min_calibration_frames: AUTO_CALIBRATION_FRAMES,
             ..FieldModelConfig::default()
         };
@@ -41,7 +43,22 @@ impl FieldBridge {
             calibrated: false,
             energy_history: VecDeque::with_capacity(SMOOTHING_WINDOW),
             smoothed_energy: 0.0,
+            configured_subcarriers: n_sub,
         })
+    }
+
+    fn ensure_config(&mut self, n_sub: usize) -> Result<(), FieldModelError> {
+        if n_sub == self.configured_subcarriers { return Ok(()); }
+        let config = FieldModelConfig {
+            n_links: 1, n_subcarriers: n_sub,
+            min_calibration_frames: AUTO_CALIBRATION_FRAMES,
+            ..FieldModelConfig::default()
+        };
+        self.model = FieldModel::new(config)?;
+        self.configured_subcarriers = n_sub;
+        self.calibration_count = 0;
+        self.calibrated = false;
+        Ok(())
     }
 
     /// Feed a CSI amplitude vector. Returns perturbation energy if post-calibration.
@@ -49,6 +66,7 @@ impl FieldBridge {
         if amplitudes.is_empty() {
             return None;
         }
+        let _ = self.ensure_config(amplitudes.len());
 
         if !self.calibrated {
             // Feed one link's observation vector — only count on success
