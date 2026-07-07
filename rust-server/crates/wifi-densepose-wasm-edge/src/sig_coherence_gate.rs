@@ -84,6 +84,10 @@ pub struct CoherenceGate {
     frame_count: u32,
     last_coherence: f32,
     last_zscore: f32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl CoherenceGate {
@@ -97,6 +101,8 @@ impl CoherenceGate {
             low_count: 0, high_count: 0,
             initialized: false, frame_count: 0,
             last_coherence: 1.0, last_zscore: 0.0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -105,8 +111,7 @@ impl CoherenceGate {
         let n_sc = if phases.len() > MAX_SC { MAX_SC } else { phases.len() };
         if n_sc < 2 { return &[]; }
 
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         if !self.initialized {
             for i in 0..n_sc { self.prev_phases[i] = phases[i]; }
@@ -146,8 +151,8 @@ impl CoherenceGate {
             self.gate = GateDecision::Recalibrate;
             self.low_count = 0;
             self.high_count = 0;
-            unsafe { EVENTS[n_ev] = (EVENT_RECALIBRATE_NEEDED, variance); }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_RECALIBRATE_NEEDED, variance);
+            self.events_len += 1;
         } else {
             let below = coherence < LOW_THRESHOLD;
             let above = coherence >= HIGH_THRESHOLD;
@@ -178,11 +183,11 @@ impl CoherenceGate {
             };
         }
 
-        unsafe { EVENTS[n_ev] = (EVENT_GATE_DECISION, self.gate.as_f32()); }
-        n_ev += 1;
-        unsafe { EVENTS[n_ev] = (EVENT_COHERENCE_SCORE, coherence); }
-        n_ev += 1;
-        unsafe { &EVENTS[..n_ev] }
+        self.events_buf[self.events_len] = (EVENT_GATE_DECISION, self.gate.as_f32());
+        self.events_len += 1;
+        self.events_buf[self.events_len] = (EVENT_COHERENCE_SCORE, coherence);
+        self.events_len += 1;
+        &self.events_buf[..self.events_len]
     }
 
     pub fn gate(&self) -> GateDecision { self.gate }

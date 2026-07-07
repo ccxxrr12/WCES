@@ -109,6 +109,10 @@ pub struct GaitAnalyzer {
 
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 5],
+    events_len: usize,
 }
 
 impl GaitAnalyzer {
@@ -132,6 +136,8 @@ impl GaitAnalyzer {
             last_asymmetry: 0.0,
             last_fall_risk: 0.0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 5],
+            events_len: 0,
         }
     }
 
@@ -152,7 +158,7 @@ impl GaitAnalyzer {
     ) -> &[(i32, f32)] {
         // NaN guard: reject frames with NaN inputs.
         if variance != variance || motion_energy != motion_energy {
-            return unsafe { &EVENTS[..n] };
+            return &[];
         }
 
         self.frame_count += 1;
@@ -167,8 +173,7 @@ impl GaitAnalyzer {
         self.var_idx = (self.var_idx + 1) % GAIT_WINDOW;
         if self.var_len < GAIT_WINDOW { self.var_len += 1; }
 
-        static mut EVENTS: [(i32, f32); 5] = [(0, 0.0); 5];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         // ── Step detection (peak in variance) ───────────────────────────
         // A local max in variance indicates a step impact.
@@ -205,31 +210,31 @@ impl GaitAnalyzer {
             if self.cadence_len < 6 { self.cadence_len += 1; }
 
             // Emit cadence.
-            if n < 5 {
-                unsafe { EVENTS[n] = (EVENT_STEP_CADENCE, cadence); }
-                n += 1;
+            if self.events_len < 5 {
+                self.events_buf[self.events_len] = (EVENT_STEP_CADENCE, cadence);
+                self.events_len += 1;
             }
 
             // Emit asymmetry if above threshold.
-            if fabsf(asymmetry - 1.0) > ASYMMETRY_THRESH && n < 5 {
-                unsafe { EVENTS[n] = (EVENT_GAIT_ASYMMETRY, asymmetry); }
-                n += 1;
+            if fabsf(asymmetry - 1.0) > ASYMMETRY_THRESH && self.events_len < 5 {
+                self.events_buf[self.events_len] = (EVENT_GAIT_ASYMMETRY, asymmetry);
+                self.events_len += 1;
             }
 
             // Shuffling: high cadence + low energy.
             if cadence > SHUFFLE_CADENCE_HIGH && avg_energy < SHUFFLE_ENERGY_LOW
-                && self.cd_shuffle == 0 && n < 5
+                && self.cd_shuffle == 0 && self.events_len < 5
             {
-                unsafe { EVENTS[n] = (EVENT_SHUFFLING_DETECTED, cadence); }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_SHUFFLING_DETECTED, cadence);
+                self.events_len += 1;
                 self.cd_shuffle = COOLDOWN_SECS;
             }
 
             // Festination: accelerating cadence.
-            if self.cadence_len >= 3 && self.cd_festination == 0 && n < 5 {
+            if self.cadence_len >= 3 && self.cd_festination == 0 && self.events_len < 5 {
                 if self.detect_festination() {
-                    unsafe { EVENTS[n] = (EVENT_FESTINATION, cadence); }
-                    n += 1;
+                    self.events_buf[self.events_len] = (EVENT_FESTINATION, cadence);
+                    self.events_len += 1;
                     self.cd_festination = COOLDOWN_SECS;
                 }
             }
@@ -237,16 +242,16 @@ impl GaitAnalyzer {
             // Fall risk score.
             let risk = self.compute_fall_risk(cadence, asymmetry, variability, avg_energy);
             self.last_fall_risk = risk;
-            if n < 5 {
-                unsafe { EVENTS[n] = (EVENT_FALL_RISK_SCORE, risk); }
-                n += 1;
+            if self.events_len < 5 {
+                self.events_buf[self.events_len] = (EVENT_FALL_RISK_SCORE, risk);
+                self.events_len += 1;
             }
 
             // Reset step buffer for next window.
             self.step_count = 0;
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute cadence in steps/min from step intervals.

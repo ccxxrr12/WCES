@@ -9,6 +9,7 @@
 //! with weighted subcarrier fusion.
 
 use crate::types::{VitalEstimate, VitalStatus};
+use std::collections::VecDeque;
 
 /// IIR bandpass filter state (2nd-order resonator).
 #[derive(Clone, Debug)]
@@ -33,7 +34,7 @@ impl Default for IirState {
 /// Respiratory rate extractor using bandpass filtering and zero-crossing analysis.
 pub struct BreathingExtractor {
     /// Per-sample filtered signal history.
-    filtered_history: Vec<f64>,
+    filtered_history: VecDeque<f64>,
     /// Sample rate in Hz.
     sample_rate: f64,
     /// Analysis window in seconds.
@@ -57,15 +58,14 @@ impl BreathingExtractor {
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn new(n_subcarriers: usize, sample_rate: f64, window_secs: f64) -> Self {
-        // Guard against zero/negative sample_rate: division by zero in bandpass_filter()
-        // would produce Inf filter coefficients, permanently corrupting IIR state.
-        let sample_rate = if sample_rate > 0.0 { sample_rate } else {
-            tracing::warn!("BreathingExtractor: sample_rate={sample_rate} invalid, clamping to 1.0 Hz");
-            1.0
-        };
+        // Validate inputs: zero/negative sample_rate causes division by zero
+        // in bandpass_filter() (Inf coefficients corrupt IIR state), and
+        // zero/negative window_secs yields capacity=0 (no history retained).
+        assert!(sample_rate > 0.0, "sample_rate must be positive, got {}", sample_rate);
+        assert!(window_secs > 0.0, "window_secs must be positive, got {}", window_secs);
         let capacity = (sample_rate * window_secs) as usize;
         Self {
-            filtered_history: Vec::with_capacity(capacity),
+            filtered_history: VecDeque::with_capacity(capacity),
             sample_rate,
             window_secs,
             n_subcarriers,
@@ -116,10 +116,10 @@ impl BreathingExtractor {
         let filtered = self.bandpass_filter(weighted_signal);
 
         // Append to history, enforce window limit
-        self.filtered_history.push(filtered);
+        self.filtered_history.push_back(filtered);
         let max_len = (self.sample_rate * self.window_secs) as usize;
         if self.filtered_history.len() > max_len {
-            self.filtered_history.remove(0);
+            self.filtered_history.pop_front();
         }
 
         // Need at least 10 seconds of data
@@ -129,7 +129,7 @@ impl BreathingExtractor {
         }
 
         // Zero-crossing rate -> frequency
-        let crossings = count_zero_crossings(&self.filtered_history);
+        let crossings = count_zero_crossings(self.filtered_history.make_contiguous());
         let duration_s = self.filtered_history.len() as f64 / self.sample_rate;
         let frequency_hz = crossings as f64 / (2.0 * duration_s);
 
@@ -139,7 +139,7 @@ impl BreathingExtractor {
         }
 
         let bpm = frequency_hz * 60.0;
-        let confidence = compute_confidence(&self.filtered_history);
+        let confidence = compute_confidence(self.filtered_history.make_contiguous());
 
         let status = if confidence >= 0.7 {
             VitalStatus::Valid

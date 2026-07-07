@@ -176,6 +176,41 @@ impl Default for InferenceConfig {
     }
 }
 
+impl InferenceConfig {
+    /// Validates the configuration fields.
+    ///
+    /// Returns `Ok(())` if all fields are within their valid ranges, or
+    /// `Err(message)` describing the first violation.
+    ///
+    /// # Errors
+    ///
+    /// - `confidence_threshold` must be in `[0.0, 1.0]`.
+    /// - `nms_threshold` must be in `[0.0, 1.0]`.
+    /// - `max_batch_size` must be `> 0`.
+    /// - `num_threads` must be `> 0`.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.confidence_threshold < 0.0 || self.confidence_threshold > 1.0 {
+            return Err(format!(
+                "confidence_threshold must be in [0,1], got {}",
+                self.confidence_threshold
+            ));
+        }
+        if self.nms_threshold < 0.0 || self.nms_threshold > 1.0 {
+            return Err(format!(
+                "nms_threshold must be in [0,1], got {}",
+                self.nms_threshold
+            ));
+        }
+        if self.max_batch_size == 0 {
+            return Err("max_batch_size must be > 0".into());
+        }
+        if self.num_threads == 0 {
+            return Err("num_threads must be > 0".into());
+        }
+        Ok(())
+    }
+}
+
 /// Device for running neural network inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]

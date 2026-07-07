@@ -61,10 +61,6 @@ pub struct WeaponDetector {
     cal_phase_sq_sum: [f32; MAX_SC],
     cal_count: u32,
     calibrated: bool,
-    /// Rolling amplitude window per subcarrier (flattened: MAX_SC * VAR_WINDOW).
-    amp_window: [f32; MAX_SC],
-    /// Rolling phase window per subcarrier.
-    phase_window: [f32; MAX_SC],
     /// Running amplitude variance (Welford online).
     run_amp_mean: [f32; MAX_SC],
     run_amp_m2: [f32; MAX_SC],
@@ -80,6 +76,10 @@ pub struct WeaponDetector {
     cd_weapon: u16,
     cd_recalib: u16,
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl WeaponDetector {
@@ -93,8 +93,6 @@ impl WeaponDetector {
             cal_phase_sq_sum: [0.0; MAX_SC],
             cal_count: 0,
             calibrated: false,
-            amp_window: [0.0; MAX_SC],
-            phase_window: [0.0; MAX_SC],
             run_amp_mean: [0.0; MAX_SC],
             run_amp_m2: [0.0; MAX_SC],
             run_phase_mean: [0.0; MAX_SC],
@@ -106,6 +104,8 @@ impl WeaponDetector {
             cd_weapon: 0,
             cd_recalib: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -128,8 +128,7 @@ impl WeaponDetector {
         self.cd_weapon = self.cd_weapon.saturating_sub(1);
         self.cd_recalib = self.cd_recalib.saturating_sub(1);
 
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut ne = 0usize;
+        self.events_len = 0;
 
         // Calibration phase: collect baseline statistics in empty room.
         if !self.calibrated {
@@ -153,7 +152,7 @@ impl WeaponDetector {
                 }
                 self.calibrated = true;
             }
-            return unsafe { &EVENTS[..0] };
+            return &self.events_buf[..self.events_len];
         }
 
         // Update running Welford statistics.
@@ -187,12 +186,12 @@ impl WeaponDetector {
                     self.run_phase_m2[i] = 0.0;
                 }
             }
-            return unsafe { &EVENTS[..0] };
+            return &self.events_buf[..self.events_len];
         }
 
         // Compute current amplitude variance / phase variance ratio.
         if self.run_count < 4 {
-            return unsafe { &EVENTS[..0] };
+            return &self.events_buf[..self.events_len];
         }
 
         let mut ratio_sum = 0.0f32;
@@ -221,15 +220,15 @@ impl WeaponDetector {
         }
 
         if valid_sc < 2 {
-            return unsafe { &EVENTS[..0] };
+            return &self.events_buf[..self.events_len];
         }
 
         let mean_ratio = ratio_sum / valid_sc as f32;
 
         // Check for re-calibration need.
-        if max_drift > RECALIB_DRIFT_THRESH && self.cd_recalib == 0 && ne < 3 {
-            unsafe { EVENTS[ne] = (EVENT_CALIBRATION_NEEDED, max_drift); }
-            ne += 1;
+        if max_drift > RECALIB_DRIFT_THRESH && self.cd_recalib == 0 && self.events_len < 3 {
+            self.events_buf[self.events_len] = (EVENT_CALIBRATION_NEEDED, max_drift);
+            self.events_len += 1;
             self.cd_recalib = COOLDOWN * 5; // Less frequent recalibration alerts.
         }
 
@@ -248,20 +247,20 @@ impl WeaponDetector {
         }
 
         // Emit metal anomaly.
-        if self.metal_run >= METAL_DEBOUNCE && self.cd_metal == 0 && ne < 3 {
-            unsafe { EVENTS[ne] = (EVENT_METAL_ANOMALY, mean_ratio); }
-            ne += 1;
+        if self.metal_run >= METAL_DEBOUNCE && self.cd_metal == 0 && self.events_len < 3 {
+            self.events_buf[self.events_len] = (EVENT_METAL_ANOMALY, mean_ratio);
+            self.events_len += 1;
             self.cd_metal = COOLDOWN;
         }
 
         // Emit weapon alert (supersedes metal anomaly in severity).
-        if self.weapon_run >= WEAPON_DEBOUNCE && self.cd_weapon == 0 && ne < 3 {
-            unsafe { EVENTS[ne] = (EVENT_WEAPON_ALERT, mean_ratio); }
-            ne += 1;
+        if self.weapon_run >= WEAPON_DEBOUNCE && self.cd_weapon == 0 && self.events_len < 3 {
+            self.events_buf[self.events_len] = (EVENT_WEAPON_ALERT, mean_ratio);
+            self.events_len += 1;
             self.cd_weapon = COOLDOWN;
         }
 
-        unsafe { &EVENTS[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     pub fn is_calibrated(&self) -> bool { self.calibrated }

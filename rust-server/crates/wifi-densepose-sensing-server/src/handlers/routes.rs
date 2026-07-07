@@ -424,8 +424,15 @@ pub(crate) async fn adaptive_train(State(state): State<SharedState>) -> Json<ser
     let data_dir = state.read().await.data_dir.clone();
     let rec_dir = data_dir.join("data/recordings");
     eprintln!("=== Adaptive Classifier Training ===");
-    match adaptive_classifier::train_from_recordings(&rec_dir) {
-        Ok(model) => {
+    // train_from_recordings is a sync, CPU-bound function — run it on a
+    // blocking thread to keep the async executor responsive (same pattern
+    // as `train_start`).
+    let train_result = tokio::task::spawn_blocking(move || {
+        adaptive_classifier::train_from_recordings(&rec_dir)
+    })
+    .await;
+    match train_result {
+        Ok(Ok(model)) => {
             let accuracy = model.training_accuracy;
             let frames = model.trained_frames;
             let stats: Vec<_> = model.class_stats.iter().map(|cs| {
@@ -455,10 +462,17 @@ pub(crate) async fn adaptive_train(State(state): State<SharedState>) -> Json<ser
                 "class_stats": stats,
             }))
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             Json(serde_json::json!({
                 "success": false,
                 "error": e,
+            }))
+        }
+        Err(join_err) => {
+            warn!("Adaptive training task panicked: {}", join_err);
+            Json(serde_json::json!({
+                "success": false,
+                "error": join_err.to_string(),
             }))
         }
     }

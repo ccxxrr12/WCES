@@ -103,6 +103,9 @@ pub struct AttractorDetector {
     prev_state: StateVec,
     /// Previous delta magnitude.
     prev_delta_mag: f32,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl AttractorDetector {
@@ -121,6 +124,8 @@ impl AttractorDetector {
             cooldown: 0,
             prev_state: [0.0; STATE_DIM],
             prev_delta_mag: 0.0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -137,12 +142,11 @@ impl AttractorDetector {
         amplitudes: &[f32],
         motion_energy: f32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         let n_sc = phases.len().min(amplitudes.len());
         if n_sc == 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.frame_count += 1;
@@ -200,19 +204,23 @@ impl AttractorDetector {
                     self.radius = 0.01;
                 }
 
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_LEARNING_COMPLETE, 1.0);
-                    n_ev += 1;
-                    EVENTS[n_ev] = (EVENT_ATTRACTOR_TYPE, self.attractor_type as u8 as f32);
-                    n_ev += 1;
-                    EVENTS[n_ev] = (EVENT_LYAPUNOV_EXPONENT, lambda);
-                    n_ev += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_LEARNING_COMPLETE, 1.0);
+                    self.events_len += 1;
+                }
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_ATTRACTOR_TYPE, self.attractor_type as u8 as f32);
+                    self.events_len += 1;
+                }
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_LYAPUNOV_EXPONENT, lambda);
+                    self.events_len += 1;
                 }
 
-                return unsafe { &EVENTS[..n_ev] };
+                return &self.events_buf[..self.events_len];
             }
 
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Post-learning: detect basin departures ───────────────────────
@@ -221,9 +229,9 @@ impl AttractorDetector {
 
         if dist > departure_threshold && self.cooldown == 0 {
             self.cooldown = DEPARTURE_COOLDOWN;
-            unsafe {
-                EVENTS[n_ev] = (EVENT_BASIN_DEPARTURE, dist / self.radius);
-                n_ev += 1;
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_BASIN_DEPARTURE, dist / self.radius);
+                self.events_len += 1;
             }
         }
 
@@ -232,18 +240,20 @@ impl AttractorDetector {
             let lambda = self.lyapunov_exponent();
             let new_type = classify_attractor(lambda);
 
-            if new_type != self.attractor_type && n_ev < 3 {
+            if new_type != self.attractor_type && self.events_len < 3 {
                 self.attractor_type = new_type;
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_ATTRACTOR_TYPE, new_type as u8 as f32);
-                    n_ev += 1;
-                    EVENTS[n_ev] = (EVENT_LYAPUNOV_EXPONENT, lambda);
-                    n_ev += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_ATTRACTOR_TYPE, new_type as u8 as f32);
+                    self.events_len += 1;
+                }
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_LYAPUNOV_EXPONENT, lambda);
+                    self.events_len += 1;
                 }
             }
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute the current largest Lyapunov exponent estimate.

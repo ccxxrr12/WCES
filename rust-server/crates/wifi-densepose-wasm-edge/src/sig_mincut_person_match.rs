@@ -64,6 +64,10 @@ pub struct PersonMatcher {
     prev_assignment: [u8; MAX_PERSONS],
     frame_count: u32,
     swap_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 8],
+    events_len: usize,
 }
 
 impl PersonMatcher {
@@ -79,6 +83,8 @@ impl PersonMatcher {
             prev_assignment: [UNASSIGNED; MAX_PERSONS],
             frame_count: 0,
             swap_count: 0,
+            events_buf: [(0, 0.0); 8],
+            events_len: 0,
         }
     }
 
@@ -98,8 +104,7 @@ impl PersonMatcher {
         self.frame_count += 1;
         let n_det = n_persons.min(MAX_PERSONS);
 
-        static mut EVENTS: [(i32, f32); 8] = [(0, 0.0); 8];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         // Extract per-person feature vectors (spatial region -> top-8 variances).
         let mut current_features = [[0.0f32; FEAT_DIM]; MAX_PERSONS];
@@ -132,12 +137,10 @@ impl PersonMatcher {
 
             if prev != UNASSIGNED && curr != UNASSIGNED && curr != prev {
                 self.swap_count += 1;
-                if n_events < 7 {
+                if self.events_len < 7 {
                     let swap_val = (prev as f32) * 16.0 + (curr as f32);
-                    unsafe {
-                        EVENTS[n_events] = (EVENT_PERSON_ID_SWAP, swap_val);
-                    }
-                    n_events += 1;
+                    self.events_buf[self.events_len] = (EVENT_PERSON_ID_SWAP, swap_val);
+                    self.events_len += 1;
                 }
             }
         }
@@ -170,17 +173,15 @@ impl PersonMatcher {
             }
             slot.absent_frames = 0;
 
-            if n_events < 7 {
+            if self.events_len < 7 {
                 let confidence = if costs[p] < MAX_MATCH_DISTANCE {
                     1.0 - costs[p] / MAX_MATCH_DISTANCE
                 } else {
                     0.0
                 };
                 let val = slot.person_id as f32 + confidence.min(0.99) * 0.01;
-                unsafe {
-                    EVENTS[n_events] = (EVENT_PERSON_ID_ASSIGNED, val);
-                }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_PERSON_ID_ASSIGNED, val);
+                self.events_len += 1;
             }
         }
 
@@ -212,18 +213,16 @@ impl PersonMatcher {
             }
             avg_conf /= n_det as f32;
 
-            if n_events < 8 {
-                unsafe {
-                    EVENTS[n_events] = (EVENT_MATCH_CONFIDENCE, avg_conf);
-                }
-                n_events += 1;
+            if self.events_len < 8 {
+                self.events_buf[self.events_len] = (EVENT_MATCH_CONFIDENCE, avg_conf);
+                self.events_len += 1;
             }
         }
 
         // Save current assignment for next-frame swap detection.
         self.prev_assignment = assignment;
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Extract top-FEAT_DIM variance values (descending) from a subcarrier range.

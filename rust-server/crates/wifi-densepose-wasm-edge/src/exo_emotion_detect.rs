@@ -153,6 +153,10 @@ pub struct EmotionDetector {
     agitation_detected: bool,
     /// Total frames processed.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl EmotionDetector {
@@ -171,6 +175,8 @@ impl EmotionDetector {
             calm_detected: false,
             agitation_detected: false,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -192,8 +198,7 @@ impl EmotionDetector {
         _phase: f32,
         variance: f32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
 
@@ -206,7 +211,7 @@ impl EmotionDetector {
 
         // Warmup period.
         if self.frame_count < MIN_WARMUP {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Feature extraction ──
@@ -251,31 +256,23 @@ impl EmotionDetector {
                 || breath_cv > STRESS_BREATH_CV_THRESH);
 
         // ── Emit events ──
-        unsafe {
-            EVENTS[n_ev] = (EVENT_AROUSAL_LEVEL, self.arousal);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_AROUSAL_LEVEL, self.arousal);
+        self.events_len += 1;
 
-        unsafe {
-            EVENTS[n_ev] = (EVENT_STRESS_INDEX, self.stress_index);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_STRESS_INDEX, self.stress_index);
+        self.events_len += 1;
 
         if self.calm_detected {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_CALM_DETECTED, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_CALM_DETECTED, 1.0);
+            self.events_len += 1;
         }
 
         if self.agitation_detected {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_AGITATION_DETECTED, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_AGITATION_DETECTED, 1.0);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute breathing rate score [0, 1].

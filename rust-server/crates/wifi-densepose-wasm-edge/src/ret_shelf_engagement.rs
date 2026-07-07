@@ -128,6 +128,7 @@ pub struct ShelfEngagementDetector {
     total_reaches: u32,
     /// Number of subcarriers last frame.
     n_sc: usize,
+    events_buf: [(i32, f32); MAX_EVENTS],
 }
 
 impl ShelfEngagementDetector {
@@ -149,6 +150,7 @@ impl ShelfEngagementDetector {
             total_engage: 0,
             total_reaches: 0,
             n_sc: 0,
+            events_buf: [(0, 0.0); MAX_EVENTS],
         }
     }
 
@@ -221,7 +223,6 @@ impl ShelfEngagementDetector {
         self.phase_diff_history.push(perturbation);
 
         // Build events.
-        static mut EVENTS: [(i32, f32); MAX_EVENTS] = [(0, 0.0); MAX_EVENTS];
         let mut ne = 0usize;
 
         if !is_present {
@@ -234,7 +235,7 @@ impl ShelfEngagementDetector {
             self.still_frames = 0;
             self.level = EngagementLevel::None;
             self.prev_emitted_level = EngagementLevel::None;
-            unsafe { return &EVENTS[..ne]; }
+            return &self.events_buf[..ne];
         }
 
         // Detect stillness (low translational motion).
@@ -249,7 +250,7 @@ impl ShelfEngagementDetector {
             self.engagement_frames = 0;
             self.level = EngagementLevel::None;
             self.prev_emitted_level = EngagementLevel::None;
-            unsafe { return &EVENTS[..ne]; }
+            return &self.events_buf[..ne];
         }
 
         // Only start engagement counting after debounce.
@@ -284,9 +285,7 @@ impl ShelfEngagementDetector {
                 };
 
                 if event_id != 0 && ne < MAX_EVENTS {
-                    unsafe {
-                        EVENTS[ne] = (event_id, duration);
-                    }
+                    self.events_buf[ne] = (event_id, duration);
                     ne += 1;
                     self.prev_emitted_level = self.level;
                     self.cooldown = ENGAGEMENT_COOLDOWN;
@@ -297,13 +296,11 @@ impl ShelfEngagementDetector {
         // Reach detection: sudden high-frequency phase burst while still.
         if self.still_frames > STILL_DEBOUNCE && perturbation > REACH_BURST_THRESH && ne < MAX_EVENTS {
             self.total_reaches += 1;
-            unsafe {
-                EVENTS[ne] = (EVENT_REACH_DETECTED, perturbation);
-            }
+            self.events_buf[ne] = (EVENT_REACH_DETECTED, perturbation);
             ne += 1;
         }
 
-        unsafe { &EVENTS[..ne] }
+        &self.events_buf[..ne]
     }
 
     /// Emit engagement end event based on current level.

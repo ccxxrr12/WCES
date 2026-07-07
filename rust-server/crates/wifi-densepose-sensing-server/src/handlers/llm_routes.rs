@@ -140,7 +140,10 @@ pub(crate) async fn agent_analyze(
     let patient_id_str = body["patient_id"].as_str().unwrap_or("1");
     let patient_id: u32 = patient_id_str.parse().unwrap_or(1);
 
-    let (agent, vitals, triage_label, alerts, smoothed_motion) = {
+    // Build the vitals snapshot AND kb_matches inside the read lock so we can
+    // access rssi_history (real RSSI) and medical_kb (real KB matches) instead
+    // of the previous hardcoded placeholders (rssi: -45, kb_matches: vec![]).
+    let (agent, vitals_snapshot, triage_label, alerts, kb_matches) = {
         let s = state.read().await;
         let triage = s.latest_update.as_ref()
             .and_then(|u| u.triage_update.as_ref())
@@ -152,22 +155,23 @@ pub(crate) async fn agent_analyze(
             .and_then(|u| u.wasm_alerts.as_ref())
             .map(|alerts| alerts.iter().map(|al: &EdgeAlert| al.event_name.clone()).collect())
             .unwrap_or_default();
+        let vitals = &s.latest_vitals;
+        let vitals_snapshot = AgentVitalSnapshot {
+            breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
+            heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
+            breathing_confidence: vitals.breathing_confidence as f32,
+            heartbeat_confidence: vitals.heartbeat_confidence as f32,
+            signal_quality: vitals.signal_quality as f32,
+            motion_class: Some(if s.smoothed_motion > 0.6 { "active" } else if s.smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
+            person_count_estimate: Some(1),
+            rssi: s.rssi_history.back().map(|&v| v as i16),
+        };
+        let kb_matches = s.medical_kb.match_vitals(&vitals_snapshot);
         (s.medical_agent.clone(),
-         s.latest_vitals.clone(),
+         vitals_snapshot,
          triage,
          a,
-         s.smoothed_motion)
-    };
-
-    let vitals_snapshot = AgentVitalSnapshot {
-        breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
-        heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
-        breathing_confidence: vitals.breathing_confidence as f32,
-        heartbeat_confidence: vitals.heartbeat_confidence as f32,
-        signal_quality: vitals.signal_quality as f32,
-        motion_class: Some(if smoothed_motion > 0.6 { "active" } else if smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
-        person_count_estimate: Some(1),
-        rssi: Some(-45),
+         kb_matches)
     };
 
     let ctx = StructuredContext {
@@ -188,7 +192,7 @@ pub(crate) async fn agent_analyze(
         triage_trajectory: vec![],
         patient_history: None,
         recent_alerts: alerts,
-        kb_matches: vec![],
+        kb_matches,
         triggered_by: TriggerSource::ManualRequest { patient_id },
         built_at_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

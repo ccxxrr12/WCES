@@ -143,6 +143,19 @@ impl IntentionDetector {
                 "window_size must be >= 3 for second derivative".into(),
             ));
         }
+        // Guard the divisions in update(): dt = 1.0 / sample_rate_hz and
+        // ratio = accel_mag / acceleration_threshold would produce inf/NaN
+        // if these are zero.
+        if config.sample_rate_hz <= 0.0 {
+            return Err(IntentionError::InvalidConfig(
+                "sample_rate_hz must be > 0".into(),
+            ));
+        }
+        if config.acceleration_threshold <= 0.0 {
+            return Err(IntentionError::InvalidConfig(
+                "acceleration_threshold must be > 0".into(),
+            ));
+        }
         Ok(Self {
             history: VecDeque::with_capacity(config.window_size),
             config,

@@ -307,12 +307,10 @@ impl<B: Backend> InferenceEngine<B> {
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
         debug!(elapsed_ms = %elapsed_ms, "Inference completed");
 
-        // Update stats asynchronously (best effort)
-        let stats = self.stats.clone();
-        tokio::spawn(async move {
-            let mut stats = stats.write().await;
-            stats.record(elapsed_ms);
-        });
+        // N6: best-effort stats update. `tokio::spawn` panics when called
+        // outside a Tokio runtime context; guard with `try_current` and only
+        // spawn when a runtime is available.
+        self.record_stats(elapsed_ms);
 
         Ok(result)
     }
@@ -327,12 +325,35 @@ impl<B: Backend> InferenceEngine<B> {
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
         debug!(elapsed_ms = %elapsed_ms, "Named inference completed");
 
+        // P2: update stats the same way `infer()` does (previously skipped).
+        self.record_stats(elapsed_ms);
+
         Ok(result)
     }
 
-    /// Run batched inference
+    /// Run batched inference.
+    ///
+    /// NOTE (P2): inputs are processed sequentially via `infer()`. Parallelizing
+    /// this (e.g. with `rayon`) is out of scope here and would require backend
+    /// implementations to tolerate concurrent access.
     pub fn infer_batch(&self, inputs: &[Tensor]) -> NnResult<Vec<Tensor>> {
         inputs.iter().map(|input| self.infer(input)).collect()
+    }
+
+    /// Best-effort asynchronous stats update.
+    ///
+    /// Spawns the stats write on the current Tokio runtime only when one is
+    /// available; otherwise the timing sample is dropped. This prevents the
+    /// panic that `tokio::spawn` would trigger when `infer()`/`infer_named()`
+    /// are called from a non-async (runtime-less) context.
+    fn record_stats(&self, elapsed_ms: f64) {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let stats = self.stats.clone();
+            handle.spawn(async move {
+                let mut stats = stats.write().await;
+                stats.record(elapsed_ms);
+            });
+        }
     }
 
     /// Get inference statistics

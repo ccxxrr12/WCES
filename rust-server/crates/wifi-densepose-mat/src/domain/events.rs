@@ -1,5 +1,7 @@
 //! Domain events for the wifi-Mat system.
 
+use std::collections::VecDeque;
+
 use chrono::{DateTime, Utc};
 
 use super::{
@@ -526,7 +528,7 @@ pub trait EventStore: Send + Sync {
 /// the oldest events are evicted in FIFO order to make room for new ones.
 #[derive(Debug)]
 pub struct InMemoryEventStore {
-    events: parking_lot::RwLock<Vec<DomainEvent>>,
+    events: parking_lot::RwLock<VecDeque<DomainEvent>>,
     /// Maximum number of events retained. Older events are dropped first.
     capacity: usize,
 }
@@ -537,7 +539,7 @@ pub const DEFAULT_EVENT_STORE_CAPACITY: usize = 10_000;
 impl Default for InMemoryEventStore {
     fn default() -> Self {
         Self {
-            events: parking_lot::RwLock::new(Vec::new()),
+            events: parking_lot::RwLock::new(VecDeque::new()),
             capacity: DEFAULT_EVENT_STORE_CAPACITY,
         }
     }
@@ -553,7 +555,7 @@ impl InMemoryEventStore {
     pub fn with_capacity(capacity: usize) -> Self {
         let cap = if capacity == 0 { DEFAULT_EVENT_STORE_CAPACITY } else { capacity };
         Self {
-            events: parking_lot::RwLock::new(Vec::with_capacity(cap.min(1024))),
+            events: parking_lot::RwLock::new(VecDeque::with_capacity(cap.min(1024))),
             capacity: cap,
         }
     }
@@ -567,20 +569,19 @@ impl InMemoryEventStore {
 impl EventStore for InMemoryEventStore {
     fn append(&self, event: DomainEvent) -> Result<(), crate::MatError> {
         let mut events = self.events.write();
-        events.push(event);
-        // Evict oldest events while exceeding capacity (M-2). Using
-        // `drain` on the leading slice is O(excess) and amortised cheap
-        // because we evict at most a small fraction per append in steady
-        // state.
-        if events.len() > self.capacity {
-            let excess = events.len() - self.capacity;
-            events.drain(0..excess);
+        events.push_back(event);
+        // Evict oldest events while exceeding capacity (M-2). M4:
+        // VecDeque::pop_front is O(1) per eviction; the previous
+        // Vec::drain(0..excess) forced an O(n) memmove of the entire
+        // tail on every overflow.
+        while events.len() > self.capacity {
+            events.pop_front();
         }
         Ok(())
     }
 
     fn all(&self) -> Result<Vec<DomainEvent>, crate::MatError> {
-        Ok(self.events.read().clone())
+        Ok(self.events.read().iter().cloned().collect())
     }
 
     fn since(&self, timestamp: DateTime<Utc>) -> Result<Vec<DomainEvent>, crate::MatError> {

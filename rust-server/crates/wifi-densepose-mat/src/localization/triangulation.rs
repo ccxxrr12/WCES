@@ -121,10 +121,22 @@ impl Triangulator {
         // Solving for d:
         // d = d_0 * 10^((RSSI_0 - RSSI) / (10 * n))
 
+        // Non-finite RSSI (NaN/Inf from a malfunctioning sensor or simulated
+        // input) would propagate through the path-loss formula and poison the
+        // trilateration solver. Treat it as "no useful signal" by returning a
+        // very large distance, which the solver effectively ignores.
+        if !rssi.is_finite() {
+            return f64::MAX;
+        }
+
         let exponent = (self.config.reference_rssi - rssi)
             / (10.0 * self.config.path_loss_exponent);
 
-        self.config.reference_distance * 10.0_f64.powf(exponent)
+        // Clamp the distance to a sane upper bound so a wildly off RSSI does
+        // not produce an astronomically large value that destabilizes the
+        // least-squares solver (1000 m is well beyond any realistic scan zone).
+        let distance = self.config.reference_distance * 10.0_f64.powf(exponent);
+        distance.min(1000.0)
     }
 
     /// Perform trilateration using least squares
@@ -238,6 +250,11 @@ impl Triangulator {
         LocationUncertainty {
             horizontal_error: rmse * gdop,
             vertical_error: rmse * gdop * 1.5, // Vertical typically less accurate
+            // P3: fixed 95% confidence level. The RMSE*GDOP already
+            // captures the geometric and measurement error components;
+            // we report the standard 95% CL rather than a data-driven
+            // confidence. Parameterise if a calibrated value becomes
+            // available.
             confidence: 0.95,
         }
     }

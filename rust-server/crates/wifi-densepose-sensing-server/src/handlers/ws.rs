@@ -5,6 +5,8 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use tracing::{info, warn};
 
+use std::time::Duration;
+
 use crate::SharedState;
 use crate::types::{BoundingBox, PersonDetection, PoseKeypoint, SensingUpdate};
 use crate::signal_processing::derive_pose_from_sensing;
@@ -92,11 +94,14 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                 }
                                 Some("agent_analyze_request") => {
                                     let patient_id = msg["patient_id"].as_str().unwrap_or("UNKNOWN");
-                                    // M-11: single read lock to extract engine + vitals
-                                    // snapshot + tx clone (was 3 separate lock acquisitions,
-                                    // each requiring its own atomic lock/unlock cycle).
-                                    let (engine, br, hr, motion, quality,
-                                         triage_label, alerts, tx) = {
+                                    let patient_id_num: u32 = patient_id.parse().unwrap_or(1);
+                                    let pid_str = patient_id.to_string();
+
+                                    // Single read lock: capture medical_agent (primary path),
+                                    // llm_engine (fallback path), raw vitals (for fallback),
+                                    // structured-context inputs (vitals_snapshot, kb_matches), and tx.
+                                    let (engine, agent, br, hr, motion, quality,
+                                         triage_label, alerts, vitals_snapshot, kb_matches, tx) = {
                                         let s = state.read().await;
                                         let triage = s.latest_update.as_ref()
                                             .and_then(|u| u.triage_update.as_ref())
@@ -108,23 +113,125 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                             .and_then(|u| u.wasm_alerts.as_ref())
                                             .map(|alerts: &Vec<EdgeAlert>| alerts.iter().map(|a| a.event_name.clone()).collect())
                                             .unwrap_or_default();
+                                        let vitals = &s.latest_vitals;
+                                        let vitals_snapshot = AgentVitalSnapshot {
+                                            breathing_rate_bpm: vitals.breathing_rate_bpm.map(|v| v as f32),
+                                            heart_rate_bpm: vitals.heart_rate_bpm.map(|v| v as f32),
+                                            breathing_confidence: vitals.breathing_confidence as f32,
+                                            heartbeat_confidence: vitals.heartbeat_confidence as f32,
+                                            signal_quality: vitals.signal_quality as f32,
+                                            motion_class: Some(if s.smoothed_motion > 0.6 { "active" } else if s.smoothed_motion > 0.2 { "present_still" } else { "still" }.into()),
+                                            person_count_estimate: Some(1),
+                                            rssi: s.rssi_history.back().map(|&v| v as i16),
+                                        };
+                                        let kb_matches = s.medical_kb.match_vitals(&vitals_snapshot);
                                         (
                                             s.llm_engine.clone(),
-                                            s.latest_vitals.breathing_rate_bpm,
-                                            s.latest_vitals.heart_rate_bpm,
+                                            s.medical_agent.clone(),
+                                            vitals.breathing_rate_bpm,
+                                            vitals.heart_rate_bpm,
                                             s.smoothed_motion,
-                                            s.latest_vitals.signal_quality,
+                                            vitals.signal_quality,
                                             triage,
                                             a,
+                                            vitals_snapshot,
+                                            kb_matches,
                                             s.tx.clone(),
                                         )
                                     };
-                                    if let Some(engine) = engine {
-                                        let pid = patient_id.to_string();
-                                        tokio::spawn(async move {
+
+                                    // Clone triage_label and alerts for the LlmAnalysisEngine
+                                    // fallback path (the originals are moved into StructuredContext).
+                                    let triage_label_fb = triage_label.clone();
+                                    let alerts_fb = alerts.clone();
+
+                                    let ctx = StructuredContext {
+                                        patient_id: patient_id_num,
+                                        node_id: 1,
+                                        vitals_current: vitals_snapshot,
+                                        vitals_trend_1min: TrendSummary {
+                                            direction: wifi_densepose_llm::TrendDirection::Stable,
+                                            delta: 0.0, delta_pct: 0.0,
+                                            anomaly_score: 1.0, data_points: 10,
+                                        },
+                                        vitals_trend_5min: TrendSummary {
+                                            direction: wifi_densepose_llm::TrendDirection::Stable,
+                                            delta: 0.0, delta_pct: 0.0,
+                                            anomaly_score: 1.0, data_points: 50,
+                                        },
+                                        triage_current: triage_label,
+                                        triage_trajectory: vec![],
+                                        patient_history: None,
+                                        recent_alerts: alerts,
+                                        kb_matches,
+                                        triggered_by: TriggerSource::ManualRequest { patient_id: patient_id_num },
+                                        built_at_ms: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis() as u64,
+                                    };
+
+                                    tokio::spawn(async move {
+                                        // 方案 A: 优先调用 MedicalAgent.analyze()（非流式），
+                                        // 结果作为单条 agent_analysis_complete 消息发送。
+                                        // 若锁获取超时(1s)或 analyze 超时(30s)，回退到
+                                        // LlmAnalysisEngine 流式路径。
+                                        let agent_result = match tokio::time::timeout(
+                                            Duration::from_secs(1),
+                                            agent.lock(),
+                                        ).await {
+                                            Ok(mut agent_guard) => {
+                                                match tokio::time::timeout(
+                                                    Duration::from_secs(30),
+                                                    agent_guard.analyze(ctx),
+                                                ).await {
+                                                    Ok(r) => Some(r),
+                                                    Err(_elapsed) => {
+                                                        warn!("MedicalAgent analyze timed out for patient {}, falling back to LlmAnalysisEngine", patient_id_num);
+                                                        None
+                                                    }
+                                                }
+                                            }
+                                            Err(_elapsed) => {
+                                                warn!("MedicalAgent lock acquisition timed out for patient {}, falling back to LlmAnalysisEngine", patient_id_num);
+                                                None
+                                            }
+                                        };
+
+                                        if let Some(result) = agent_result {
+                                            if !result.text.is_empty() {
+                                                let json = serde_json::json!({
+                                                    "type": "agent_analysis_complete",
+                                                    "patient_id": result.patient_id,
+                                                    "text": result.text,
+                                                    "source": result.source,
+                                                    "degrade_level": result.degrade_level,
+                                                    "risk_adjustment": result.risk_adjustment,
+                                                    "generated_at_ms": result.generated_at_ms,
+                                                    "trigger": "ws_request",
+                                                });
+                                                if let Ok(json_str) = serde_json::to_string(&json) {
+                                                    let _ = tx.send(json_str);
+                                                }
+                                            } else {
+                                                let json = serde_json::json!({
+                                                    "type": "agent_analysis_error",
+                                                    "patient_id": patient_id_num,
+                                                    "error": "MedicalAgent returned empty result",
+                                                });
+                                                if let Ok(json_str) = serde_json::to_string(&json) {
+                                                    let _ = tx.send(json_str);
+                                                }
+                                            }
+                                            return;
+                                        }
+
+                                        // Fallback: LlmAnalysisEngine 流式路径（当 medical_agent
+                                        // 锁获取超时或 analyze 超时时使用）。
+                                        if let Some(engine) = engine {
                                             if let Some(mut rx) = engine.trigger_analysis_streaming(
-                                                &pid, br, hr, motion, quality,
-                                                &triage_label, &alerts,
+                                                &pid_str, br, hr, motion, quality,
+                                                &triage_label_fb, &alerts_fb,
                                             ).await {
                                                 while let Ok(token) = rx.recv().await {
                                                     let json = serde_json::json!({
@@ -138,14 +245,19 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                                     }
                                                 }
                                             }
-                                        });
-                                    }
+                                        } else {
+                                            // 既无 MedicalAgent 结果也无 LlmAnalysisEngine — 发送明确错误
+                                            let json = serde_json::json!({
+                                                "type": "agent_analysis_error",
+                                                "patient_id": patient_id_num,
+                                                "error": "MedicalAgent unavailable and LlmAnalysisEngine not configured",
+                                            });
+                                            if let Ok(json_str) = serde_json::to_string(&json) {
+                                                let _ = tx.send(json_str);
+                                            }
+                                        }
+                                    });
                                 }
-                                // NOTE: second "agent_analyze_request" arm removed (BUG 6 fix).
-                                // It was dead code — the first arm always matched first.
-                                // The removed arm used medical_agent (vs llm_engine) and
-                                // StructuredContext (vs streaming). If that path is needed,
-                                // add a separate message type (e.g. "agent_analyze_v2").
                                 _ => {} // ignore unknown messages
                             }
                         }

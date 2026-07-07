@@ -96,6 +96,10 @@ pub struct TimeCrystalDetector {
     buf_mean: f32,
     /// Cached buffer variance (for stats).
     buf_var: f32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl TimeCrystalDetector {
@@ -112,6 +116,8 @@ impl TimeCrystalDetector {
             detected: false,
             buf_mean: 0.0,
             buf_var: 0.0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -119,8 +125,7 @@ impl TimeCrystalDetector {
     ///
     /// Returns events as `(event_id, value)` pairs in a static buffer.
     pub fn process_frame(&mut self, motion_energy: f32) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         // Push sample into circular buffer.
         self.motion_buf.push(motion_energy);
@@ -130,7 +135,7 @@ impl TimeCrystalDetector {
 
         // Need at least MIN_FILL samples before analysis.
         if fill < MIN_FILL {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Compute buffer statistics (mean, variance) for normalization.
@@ -138,7 +143,7 @@ impl TimeCrystalDetector {
 
         // Skip if signal is essentially constant (no motion).
         if self.buf_var < 1e-8 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Compute normalized autocorrelation at lags 1..MAX_LAG.
@@ -216,25 +221,19 @@ impl TimeCrystalDetector {
 
         // Emit events.
         if detected_multiplier > 0 {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_CRYSTAL_DETECTED, detected_multiplier as f32);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_CRYSTAL_DETECTED, detected_multiplier as f32);
+            self.events_len += 1;
         }
 
-        unsafe {
-            EVENTS[n_ev] = (EVENT_CRYSTAL_STABILITY, self.stability_ema.value);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_CRYSTAL_STABILITY, self.stability_ema.value);
+        self.events_len += 1;
 
         if coordination > 0 {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_COORDINATION_INDEX, coordination as f32);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_COORDINATION_INDEX, coordination as f32);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute mean and variance of the circular buffer contents.

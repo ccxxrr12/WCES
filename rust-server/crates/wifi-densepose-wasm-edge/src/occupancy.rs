@@ -50,6 +50,10 @@ pub struct OccupancyDetector {
     calibrated: bool,
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 12],
+    events_len: usize,
 }
 
 impl OccupancyDetector {
@@ -67,6 +71,8 @@ impl OccupancyDetector {
             calib_count: 0,
             calibrated: false,
             frame_count: 0,
+            events_buf: [(0, 0.0); 12],
+            events_len: 0,
         }
     }
 
@@ -137,6 +143,9 @@ impl OccupancyDetector {
         // Score each zone: deviation from baseline.
         let mut total_occupied = 0u8;
         for z in 0..zone_count {
+            if !zone_vars[z].is_finite() {
+                continue;
+            }
             let deviation = fabsf(zone_vars[z] - self.zones[z].baseline_var);
             let raw_score = if self.zones[z].baseline_var > 0.001 {
                 deviation / self.zones[z].baseline_var
@@ -161,45 +170,37 @@ impl OccupancyDetector {
             }
         }
 
-        // Build output events in a static buffer.
-        // We re-use a static to avoid allocation in no_std.
-        static mut EVENTS: [(i32, f32); 12] = [(0, 0.0); 12];
-        let mut n_events = 0usize;
+        // Build output events in an instance-local buffer.
+        self.events_len = 0;
 
         // Emit per-zone occupancy (every 10 frames to limit bandwidth).
         if self.frame_count % 10 == 0 {
             for z in 0..zone_count {
-                if self.zones[z].occupied && n_events < 10 {
+                if self.zones[z].occupied && self.events_len < 10 {
                     // Encode zone_id in integer part, confidence in fractional.
                     let val = z as f32 + self.zones[z].score.min(0.99);
-                    unsafe {
-                        EVENTS[n_events] = (EVENT_ZONE_OCCUPIED, val);
-                    }
-                    n_events += 1;
+                    self.events_buf[self.events_len] = (EVENT_ZONE_OCCUPIED, val);
+                    self.events_len += 1;
                 }
             }
 
             // Emit total occupied zone count.
-            if n_events < 11 {
-                unsafe {
-                    EVENTS[n_events] = (EVENT_ZONE_COUNT, total_occupied as f32);
-                }
-                n_events += 1;
+            if self.events_len < 11 {
+                self.events_buf[self.events_len] = (EVENT_ZONE_COUNT, total_occupied as f32);
+                self.events_len += 1;
             }
         }
 
         // Emit transitions immediately.
         for z in 0..zone_count {
-            if self.zones[z].occupied != self.zones[z].prev_occupied && n_events < 12 {
+            if self.zones[z].occupied != self.zones[z].prev_occupied && self.events_len < 12 {
                 let val = z as f32 + if self.zones[z].occupied { 0.5 } else { 0.0 };
-                unsafe {
-                    EVENTS[n_events] = (EVENT_ZONE_TRANSITION, val);
-                }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_ZONE_TRANSITION, val);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the number of currently occupied zones.

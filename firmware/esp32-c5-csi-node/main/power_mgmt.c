@@ -22,6 +22,22 @@
 
 static const char *TAG = "power_mgmt";
 
+/* E-5 TODO: these statistics are currently never updated after init.
+ * s_active_ms / s_sleep_ms / s_wake_count are meant to track time spent in
+ * active vs. light-sleep states and the number of wakeups, but without a PM
+ * hook registered (or instrumentation in the light-sleep state machine) they
+ * remain at their initial values and power_mgmt_stats() always reports zeros.
+ *
+ * To wire them up:
+ *   1. Enable CONFIG_PM_ENABLE in menuconfig.
+ *   2. Register a hook via esp_pm_register_hook() (ESP-IDF v5.x) for
+ *      PM_EVENT_MAX_FREQ / PM_EVENT_MIN_FREQ / PM_EVENT_LIGHT_SLEEP that
+ *      timestamps transitions with esp_timer_get_time() and accumulates into
+ *      s_active_ms / s_sleep_ms, incrementing s_wake_count on each wake.
+ *   3. Alternatively, call these accumulators from the light-sleep entry/exit
+ *      path if a manual duty-cycle loop is added later.
+ * Until then, the values below are placeholders so power_mgmt_stats() has a
+ * defined (if uninformative) contract. */
 static uint32_t s_active_ms  = 0;
 static uint32_t s_sleep_ms   = 0;
 static uint32_t s_wake_count = 0;

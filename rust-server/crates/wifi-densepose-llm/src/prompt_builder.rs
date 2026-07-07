@@ -151,7 +151,14 @@ impl PromptBuilder {
             matched_conditions = matched_conditions_section(&ctx.matched_conditions),
         );
 
-        let est_tokens = prompt.chars().count() / 2; // Rough estimate: ~2 chars/token for Chinese
+        // L8: use the same per-character heuristic as PromptCompiler::estimate_tokens
+        // (prompt.rs). ASCII chars tokenize at ~4 chars/token (0.25), while CJK /
+        // non-ASCII chars are ~1.5 tokens each. The previous `chars().count() / 2`
+        // formula underestimated Chinese-heavy prompts by 3-4x.
+        let est_tokens: usize = prompt
+            .chars()
+            .map(|c| if c.is_ascii() { 0.25 } else { 1.5 })
+            .sum::<f64>() as usize;
 
         BuiltPrompt {
             prompt,

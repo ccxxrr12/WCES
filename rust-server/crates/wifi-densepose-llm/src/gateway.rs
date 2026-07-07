@@ -163,6 +163,10 @@ impl std::fmt::Display for StreamError {
 
 const SSE_CHUNK_TIMEOUT_SECS: u64 = 45;
 const CONNECT_TIMEOUT_SECS: u64 = 5;
+/// Upper bound on the in-memory SSE buffer. A single malformed/malicious
+/// stream that never emits a newline could otherwise grow this without limit
+/// and OOM the edge device.
+const MAX_SSE_BUFFER_BYTES: usize = 64 * 1024;
 
 pub struct LlmGateway {
     pub(crate) client: reqwest::Client,
@@ -283,6 +287,24 @@ impl LlmGateway {
                 ).await {
                     Ok(Some(Ok(bytes))) => {
                         buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                        // L1: bound the buffer to protect edge devices from
+                        // unbounded memory growth when a stream never emits a
+                        // newline (e.g. malformed/malicious upstream).
+                        if buffer.len() > MAX_SSE_BUFFER_BYTES {
+                            tracing::error!(
+                                "SSE buffer overflow ({} bytes), aborting stream",
+                                buffer.len()
+                            );
+                            let _ = tx
+                                .send(Err(StreamError {
+                                    message: "SSE buffer overflow".into(),
+                                }))
+                                .await;
+                            breaker.on_failure();
+                            stream_error = true;
+                            break;
+                        }
 
                         while let Some(line_end) = buffer.find('\n') {
                             let line = buffer[..line_end].trim().to_string();

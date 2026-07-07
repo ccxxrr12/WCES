@@ -184,6 +184,10 @@ pub struct HappinessScoreDetector {
 
     /// Total frames processed.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 5],
+    events_len: usize,
 }
 
 impl HappinessScoreDetector {
@@ -209,6 +213,8 @@ impl HappinessScoreDetector {
             happiness_vector: [0.0; HAPPINESS_VECTOR_DIM],
 
             frame_count: 0,
+            events_buf: [(0, 0.0); 5],
+            events_len: 0,
         }
     }
 
@@ -234,8 +240,7 @@ impl HappinessScoreDetector {
         breathing_bpm: f32,
         heart_rate_bpm: f32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 5] = [(0, 0.0); 5];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
 
@@ -249,7 +254,7 @@ impl HappinessScoreDetector {
 
         // If nobody is present, emit nothing.
         if !present {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── 1. Gait speed: phase rate-of-change ──
@@ -277,7 +282,7 @@ impl HappinessScoreDetector {
 
         // ── Warmup period ──
         if self.frame_count < MIN_WARMUP {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Feature extraction ──
@@ -341,34 +346,24 @@ impl HappinessScoreDetector {
 
         // ── Emit events (decimated for ESP32 bandwidth) ──
         // Always emit happiness score; other events only every Nth frame.
-        unsafe {
-            EVENTS[n_ev] = (EVENT_HAPPINESS_SCORE, self.happiness);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_HAPPINESS_SCORE, self.happiness);
+        self.events_len += 1;
 
         if self.frame_count % EVENT_DECIMATION == 0 {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_GAIT_ENERGY, gait_energy);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_GAIT_ENERGY, gait_energy);
+            self.events_len += 1;
 
-            unsafe {
-                EVENTS[n_ev] = (EVENT_AFFECT_VALENCE, affect_valence);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_AFFECT_VALENCE, affect_valence);
+            self.events_len += 1;
 
-            unsafe {
-                EVENTS[n_ev] = (EVENT_SOCIAL_ENERGY, social_energy);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_SOCIAL_ENERGY, social_energy);
+            self.events_len += 1;
 
-            unsafe {
-                EVENTS[n_ev] = (EVENT_TRANSIT_DIRECTION, transit);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_TRANSIT_DIRECTION, transit);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Average phase rate-of-change over the rolling window.

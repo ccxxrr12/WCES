@@ -106,6 +106,10 @@ pub struct HyperbolicEmbedder {
     initialized: bool,
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl HyperbolicEmbedder {
@@ -120,6 +124,8 @@ impl HyperbolicEmbedder {
             pos_ema_y: Ema::new(POS_ALPHA),
             initialized: false,
             frame_count: 0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -166,11 +172,10 @@ impl HyperbolicEmbedder {
     ///
     /// Returns events as `(event_id, value)` pairs.
     pub fn process_frame(&mut self, amplitudes: &[f32]) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         if amplitudes.len() < FEAT_DIM {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.frame_count += 1;
@@ -180,7 +185,7 @@ impl HyperbolicEmbedder {
         let n_sc = if amplitudes.len() > MAX_SC { MAX_SC } else { amplitudes.len() };
         let subs_per = n_sc / FEAT_DIM;
         if subs_per == 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         for g in 0..FEAT_DIM {
@@ -250,22 +255,16 @@ impl HyperbolicEmbedder {
         let level: u8 = if radius < LEVEL_RADIUS_THRESHOLD { 0 } else { 1 };
 
         // Emit events.
-        unsafe {
-            EVENTS[n_ev] = (EVENT_HIERARCHY_LEVEL, level as f32);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_HIERARCHY_LEVEL, level as f32);
+        self.events_len += 1;
 
-        unsafe {
-            EVENTS[n_ev] = (EVENT_HYPERBOLIC_RADIUS, radius);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_HYPERBOLIC_RADIUS, radius);
+        self.events_len += 1;
 
-        unsafe {
-            EVENTS[n_ev] = (EVENT_LOCATION_LABEL, best_label as f32);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_LOCATION_LABEL, best_label as f32);
+        self.events_len += 1;
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Set a reference embedding.  `index` must be < N_REFS.

@@ -153,6 +153,10 @@ pub struct GhostHunterDetector {
     frame_count: u32,
     /// Welford stats for aggregate phase (for mean/var).
     phase_stats: WelfordStats,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl GhostHunterDetector {
@@ -183,6 +187,8 @@ impl GhostHunterDetector {
             empty_frames: 0,
             frame_count: 0,
             phase_stats: WelfordStats::new(),
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -203,8 +209,7 @@ impl GhostHunterDetector {
         presence: i32,
         motion_energy: f32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
 
@@ -213,14 +218,14 @@ impl GhostHunterDetector {
             self.active_anomaly_frames = 0;
             self.drift_frames = 0;
             self.current_class = AnomalyClass::None;
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let n_sc = core::cmp::min(amplitudes.len(), MAX_SC);
         let n_sc = core::cmp::min(n_sc, phases.len());
         let n_sc = core::cmp::min(n_sc, variance.len());
         if n_sc < N_GROUPS {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.empty_frames += 1;
@@ -228,7 +233,7 @@ impl GhostHunterDetector {
         // Compute per-group aggregates.
         let subs_per = n_sc / N_GROUPS;
         if subs_per == 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let mut group_amp = [0.0f32; N_GROUPS];
@@ -290,7 +295,7 @@ impl GhostHunterDetector {
                 self.prev_agg_amp = agg_amp;
                 self.prev_amp_initialized = true;
             }
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Classify anomaly ─────────────────────────────────────────────
@@ -336,35 +341,27 @@ impl GhostHunterDetector {
         let norm_energy = if energy > 1.0 { 1.0 } else { energy };
 
         if anomaly_active {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_ANOMALY_DETECTED, norm_energy);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_ANOMALY_DETECTED, norm_energy);
+            self.events_len += 1;
 
             if self.current_class != AnomalyClass::None {
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_ANOMALY_CLASS, self.current_class as u8 as f32);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_ANOMALY_CLASS, self.current_class as u8 as f32);
+                self.events_len += 1;
             }
         }
 
         if self.hidden_presence_score > HIDDEN_PRESENCE_THRESHOLD {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_HIDDEN_PRESENCE, self.hidden_presence_score);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_HIDDEN_PRESENCE, self.hidden_presence_score);
+            self.events_len += 1;
         }
 
         if self.drift_frames >= DRIFT_MIN_FRAMES {
             let drift_mag = fabsf(amp_delta) * self.drift_frames as f32;
-            unsafe {
-                EVENTS[n_ev] = (EVENT_ENVIRONMENTAL_DRIFT, drift_mag);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_ENVIRONMENTAL_DRIFT, drift_mag);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Check periodicity in the phase buffer via short autocorrelation.

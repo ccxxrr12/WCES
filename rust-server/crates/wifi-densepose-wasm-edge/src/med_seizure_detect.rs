@@ -125,6 +125,10 @@ pub struct SeizureDetector {
 
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl SeizureDetector {
@@ -143,6 +147,8 @@ impl SeizureDetector {
             cooldown: 0,
             seizure_count: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -163,7 +169,7 @@ impl SeizureDetector {
     ) -> &[(i32, f32)] {
         // NaN guard: reject frames with NaN inputs.
         if motion_energy != motion_energy || amplitude != amplitude {
-            return unsafe { &EVENTS[..n] };
+            return &[];
         }
 
         self.frame_count += 1;
@@ -177,8 +183,7 @@ impl SeizureDetector {
         self.amp_idx = (self.amp_idx + 1) % PHASE_WINDOW;
         if self.amp_len < PHASE_WINDOW { self.amp_len += 1; }
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         // No detection without presence.
         if presence < 1 {
@@ -187,7 +192,7 @@ impl SeizureDetector {
                 self.state_frames = 0;
                 self.high_energy_frames = 0;
             }
-            return unsafe { &EVENTS[..n] };
+            return &self.events_buf[..self.events_len];
         }
 
         // Tick cooldown.
@@ -197,7 +202,7 @@ impl SeizureDetector {
                 self.phase = SeizurePhase::Monitoring;
                 self.state_frames = 0;
             }
-            return unsafe { &EVENTS[..n] };
+            return &self.events_buf[..self.events_len];
         }
 
         // ── State machine ───────────────────────────────────────────────
@@ -227,7 +232,7 @@ impl SeizureDetector {
                         self.phase = SeizurePhase::Monitoring;
                         self.state_frames = 0;
                         self.high_energy_frames = 0;
-                        return unsafe { &EVENTS[..n] };
+                        return &self.events_buf[..self.events_len];
                     }
                 }
 
@@ -237,8 +242,8 @@ impl SeizureDetector {
                     self.phase = SeizurePhase::Tonic;
                     self.state_frames = 0;
                     self.seizure_count += 1;
-                    unsafe { EVENTS[n] = (EVENT_SEIZURE_ONSET, motion_energy); }
-                    n += 1;
+                    self.events_buf[self.events_len] = (EVENT_SEIZURE_ONSET, motion_energy);
+                    self.events_len += 1;
                 }
 
                 // Check for clonic characteristics (skip tonic, go directly to clonic).
@@ -249,11 +254,11 @@ impl SeizureDetector {
                         self.phase = SeizurePhase::Clonic;
                         self.state_frames = 0;
                         self.seizure_count += 1;
-                        unsafe { EVENTS[n] = (EVENT_SEIZURE_ONSET, motion_energy); }
-                        n += 1;
-                        if n < 4 {
-                            unsafe { EVENTS[n] = (EVENT_SEIZURE_CLONIC, period as f32); }
-                            n += 1;
+                        self.events_buf[self.events_len] = (EVENT_SEIZURE_ONSET, motion_energy);
+                        self.events_len += 1;
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_SEIZURE_CLONIC, period as f32);
+                            self.events_len += 1;
                         }
                     }
                 }
@@ -275,15 +280,15 @@ impl SeizureDetector {
                     let energy_var = self.recent_energy_variance();
                     if energy_var > TONIC_VAR_CEIL {
                         if let Some(period) = self.detect_rhythm() {
-                            if self.state_frames >= TONIC_MIN_FRAMES && n < 4 {
-                                unsafe { EVENTS[n] = (EVENT_SEIZURE_TONIC, self.state_frames as f32); }
-                                n += 1;
+                            if self.state_frames >= TONIC_MIN_FRAMES && self.events_len < 4 {
+                                self.events_buf[self.events_len] = (EVENT_SEIZURE_TONIC, self.state_frames as f32);
+                                self.events_len += 1;
                             }
                             self.phase = SeizurePhase::Clonic;
                             self.state_frames = 0;
-                            if n < 4 {
-                                unsafe { EVENTS[n] = (EVENT_SEIZURE_CLONIC, period as f32); }
-                                n += 1;
+                            if self.events_len < 4 {
+                                self.events_buf[self.events_len] = (EVENT_SEIZURE_CLONIC, period as f32);
+                                self.events_len += 1;
                             }
                         }
                     }
@@ -293,9 +298,9 @@ impl SeizureDetector {
                 if motion_energy < POST_ICTAL_ENERGY_THRESH {
                     self.low_energy_frames += 1;
                     if self.low_energy_frames >= POST_ICTAL_MIN_FRAMES {
-                        if self.state_frames >= TONIC_MIN_FRAMES && n < 4 {
-                            unsafe { EVENTS[n] = (EVENT_SEIZURE_TONIC, self.state_frames as f32); }
-                            n += 1;
+                        if self.state_frames >= TONIC_MIN_FRAMES && self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_SEIZURE_TONIC, self.state_frames as f32);
+                            self.events_len += 1;
                         }
                         self.phase = SeizurePhase::PostIctal;
                         self.state_frames = 0;
@@ -322,9 +327,9 @@ impl SeizureDetector {
 
             SeizurePhase::PostIctal => {
                 self.state_frames += 1;
-                if self.state_frames == 1 && n < 4 {
-                    unsafe { EVENTS[n] = (EVENT_POST_ICTAL, 1.0); }
-                    n += 1;
+                if self.state_frames == 1 && self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_POST_ICTAL, 1.0);
+                    self.events_len += 1;
                 }
 
                 // After enough post-ictal frames, go to cooldown.
@@ -342,7 +347,7 @@ impl SeizureDetector {
             }
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute variance of recent motion energy.

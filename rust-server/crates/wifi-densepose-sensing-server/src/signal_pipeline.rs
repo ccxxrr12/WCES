@@ -64,7 +64,11 @@ pub struct SignalPipelineOutput {
 
 /// Per-node signal processing pipeline.
 pub struct SignalPipeline {
-    phase_sanitizer: PhaseSanitizer,
+    // `Option<PhaseSanitizer>` because every `PhaseSanitizer::new(config)`
+    // call validates the config and can fail. If all fallback configs fail
+    // (should be unreachable), phase sanitization is skipped rather than
+    // panicking the UDP receiver task.
+    phase_sanitizer: Option<PhaseSanitizer>,
     normalizer: HardwareNormalizer,
     hampel_config: HampelConfig,
     motion_detector: MotionDetector,
@@ -93,42 +97,41 @@ impl SignalPipeline {
             noise_threshold: 0.1,
             phase_range: (-std::f64::consts::PI, std::f64::consts::PI),
         };
-        let phase_sanitizer = match PhaseSanitizer::new(ps_config) {
-            Ok(s) => s,
-            Err(e) => {
-                // Fallback: the primary config should always validate, but if a
-                // future change breaks an invariant we degrade to the library
-                // default rather than panicking the whole server.
+        // Build the PhaseSanitizer with a chain of fallback configs. None of
+        // these should ever fail validation in practice, but if one does we
+        // degrade gracefully to the next config instead of panicking. If ALL
+        // configs fail (truly unreachable), `phase_sanitizer` becomes `None`
+        // and phase sanitization is skipped in `process()`.
+        //
+        // NOTE: the previous "zero-config" fallback used `outlier_threshold: 0.0`
+        // and `noise_threshold: 0.0`, which FAIL `PhaseSanitizerConfig::validate`
+        // (those fields must be > 0 and in (0, 1) respectively). The fixed
+        // values below actually pass validation.
+        let phase_sanitizer = PhaseSanitizer::new(ps_config)
+            .or_else(|e| {
                 tracing::warn!(
                     "PhaseSanitizer::new failed ({e}); falling back to default config"
                 );
-                PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig::default())
-                    .unwrap_or_else(|e| {
-                        // Ultimate fallback: if even the hardcoded config fails,
-                        // log and return a PhaseSanitizer with library Default.
-                        // We must NOT panic here — this runs inside the UDP
-                        // receiver task and a panic would silently kill CSI ingestion.
-                        tracing::error!(
-                            "PhaseSanitizer hardcoded fallback failed ({e}); \
-                             using library default. CSI data quality may be degraded."
-                        );
-                        PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig::default())
-                            .unwrap_or_else(|_| {
-                                // Last resort: all-zero config (no outlier removal, no smoothing).
-                                // This should never fail validation.
-                                PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig {
-                                    outlier_threshold: 0.0,
-                                    smoothing_window: 1,
-                                    noise_threshold: 0.0,
-                                    enable_outlier_removal: false,
-                                    enable_smoothing: false,
-                                    enable_noise_filtering: false,
-                                    ..Default::default()
-                                }).expect("zero-config PhaseSanitizer must validate")
-                            })
-                    })
-            }
-        };
+                PhaseSanitizer::new(
+                    wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig::default(),
+                )
+            })
+            .or_else(|e| {
+                tracing::error!(
+                    "PhaseSanitizer default fallback failed ({e}); \
+                     using minimal valid config. CSI data quality may be degraded."
+                );
+                PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig {
+                    outlier_threshold: 0.001,
+                    smoothing_window: 1,
+                    noise_threshold: 0.5,
+                    enable_outlier_removal: false,
+                    enable_smoothing: false,
+                    enable_noise_filtering: false,
+                    ..Default::default()
+                })
+            })
+            .ok();
 
         let normalizer = HardwareNormalizer::new();
 
@@ -206,9 +209,15 @@ impl SignalPipeline {
             phases.to_vec(),
         ).ok()?;
 
-        let sanitized_phase = self.phase_sanitizer.sanitize_phase(&phase_array).ok()?;
-        let stats = self.phase_sanitizer.get_statistics();
-        let outlier_count = stats.outliers_removed;
+        let sanitized_phase = self
+            .phase_sanitizer
+            .as_mut()
+            .and_then(|ps| ps.sanitize_phase(&phase_array).ok())?;
+        let outlier_count = self
+            .phase_sanitizer
+            .as_ref()
+            .map(|ps| ps.get_statistics().outliers_removed)
+            .unwrap_or(0);
 
         // Extract sanitized phases back to Vec<f64>.
         let clean_phases: Vec<f64> = sanitized_phase.row(0).iter().cloned().collect();

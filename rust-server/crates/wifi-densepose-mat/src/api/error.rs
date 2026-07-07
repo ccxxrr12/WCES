@@ -142,6 +142,12 @@ impl ApiError {
             Self::InvalidState { .. } => StatusCode::CONFLICT,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             Self::ServiceUnavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            // P3: Domain errors are uniformly mapped to 400 Bad Request.
+            // Most domain errors surfaced through the API are invariant
+            // violations triggered by invalid client input (e.g. invalid
+            // state transitions, malformed references); true internal
+            // domain failures should be reclassified as Internal before
+            // reaching this layer.
             Self::Domain(_) => StatusCode::BAD_REQUEST,
         }
     }

@@ -124,6 +124,9 @@ pub struct MetaAdapter {
     meta_level: u16,
     /// Counter within a sweep (0..NUM_PARAMS).
     sweep_idx: usize,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl MetaAdapter {
@@ -165,6 +168,8 @@ impl MetaAdapter {
             success_count: 0,
             meta_level: 0,
             sweep_idx: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -198,8 +203,7 @@ impl MetaAdapter {
     ///
     /// Returns events as `(event_id, value)` pairs.
     pub fn on_timer(&mut self) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.eval_ticks += 1;
 
@@ -228,15 +232,17 @@ impl MetaAdapter {
                         self.consecutive_failures = 0;
                         self.success_count += 1;
 
-                        unsafe {
-                            EVENTS[n_ev] = (
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (
                                 EVENT_PARAM_ADJUSTED,
                                 self.current_param as f32
                                     + self.params[self.current_param].value / 1000.0,
                             );
-                            n_ev += 1;
-                            EVENTS[n_ev] = (EVENT_ADAPTATION_SCORE, score);
-                            n_ev += 1;
+                            self.events_len += 1;
+                        }
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_ADAPTATION_SCORE, score);
+                            self.events_len += 1;
                         }
                     } else {
                         // Revert the perturbation.
@@ -248,9 +254,9 @@ impl MetaAdapter {
                     // ── Safety rollback ──────────────────────────────────
                     if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                         self.safety_rollback();
-                        unsafe {
-                            EVENTS[n_ev] = (EVENT_ROLLBACK_TRIGGERED, self.meta_level as f32);
-                            n_ev += 1;
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_ROLLBACK_TRIGGERED, self.meta_level as f32);
+                            self.events_len += 1;
                         }
                     }
 
@@ -260,17 +266,15 @@ impl MetaAdapter {
                     self.phase = OptPhase::Baseline;
 
                     // ── Emit meta level periodically ─────────────────────
-                    if self.sweep_idx == 0 && n_ev < 4 {
-                        unsafe {
-                            EVENTS[n_ev] = (EVENT_META_LEVEL, self.meta_level as f32);
-                            n_ev += 1;
-                        }
+                    if self.sweep_idx == 0 && self.events_len < 4 {
+                        self.events_buf[self.events_len] = (EVENT_META_LEVEL, self.meta_level as f32);
+                        self.events_len += 1;
                     }
                 }
             }
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute the performance score from accumulated feedback.

@@ -125,8 +125,14 @@ CONFIG_CSI_WIFI_SSID="${SSID}"
 SDKEOF
 
 # 密码处理
+# W-4 fix: escape the WiFi password for the Kconfig C-string context. A password
+# containing " or \ would otherwise terminate the CONFIG_CSI_WIFI_PASSWORD value
+# early or form an undefined C escape sequence. Backslashes are doubled first,
+# then double quotes are backslash-escaped.
 if [ -n "$PASS" ] && [ "$PASS" != '""' ]; then
-    echo "CONFIG_CSI_WIFI_PASSWORD=\"${PASS}\"" >> "$TMPFILE"
+    PASS_ESC="${PASS//\\/\\\\}"
+    PASS_ESC="${PASS_ESC//\"/\\\"}"
+    echo "CONFIG_CSI_WIFI_PASSWORD=\"${PASS_ESC}\"" >> "$TMPFILE"
 else
     echo "# CONFIG_CSI_WIFI_PASSWORD is not set (open network)" >> "$TMPFILE"
 fi

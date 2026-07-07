@@ -202,7 +202,10 @@ impl HeartbeatDetector {
         // Calculate confidence
         let confidence = self.calculate_confidence(strength, variability);
 
-        if confidence < self.config.confidence_threshold {
+        // NaN confidence passes threshold comparisons silently (NaN < x = false),
+        // which would let garbage heartbeat signatures through. Guard before
+        // the threshold check, matching breathing.rs.
+        if !confidence.is_finite() || confidence < self.config.confidence_threshold {
             return None;
         }
 

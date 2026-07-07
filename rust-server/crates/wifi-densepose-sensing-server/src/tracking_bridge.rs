@@ -116,11 +116,19 @@ impl TrackingBridge {
         self.last_result = Some(self.tracker.update(detections, dt));
 
         // Update ID maps with any new tracks.
+        // Populate BOTH reverse_id_map (TrackId -> display ID) and id_map
+        // (display ID -> TrackId) so that smoothed_position() and
+        // was_reidentified() can resolve display IDs to track IDs.
         for track in self.tracker.active_tracks() {
             let track_id_str = track.id.to_string();
-            self.reverse_id_map
-                .entry(track_id_str.clone())
-                .or_insert_with(|| format!("SURV-{:08x}", track.id.as_uuid().as_u64_pair().0 as u32));
+            let display = self
+                .reverse_id_map
+                .entry(track_id_str)
+                .or_insert_with(|| {
+                    format!("SURV-{:08x}", track.id.as_uuid().as_u64_pair().0 as u32)
+                })
+                .clone();
+            self.id_map.insert(display, track.id.clone());
         }
 
         self.last_result.as_ref().unwrap()

@@ -318,8 +318,12 @@ impl MedicalAgent {
             age: ctx.patient_history.as_ref().and_then(|h| {
                 h.age_estimate.as_ref().and_then(|a| match a.as_str() {
                     "Elderly" => Some(70u8),
-                    "Adult" => Some(40u8),
-                    "Child" => Some(10u8),
+                    // L6: use 50 (midpoint of 18-64 adult range) instead of 40
+                    // so that risk-factor rules keyed on age >= 65 still miss,
+                    // but the representative age better reflects the 50-64
+                    // middle-aged high-risk band rather than skewing young.
+                    "Adult" => Some(50u8),
+                    "Child" => Some(8u8),
                     "Infant" => Some(1u8),
                     _ => None,
                 })

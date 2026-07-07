@@ -355,16 +355,23 @@ impl PhaseSanitizer {
         Ok(unwrapped)
     }
 
-    /// Quality-guided phase unwrapping
+    /// Quality-guided phase unwrapping.
+    ///
+    /// NOTE: Current implementation degrades to standard 1D row-wise
+    /// unwrapping. The quality-guided seed-growth path is not yet
+    /// implemented: the quality map is computed but discarded. A full
+    /// implementation would order unwrapping by quality (highest first)
+    /// and propagate reliable phase into low-quality regions.
     fn unwrap_quality_guided(&self, phase_data: &Array2<f64>) -> Result<Array2<f64>, PhaseSanitizationError> {
         // For now, use standard unwrapping with quality weighting
         // A full implementation would use phase derivatives as quality metric
         let mut unwrapped = phase_data.clone();
         let (nrows, ncols) = phase_data.dim();
 
-        // Calculate quality map based on phase gradients
-        // Note: Full quality-guided implementation would use this map for ordering
-        let _quality = self.calculate_quality_map(phase_data);
+        // Calculate quality map based on phase gradients.
+        // TODO: implement quality-guided seed growth — currently the map is
+        // computed but unused, so this path degrades to standard unwrapping.
+        let _unused_quality = self.calculate_quality_map(phase_data);
 
         // Unwrap starting from highest quality regions
         for i in 0..nrows {
@@ -602,7 +609,14 @@ impl PhaseSanitizer {
         Ok(smoothed)
     }
 
-    /// Filter noise using low-pass Butterworth filter
+    /// Filter noise using a zero-phase exponential smoothing low-pass filter.
+    ///
+    /// NOTE: Despite earlier documentation describing this as a "Butterworth"
+    /// filter, the implementation is a forward/backward exponential moving
+    /// average (EMA) pass, not a Butterworth design. The smoothing factor is
+    /// `alpha = config.noise_threshold`. The two passes (forward then backward)
+    /// approximate zero-phase filtering. If a true Butterworth response is
+    /// required, replace the body with a proper IIR design.
     pub fn filter_noise(&self, phase_data: &Array2<f64>) -> Result<Array2<f64>, PhaseSanitizationError> {
         if !self.config.enable_noise_filtering {
             return Ok(phase_data.clone());
@@ -616,7 +630,7 @@ impl PhaseSanitizer {
             return Ok(phase_data.clone());
         }
 
-        // Simple low-pass filter using exponential smoothing
+        // Zero-phase exponential smoothing (forward + backward EMA pass).
         let alpha = self.config.noise_threshold;
         let mut filtered = phase_data.clone();
 

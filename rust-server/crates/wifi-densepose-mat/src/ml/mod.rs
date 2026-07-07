@@ -310,7 +310,11 @@ impl DebrisFeatures {
             .sum::<f64>() / amplitudes.len() as f64;
 
         if variance < 1e-10 {
-            return 30.0; // High SNR assumed
+            // A constant (zero-variance) signal is more likely a dead
+            // carrier or sensor artifact than a high-SNR measurement.
+            // Return 0 dB so downstream consumers treat it as no usable
+            // signal rather than trusting a stale reading (M5).
+            return 0.0;
         }
 
         // SNR estimate based on signal power to noise power ratio

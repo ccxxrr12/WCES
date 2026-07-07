@@ -179,6 +179,11 @@ impl TimeWindow {
         self.samples.len()
     }
 
+    /// Timestamp of the most recent sample, or None if the window is empty.
+    fn last_update(&self) -> Option<Instant> {
+        self.samples.back().map(|s| s.timestamp)
+    }
+
     fn summarize(&self) -> VitalTrendSummary {
         let n = self.samples.len();
         if n < 2 {
@@ -300,6 +305,16 @@ impl SlidingWindow {
     pub fn has_enough_data(&self) -> bool {
         self.short.len() >= 3
     }
+
+    /// Timestamp of the most recent sample across all three windows, or None
+    /// if every window is empty. Used by `WindowManager::evict_inactive` to
+    /// determine how long a patient has been idle.
+    pub fn last_update(&self) -> Option<Instant> {
+        self.short
+            .last_update()
+            .or_else(|| self.medium.last_update())
+            .or_else(|| self.long.last_update())
+    }
 }
 
 // ── Multi-Patient Window Manager ────────────────────────────────────────────
@@ -343,6 +358,22 @@ impl WindowManager {
         // Pruning happens automatically on push().
         // This is just for explicit cleanup of empty windows.
         self.windows.retain(|_, w| w.short.len() > 0);
+    }
+
+    /// Evict windows that have not received new data within `max_idle_secs`.
+    /// Bounds memory usage in long-running deployments where patients come
+    /// and go — without this, the `windows` map grows monotonically because
+    /// `prune_all` only drops windows that are completely empty, and a window
+    /// with stale-but-non-empty samples is never cleared automatically.
+    ///
+    /// Windows with no samples at all are also removed.
+    pub fn evict_inactive(&mut self, max_idle_secs: u64) {
+        let now = Instant::now();
+        let max_idle = Duration::from_secs(max_idle_secs);
+        self.windows.retain(|_, w| match w.last_update() {
+            Some(last) => now.duration_since(last) < max_idle,
+            None => false, // no samples → evict
+        });
     }
 
     /// Number of tracked patients.

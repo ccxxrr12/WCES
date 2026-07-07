@@ -68,6 +68,9 @@ pub struct QuantumCoherenceMonitor {
     frame_count: u32,
     /// Whether the monitor has been initialized with at least one frame.
     initialized: bool,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl QuantumCoherenceMonitor {
@@ -79,6 +82,8 @@ impl QuantumCoherenceMonitor {
             prev_entropy: 0.0,
             frame_count: 0,
             initialized: false,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -91,8 +96,9 @@ impl QuantumCoherenceMonitor {
     /// Returns a slice of (event_type, value) pairs to emit.
     pub fn process_frame(&mut self, phases: &[f32]) -> &[(i32, f32)] {
         let n_sc = if phases.len() > MAX_SC { MAX_SC } else { phases.len() };
+        self.events_len = 0;
         if n_sc < 2 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.frame_count += 1;
@@ -113,7 +119,7 @@ impl QuantumCoherenceMonitor {
             self.prev_entropy = raw_entropy;
             self.prev_bloch = bloch;
             self.initialized = true;
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.smoothed_entropy = ALPHA * raw_entropy + (1.0 - ALPHA) * self.smoothed_entropy;
@@ -129,34 +135,26 @@ impl QuantumCoherenceMonitor {
         self.prev_bloch = bloch;
 
         // ── Build output events ──
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_events = 0usize;
 
         // Entropy (periodic).
         if self.frame_count % ENTROPY_EMIT_INTERVAL == 0 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_ENTANGLEMENT_ENTROPY, self.smoothed_entropy);
-            }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_ENTANGLEMENT_ENTROPY, self.smoothed_entropy);
+            self.events_len += 1;
         }
 
         // Decoherence event (immediate).
         if entropy_jump > DECOHERENCE_THRESHOLD {
-            unsafe {
-                EVENTS[n_events] = (EVENT_DECOHERENCE_EVENT, entropy_jump);
-            }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_DECOHERENCE_EVENT, entropy_jump);
+            self.events_len += 1;
         }
 
         // Bloch drift (periodic).
         if self.frame_count % DRIFT_EMIT_INTERVAL == 0 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_BLOCH_DRIFT, drift);
-            }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_BLOCH_DRIFT, drift);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute the mean Bloch vector from subcarrier phases.

@@ -88,6 +88,10 @@ pub struct ElevatorCounter {
     door_cooldown: u16,
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl ElevatorCounter {
@@ -109,6 +113,8 @@ impl ElevatorCounter {
             door_pending_open: false,
             door_cooldown: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -128,8 +134,9 @@ impl ElevatorCounter {
         host_n_persons: i32,
     ) -> &[(i32, f32)] {
         let n_sc = amplitudes.len().min(phases.len()).min(MAX_SC);
+        self.events_len = 0;
         if n_sc < 2 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.frame_count += 1;
@@ -160,7 +167,7 @@ impl ElevatorCounter {
                 }
                 self.calibrated = true;
             }
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Compute multipath statistics ────────────────────────────────
@@ -268,38 +275,30 @@ impl ElevatorCounter {
         }
 
         // ── Build events ────────────────────────────────────────────────
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_events = 0usize;
 
         // Door events (immediate).
         if let Some(evt) = door_event {
-            if n_events < 4 {
-                unsafe {
-                    EVENTS[n_events] = (evt, self.count as f32);
-                }
-                n_events += 1;
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (evt, self.count as f32);
+                self.events_len += 1;
             }
         }
 
         // Periodic count and overload.
         if self.frame_count % EMIT_INTERVAL == 0 {
-            if n_events < 4 {
-                unsafe {
-                    EVENTS[n_events] = (EVENT_ELEVATOR_COUNT, self.count as f32);
-                }
-                n_events += 1;
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_ELEVATOR_COUNT, self.count as f32);
+                self.events_len += 1;
             }
 
             // Overload warning.
-            if self.count >= self.overload_thresh && n_events < 4 {
-                unsafe {
-                    EVENTS[n_events] = (EVENT_OVERLOAD_WARNING, self.count as f32);
-                }
-                n_events += 1;
+            if self.count >= self.overload_thresh && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_OVERLOAD_WARNING, self.count as f32);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get current occupant count estimate.

@@ -35,6 +35,18 @@ impl AmplitudeFeatures {
         let amplitude = &csi_data.amplitude;
         let (nrows, ncols) = amplitude.dim();
 
+        // Guard against empty input: divisions by nrows/ncols and flat.len()
+        // below would otherwise produce NaN (0.0 / 0.0).
+        if nrows == 0 || ncols == 0 {
+            return Self {
+                mean: Array1::zeros(0),
+                variance: Array1::zeros(0),
+                peak: 0.0,
+                rms: 0.0,
+                dynamic_range: 0.0,
+            };
+        }
+
         // Calculate mean across antennas (axis 0)
         let mut mean = Array1::zeros(ncols);
         for j in 0..ncols {
@@ -94,6 +106,17 @@ impl PhaseFeatures {
     pub fn from_csi_data(csi_data: &CsiData) -> Self {
         let phase = &csi_data.phase;
         let (nrows, ncols) = phase.dim();
+
+        // Guard against empty input: divisions by nrows below would otherwise
+        // produce NaN (0.0 / 0.0).
+        if nrows == 0 || ncols == 0 {
+            return Self {
+                difference: Array1::zeros(0),
+                variance: Array1::zeros(0),
+                gradient: Array1::zeros(0),
+                coherence: 0.0,
+            };
+        }
 
         // Calculate phase differences between adjacent subcarriers
         let mut diff_matrix = Array2::zeros((nrows, ncols.saturating_sub(1)));
@@ -266,6 +289,12 @@ impl CorrelationFeatures {
     fn correlation_matrix(data: &Array2<f64>) -> Array2<f64> {
         let (nrows, ncols) = data.dim();
         let mut corr = Array2::zeros((nrows, nrows));
+
+        // Guard against empty input: means/stds divide by ncols below, which
+        // would produce NaN (0.0 / 0.0) and propagate into the matrix.
+        if nrows == 0 || ncols == 0 {
+            return corr;
+        }
 
         // Calculate means
         let means: Vec<f64> = (0..nrows)
@@ -442,6 +471,14 @@ pub struct PowerSpectralDensity {
 impl PowerSpectralDensity {
     /// Calculate PSD from CSI amplitude data
     pub fn from_csi_data(csi_data: &CsiData, fft_size: usize) -> Self {
+        // Validate fft_size: rustfft panics opaquely on size 0, and several
+        // divisions below use fft_size as the denominator. Fail fast with a
+        // clear message instead. (Signature kept as Self to avoid a cascading
+        // Result refactor across extract()/extract_psd() callers.)
+        if fft_size == 0 {
+            panic!("PowerSpectralDensity::from_csi_data: fft_size must be > 0");
+        }
+
         let amplitude = &csi_data.amplitude;
         let flat: Vec<f64> = amplitude.iter().copied().collect();
 

@@ -311,8 +311,12 @@ impl MotionDetector {
 
         // Calculate temporal and spatial variance
         let temporal_variance = self.calculate_temporal_variance();
-        let spatial_variance = features.amplitude.variance.iter().sum::<f64>()
-            / features.amplitude.variance.len() as f64;
+        let spatial_variance = if features.amplitude.variance.is_empty() {
+            0.0
+        } else {
+            features.amplitude.variance.iter().sum::<f64>()
+                / features.amplitude.variance.len() as f64
+        };
 
         // Estimate velocity from Doppler if available
         let estimated_velocity = features
@@ -345,7 +349,11 @@ impl MotionDetector {
 
     /// Calculate variance-based motion score
     fn calculate_variance_score(&self, amplitude: &AmplitudeFeatures) -> f64 {
-        let mean_variance = amplitude.variance.iter().sum::<f64>() / amplitude.variance.len() as f64;
+        let mean_variance = if amplitude.variance.is_empty() {
+            0.0
+        } else {
+            amplitude.variance.iter().sum::<f64>() / amplitude.variance.len() as f64
+        };
 
         // Normalize using baseline if available
         if let Some(baseline) = self.baseline_variance {
@@ -383,7 +391,11 @@ impl MotionDetector {
     /// Calculate phase-based motion score
     fn calculate_phase_score(&self, phase: &PhaseFeatures) -> f64 {
         // Use phase variance and coherence
-        let mean_variance = phase.variance.iter().sum::<f64>() / phase.variance.len() as f64;
+        let mean_variance = if phase.variance.is_empty() {
+            0.0
+        } else {
+            phase.variance.iter().sum::<f64>() / phase.variance.len() as f64
+        };
         let coherence_factor = 1.0 - phase.coherence.abs();
 
         // Combine factors
@@ -440,8 +452,12 @@ impl MotionDetector {
     /// Calculate detection confidence from features and motion score
     fn calculate_detection_confidence(&self, features: &CsiFeatures, motion_score: f64) -> f64 {
         // Amplitude indicator
-        let amplitude_mean = features.amplitude.mean.iter().sum::<f64>()
-            / features.amplitude.mean.len() as f64;
+        let amplitude_mean = if features.amplitude.mean.is_empty() {
+            0.0
+        } else {
+            features.amplitude.mean.iter().sum::<f64>()
+                / features.amplitude.mean.len() as f64
+        };
         let amplitude_indicator = if amplitude_mean > self.config.amplitude_threshold {
             1.0
         } else {
@@ -449,8 +465,12 @@ impl MotionDetector {
         };
 
         // Phase indicator: sqrt of mean variance (not sqrt(sum) / N)
-        let phase_std = (features.phase.variance.iter().sum::<f64>()
-            / features.phase.variance.len() as f64).sqrt();
+        let phase_std = if features.phase.variance.is_empty() {
+            0.0
+        } else {
+            (features.phase.variance.iter().sum::<f64>()
+                / features.phase.variance.len() as f64).sqrt()
+        };
         let phase_indicator = if phase_std > self.config.phase_threshold {
             1.0
         } else {
@@ -551,8 +571,12 @@ impl MotionDetector {
 
     /// Update baseline variance (for calibration)
     pub fn calibrate(&mut self, features: &CsiFeatures) {
-        let mean_variance =
-            features.amplitude.variance.iter().sum::<f64>() / features.amplitude.variance.len() as f64;
+        let mean_variance = if features.amplitude.variance.is_empty() {
+            0.0
+        } else {
+            features.amplitude.variance.iter().sum::<f64>()
+                / features.amplitude.variance.len() as f64
+        };
         self.baseline_variance = Some(mean_variance);
     }
 

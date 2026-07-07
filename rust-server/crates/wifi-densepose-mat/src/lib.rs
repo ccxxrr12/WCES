@@ -449,8 +449,6 @@ impl DisasterResponse {
     /// applies ensemble classification, emits domain events to the EventStore,
     /// and dispatches alerts for newly detected survivors.
     async fn scan_cycle(&mut self) -> Result<()> {
-        let scan_start = std::time::Instant::now();
-
         // Collect detections first to avoid borrowing issues
         let mut detections = Vec::new();
 
@@ -462,6 +460,14 @@ impl DisasterResponse {
                 if zone.status() != &ZoneStatus::Active {
                     continue;
                 }
+
+                // M1: per-zone timing and detection count. Previously the
+                // duration was computed once outside the loop and reused
+                // for every zone, and `detections_found` reported the
+                // running cumulative count across all zones processed so
+                // far rather than the current zone's count.
+                let zone_start = std::time::Instant::now();
+                let detections_before = detections.len();
 
                 // Process buffered CSI data through the detection pipeline
                 let detection_result = self.detection_pipeline.process_zone(zone).await?;
@@ -480,12 +486,14 @@ impl DisasterResponse {
                     }
                 }
 
-                // Emit zone scan completed event
-                let scan_duration = scan_start.elapsed();
+                // Emit zone scan completed event with this zone's own
+                // duration and detection count.
+                let zone_detections = (detections.len() - detections_before) as u32;
+                let scan_duration = zone_start.elapsed();
                 let _ = self.event_store.append(DomainEvent::Zone(
                     domain::events::ZoneEvent::ZoneScanCompleted {
                         zone_id: zone.id().clone(),
-                        detections_found: detections.len() as u32,
+                        detections_found: zone_detections,
                         scan_duration_ms: scan_duration.as_millis() as u64,
                         timestamp: chrono::Utc::now(),
                     },

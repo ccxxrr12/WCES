@@ -86,6 +86,8 @@ pub struct QueueLengthEstimator {
     current_queue: u8,
     /// Alert already fired flag (prevents re-alerting same spike).
     alert_active: bool,
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl QueueLengthEstimator {
@@ -103,6 +105,7 @@ impl QueueLengthEstimator {
             prev_variance: 0.0,
             current_queue: 0,
             alert_active: false,
+            events_buf: [(0, 0.0); 4], events_len: 0,
         }
     }
 
@@ -121,6 +124,7 @@ impl QueueLengthEstimator {
         variance: f32,
         motion_energy: f32,
     ) -> &[(i32, f32)] {
+        self.events_len = 0;
         self.frame_count += 1;
         self.window_frame_count += 1;
 
@@ -161,15 +165,13 @@ impl QueueLengthEstimator {
         }
 
         // Build events.
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut ne = 0usize;
 
         // Periodic queue length report.
         if self.frame_count % REPORT_INTERVAL == 0 {
-            unsafe {
-                EVENTS[ne] = (EVENT_QUEUE_LENGTH, self.current_queue as f32);
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_QUEUE_LENGTH, self.current_queue as f32);
+                self.events_len += 1;
             }
-            ne += 1;
         }
 
         // Service window elapsed: compute and emit rates.
@@ -183,11 +185,9 @@ impl QueueLengthEstimator {
                 self.service_rate_ema.update(svc_rate);
 
                 // Service rate event.
-                if ne < 4 {
-                    unsafe {
-                        EVENTS[ne] = (EVENT_SERVICE_RATE, self.service_rate_ema.value);
-                    }
-                    ne += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_SERVICE_RATE, self.service_rate_ema.value);
+                    self.events_len += 1;
                 }
 
                 // Wait time estimate via Little's Law: W = L / lambda.
@@ -198,11 +198,9 @@ impl QueueLengthEstimator {
                     0.0
                 };
 
-                if ne < 4 {
-                    unsafe {
-                        EVENTS[ne] = (EVENT_WAIT_TIME_ESTIMATE, wait_time);
-                    }
-                    ne += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_WAIT_TIME_ESTIMATE, wait_time);
+                    self.events_len += 1;
                 }
             }
 
@@ -215,17 +213,15 @@ impl QueueLengthEstimator {
         // Queue alert.
         if self.current_queue as f32 >= QUEUE_ALERT_THRESH && !self.alert_active {
             self.alert_active = true;
-            if ne < 4 {
-                unsafe {
-                    EVENTS[ne] = (EVENT_QUEUE_ALERT, self.current_queue as f32);
-                }
-                ne += 1;
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_QUEUE_ALERT, self.current_queue as f32);
+                self.events_len += 1;
             }
         } else if (self.current_queue as f32) < QUEUE_ALERT_THRESH - 1.0 {
             self.alert_active = false;
         }
 
-        unsafe { &EVENTS[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the current smoothed queue length.

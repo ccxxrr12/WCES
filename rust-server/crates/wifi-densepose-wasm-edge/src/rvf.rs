@@ -205,14 +205,32 @@ pub mod builder {
     /// Patch a signature into an existing RVF buffer.
     ///
     /// The signature covers bytes 0 through (header + manifest + wasm - 1).
-    pub fn patch_signature(rvf: &mut [u8], signature: &[u8; RVF_SIGNATURE_LEN]) {
+    ///
+    /// Returns an error if `rvf` is too small to contain the header, the
+    /// computed signature offset overflows, or the signature would not fit.
+    pub fn patch_signature(
+        rvf: &mut [u8],
+        signature: &[u8; RVF_SIGNATURE_LEN],
+    ) -> Result<(), &'static str> {
+        if rvf.len() < 16 {
+            return Err("rvf buffer too small to read wasm_len");
+        }
         let sig_offset = RVF_HEADER_SIZE + RVF_MANIFEST_SIZE;
         // Read wasm_len from header.
         let wasm_len = u32::from_le_bytes([
             rvf[12], rvf[13], rvf[14], rvf[15],
         ]) as usize;
-        let offset = sig_offset + wasm_len;
-        rvf[offset..offset + RVF_SIGNATURE_LEN].copy_from_slice(signature);
+        let offset = sig_offset
+            .checked_add(wasm_len)
+            .ok_or("signature offset overflow")?;
+        let end = offset
+            .checked_add(RVF_SIGNATURE_LEN)
+            .ok_or("signature end overflow")?;
+        if end > rvf.len() {
+            return Err("rvf buffer too small for signature");
+        }
+        rvf[offset..end].copy_from_slice(signature);
+        Ok(())
     }
 
     #[cfg(test)]

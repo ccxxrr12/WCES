@@ -60,6 +60,8 @@ pub struct LoiteringDetector {
     frame_count: u32,
     /// Total loitering events.
     loiter_count: u32,
+    events_buf: [(i32, f32); 2],
+    events_len: usize,
 }
 
 impl LoiteringDetector {
@@ -73,6 +75,7 @@ impl LoiteringDetector {
             post_end_cd: 0,
             frame_count: 0,
             loiter_count: 0,
+            events_buf: [(0, 0.0); 2], events_len: 0,
         }
     }
 
@@ -85,11 +88,9 @@ impl LoiteringDetector {
         presence: i32,
         motion_energy: f32,
     ) -> &[(i32, f32)] {
+        self.events_len = 0;
         self.frame_count += 1;
         self.post_end_cd = self.post_end_cd.saturating_sub(1);
-
-        static mut EVENTS: [(i32, f32); 2] = [(0, 0.0); 2];
-        let mut ne = 0usize;
 
         // Determine if someone is present and roughly stationary.
         let is_present = presence > 0;
@@ -131,12 +132,10 @@ impl LoiteringDetector {
                         self.loiter_count += 1;
                         self.ongoing_timer = 0;
 
-                        if ne < 2 {
+                        if self.events_len < 2 {
                             let dwell_seconds = self.dwell_frames as f32 / 20.0;
-                            unsafe {
-                                EVENTS[ne] = (EVENT_LOITERING_START, dwell_seconds);
-                            }
-                            ne += 1;
+                            self.events_buf[self.events_len] = (EVENT_LOITERING_START, dwell_seconds);
+                            self.events_len += 1;
                         }
                     }
                 } else {
@@ -159,12 +158,10 @@ impl LoiteringDetector {
                     // Periodic ongoing report.
                     if self.ongoing_timer >= ONGOING_REPORT_INTERVAL {
                         self.ongoing_timer = 0;
-                        if ne < 2 {
+                        if self.events_len < 2 {
                             let total_seconds = self.dwell_frames as f32 / 20.0;
-                            unsafe {
-                                EVENTS[ne] = (EVENT_LOITERING_ONGOING, total_seconds);
-                            }
-                            ne += 1;
+                            self.events_buf[self.events_len] = (EVENT_LOITERING_ONGOING, total_seconds);
+                            self.events_len += 1;
                         }
                     }
                 } else {
@@ -175,12 +172,10 @@ impl LoiteringDetector {
                         self.state = LoiterState::Absent;
                         self.post_end_cd = POST_END_COOLDOWN;
 
-                        if ne < 2 {
+                        if self.events_len < 2 {
                             let total_seconds = self.dwell_frames as f32 / 20.0;
-                            unsafe {
-                                EVENTS[ne] = (EVENT_LOITERING_END, total_seconds);
-                            }
-                            ne += 1;
+                            self.events_buf[self.events_len] = (EVENT_LOITERING_END, total_seconds);
+                            self.events_len += 1;
                         }
 
                         self.dwell_frames = 0;
@@ -191,7 +186,7 @@ impl LoiteringDetector {
             }
         }
 
-        unsafe { &EVENTS[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     pub fn state(&self) -> LoiterState { self.state }

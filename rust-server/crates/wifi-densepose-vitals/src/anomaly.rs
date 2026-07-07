@@ -125,7 +125,12 @@ impl VitalAnomalyDetector {
 
         // Guard: NaN/Inf values permanently poison Welford statistics —
         // skip this reading entirely if either vital sign is not finite.
-        if !rr.is_finite() || !hr.is_finite() {
+        // Also skip Unavailable readings: VitalEstimate::unavailable() uses
+        // value_bpm = 0.0 as a sentinel, and 0.0.is_finite() == true, so the
+        // finite check above does not catch it. RR=0 && HR=0 simultaneously
+        // is clinically impossible, so this pair reliably identifies the
+        // Unavailable sentinel without rejecting any legitimate reading.
+        if !rr.is_finite() || !hr.is_finite() || (rr == 0.0 && hr == 0.0) {
             return alerts;
         }
 

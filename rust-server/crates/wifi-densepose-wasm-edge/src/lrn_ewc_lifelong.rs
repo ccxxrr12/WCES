@@ -123,6 +123,9 @@ pub struct EwcLifelong {
     last_penalty: f32,
     /// Whether theta_star has been set (false until first task completes).
     has_prior: bool,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl EwcLifelong {
@@ -140,6 +143,8 @@ impl EwcLifelong {
             last_loss: 0.0,
             last_penalty: 0.0,
             has_prior: false,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -169,11 +174,10 @@ impl EwcLifelong {
     ///
     /// Returns events as `(event_id, value)` pairs.
     pub fn process_frame(&mut self, features: &[f32], target_zone: i32) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         if features.len() < N_INPUT {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.frame_count += 1;
@@ -217,28 +221,22 @@ impl EwcLifelong {
                 && self.task_count < MAX_TASKS
             {
                 self.commit_task();
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_NEW_TASK_LEARNED, self.task_count as f32);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_NEW_TASK_LEARNED, self.task_count as f32);
+                self.events_len += 1;
 
                 // Emit mean Fisher value.
                 let mean_fisher = self.mean_fisher();
-                if n_ev < 4 {
-                    unsafe {
-                        EVENTS[n_ev] = (EVENT_FISHER_UPDATE, mean_fisher);
-                    }
-                    n_ev += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_FISHER_UPDATE, mean_fisher);
+                    self.events_len += 1;
                 }
             }
 
             // Periodic reporting.
             if self.frame_count % REPORT_INTERVAL == 0 {
-                if n_ev < 4 {
-                    unsafe {
-                        EVENTS[n_ev] = (EVENT_KNOWLEDGE_RETAINED, ewc_penalty);
-                    }
-                    n_ev += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_KNOWLEDGE_RETAINED, ewc_penalty);
+                    self.events_len += 1;
                 }
 
                 // Forgetting risk: ratio of penalty to current loss.
@@ -247,16 +245,14 @@ impl EwcLifelong {
                 } else {
                     0.0
                 };
-                if n_ev < 4 {
-                    unsafe {
-                        EVENTS[n_ev] = (EVENT_FORGETTING_RISK, risk);
-                    }
-                    n_ev += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_FORGETTING_RISK, risk);
+                    self.events_len += 1;
                 }
             }
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Forward pass: linear classifier `output = params * features`.

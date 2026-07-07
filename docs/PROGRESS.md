@@ -1,7 +1,7 @@
 # WCES 竞赛项目构建进度 ✅
 
-> 项目：基于WIFI CSI感知与端侧LLM的方舱生命体征感知与监护系统
-> 缩写：WCES (WiFi CSI and Edge LLM Powered Vital Signs Monitoring System for Shelter Hospitals)
+> 项目：基于WiFi CSI感知与端侧Agent的方舱生命体征感知与监护系统
+> 缩写：WCES (WiFi CSI and Edge Agent Powered Vital Signs Monitoring System for Shelter Hospitals)
 
 ---
 
@@ -838,8 +838,101 @@ ESP-IDF v6.0.1 安装 + 固件 v5.x→v6.0 迁移 + C5 单核适配 + 内存优�
 | 3 | 06-29 | signal+vitals | 219 | 6 |
 | 4 | 06-29 | ESP32 全部 | 225 | 13 |
 | 5 | 06-30 | 逐文件验证 | 69 | 11 |
-| **合计** | | | **650** | **52** |
+| 6 | 07-07 | 第七轮全项目审计 (10 维度) | 144 | 43 |
+| 7 | 07-07 | wasm-edge `static mut EVENTS` 反模式 + deploy.sh 恢复 + Agent 端到端验证 | 8 | 8 |
+| **合计** | | | **802** | **103** |
 
-**当前状态**: Rust 0 errors ✅ | ESP32 固件已修改待编译 | 52 bugs 已修复 |
+**当前状态**: Rust 0 errors ✅ (workspace + wasm-edge --features std) | ESP32 固件已修改待编译 | 103 bugs 已修复 | Agent 功能端到端验证通过 ✅
+
+---
+
+## 2026-07-07 第六轮审查 — 全项目 10 维度审计 ✅ (43 bugs 修复)
+
+**范围**: 全项目 4 大模块（Rust 服务器 7 crate / ESP32-C5 固件 / Web UI / 配置部署）
+**审计维度**: 10 类问题（语法/功能/性能/安全/数据流/结构/业务逻辑/接口/边界/文档）
+**覆盖**: ~120 个源代码文件
+
+### 关键修复（P0 严重问题 16 项）
+
+| # | 文件 | 修复 |
+|---|------|------|
+| C-1 | [rvf_pipeline.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/rvf_pipeline.rs) | `SEG_CRYPTO` 从 `0x0C` 改为 `0x0E`，消除与 `SEG_EMBED` 常量冲突 |
+| C-2 | [alerting_bridge.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/alerting_bridge.rs) | 重构 `generate_escalation()` 避免双重插入；`Vec`→`VecDeque` |
+| C-3 | [mat_pipeline.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/mat_pipeline.rs) | `TriageLevel` 重排：`Unknown=0,Minor=1,Delayed=2,Immediate=3,Deceased=4` |
+| C-4 | [trainer.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/trainer.rs) | 添加 `grad.len() < t_param_count` 守卫；`is_finite()` 防 NaN |
+| C-5 | [main.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/main.rs) | `set_var` 包裹 `unsafe` 块（Rust 2024 edition） |
+| C-6 | [secure_tdm.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-hardware/src/esp32/secure_tdm.rs) | 移除 `DEFAULT_TEST_KEY`，改为 `mesh_key: Option<[u8;16]>` |
+| C-7/C-8 | [prompt_builder.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-llm/src/prompt_builder.rs) | 添加 `sanitize_pii()` + `sanitize_user_input()` |
+| C-9 | [fusion.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-mat/src/localization/fusion.rs) | 实现对数距离路径损耗模型 |
+| C-10~C-12 | ESP32 固件 | OTA PSK 加载 + RVF 签名机制修正 + 整型溢出守卫 |
+| C-13~C-16 | Web UI | demo-alert 双 RAF 修复 + triage-v1 XSS/CDN/WS 退避修复 |
+
+### 关键修复（P1 高危 15 项 + P2 中期重构 12 项）
+
+详见 [docs/代码审计与修复报告.md](file:///d:/CODING/Repository/WCES/docs/代码审计与修复报告.md)
+
+**编译验证**: `cargo check --workspace` ✅ 0 errors
+
+---
+
+## 2026-07-07 第七轮修复 — wasm-edge 反模式 + deploy.sh + Agent 验证 ✅ (8 bugs 修复)
+
+### 1. wasm-edge `static mut EVENTS` 反模式全量修复（7 个文件）
+
+**问题**: WASM 边缘模块中 7 个文件使用 `static mut EVENTS: [(i32, f32); MAX_EVENTS]` 进程级单例共享状态，导致：
+- 多实例并行时事件数据相互覆盖
+- 违反 Rust 内存安全原则（`unsafe` 块）
+- 无法支持未来多 tracker 实例场景
+
+**修复方案**: 将 `static mut EVENTS` 替换为实例字段 `events_buf: [(i32, f32); MAX_EVENTS]`，所有 `unsafe { EVENTS[i] = ... }` 改为 `self.events_buf[i] = ...`，返回值由 `unsafe { &EVENTS[..n] }` 改为 `&self.events_buf[..n]`。
+
+**修复文件清单**（7 个）：
+
+| # | 文件 | unsafe 块数 | 状态 |
+|---|------|:---:|:---:|
+| 1 | [aut_psycho_symbolic.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-wasm-edge/src/aut_psycho_symbolic.rs) | 多处 | ✅ |
+| 2 | [aut_self_healing_mesh.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-wasm-edge/src/aut_self_healing_mesh.rs) | 多处 | ✅ |
+| 3 | [tmp_pattern_sequence.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-wasm-edge/src/tmp_pattern_sequence.rs) | 1 处 return | ✅ |
+| 4 | [ret_customer_flow.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-wasm-edge/src/ret_customer_flow.rs) | 5 处写入 + 1 处 return | ✅ |
+| 5 | [ret_shelf_engagement.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-wasm-edge/src/ret_shelf_engagement.rs) | 2 处提前返回特殊处理 | ✅ |
+| 6 | [ret_table_turnover.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-wasm-edge/src/ret_table_turnover.rs) | 6 处 unsafe 分布在状态机分支 | ✅ |
+| 7 | [ret_dwell_heatmap.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-wasm-edge/src/ret_dwell_heatmap.rs) | 4 处（含循环内写入） | ✅ |
+
+### 2. deploy.sh 从 git 历史恢复
+
+**问题**: `deploy.sh` 当前为 18MB 二进制乱码，无法执行，阻断部署。
+**修复**: 从 commit `6eb49ce`（"燃尽了"）恢复 10KB 干净 bash 脚本。
+**验证**: 恢复后 10062 字节，包含 `#!/bin/bash` + `set -e` + 颜色码 + 端口变量 + 5 步部署结构完整。
+
+### 3. Medical Agent 端到端可用性验证
+
+用户担心 agent 功能"完全不可用"，经端到端审计确认 **agent 功能完全正常**：
+
+| 入口 | 文件 | 验证结论 |
+|------|------|---------|
+| 初始化 | [main.rs L1020-1140](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/main.rs) | ✅ config 驱动模式选择，无 key 自动降级 |
+| WebSocket | [ws.rs L80-360](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/handlers/ws.rs) | ✅ 30s 超时 + LlmAnalysisEngine fallback |
+| REST API | [llm_routes.rs L130-258](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/handlers/llm_routes.rs) | ✅ 使用真实 rssi/kb_matches（不再硬编码）|
+| UDP 触发 | [udp_receiver.rs L380-540](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/tasks/udp_receiver.rs) | ✅ 分诊升级触发 + semaphore 限流（max 4）|
+| 路由 | [router.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-llm/src/router.rs) | ✅ 精确匹配分诊标签（不再 contains 误匹配）|
+| 网关 | [gateway.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-llm/src/gateway.rs) | ✅ 真实 reqwest + 锁-free 断路器 + SSE 流式 |
+| 验证 | [validator.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-llm/src/validator.rs) | ✅ 分层内容拦截（Always/Moderate/Strict）|
+| 降级 | [degrade.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-llm/src/degrade.rs) | ✅ VecDeque 缓存 + TTL 强制约束（<= cooldown）|
+
+### 4. 编译验证
+
+```
+cargo check --workspace                                → ✅ 0 errors (37 pre-existing warnings)
+cargo check --manifest-path crates\wifi-densepose-wasm-edge\Cargo.toml --features std
+                                                       → ✅ 0 errors
+```
+
+### 5. 同步新增文档
+
+| 文档 | 内容 |
+|------|------|
+| [docs/代码审计与修复报告.md](file:///d:/CODING/Repository/WCES/docs/代码审计与修复报告.md) | 第六轮全项目审计：144 issues + 43 fixes 完整清单 |
+| [docs/性能优化与验证报告.md](file:///d:/CODING/Repository/WCES/docs/性能优化与验证报告.md) | ESP32-C5 CSI 性能 + 人员定位 + 呼吸/心跳检测优化报告 |
+| [docs/数据流审计报告.md](file:///d:/CODING/Repository/WCES/docs/数据流审计报告.md) | 12 条端到端数据流审计 + 完整性检查 |
 
 

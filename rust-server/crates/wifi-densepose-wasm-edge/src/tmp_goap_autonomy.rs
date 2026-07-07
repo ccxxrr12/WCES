@@ -82,6 +82,10 @@ pub struct GoapPlanner {
     timer_count: u32,
     replan_interval: u32,
     open: [PlanNode; OPEN_SET_CAP],
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl GoapPlanner {
@@ -93,6 +97,8 @@ impl GoapPlanner {
             plan: [0xFF; MAX_PLAN_DEPTH], plan_len: 0, plan_step: 0,
             goal_priorities: p, timer_count: 0, replan_interval: 60,
             open: [PlanNode::empty(); OPEN_SET_CAP],
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -112,17 +118,16 @@ impl GoapPlanner {
     /// Called at ~1 Hz.  Replans periodically and executes plan steps.
     pub fn on_timer(&mut self) -> &[(i32, f32)] {
         self.timer_count += 1;
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n = 0usize;
+        self.events_len = 0;
         // Replan at interval.
         if self.timer_count % self.replan_interval == 0 {
             let g = self.select_goal();
             if g < NUM_GOALS as u8 {
                 self.current_goal = g;
-                if n < 4 { unsafe { EVENTS[n] = (EVENT_GOAL_SELECTED, g as f32); } n += 1; }
+                if self.events_len < 4 { self.events_buf[self.events_len] = (EVENT_GOAL_SELECTED, g as f32); self.events_len += 1; }
                 let cost = self.plan_for_goal(g as usize);
-                if cost < 255 && n < 4 {
-                    unsafe { EVENTS[n] = (EVENT_PLAN_COST, cost as f32); } n += 1;
+                if cost < 255 && self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_PLAN_COST, cost as f32); self.events_len += 1;
                 }
             }
         }
@@ -134,17 +139,17 @@ impl GoapPlanner {
                 if action.ok(self.world_state) {
                     let old = self.world_state;
                     self.world_state = action.apply(self.world_state);
-                    if (self.world_state & !old) != 0 && n < 4 {
-                        unsafe { EVENTS[n] = (EVENT_MODULE_ACTIVATED, aid as f32); } n += 1;
+                    if (self.world_state & !old) != 0 && self.events_len < 4 {
+                        self.events_buf[self.events_len] = (EVENT_MODULE_ACTIVATED, aid as f32); self.events_len += 1;
                     }
-                    if (old & !self.world_state) != 0 && n < 4 {
-                        unsafe { EVENTS[n] = (EVENT_MODULE_DEACTIVATED, aid as f32); } n += 1;
+                    if (old & !self.world_state) != 0 && self.events_len < 4 {
+                        self.events_buf[self.events_len] = (EVENT_MODULE_DEACTIVATED, aid as f32); self.events_len += 1;
                     }
                 }
             }
             self.plan_step += 1;
         }
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     fn select_goal(&self) -> u8 {

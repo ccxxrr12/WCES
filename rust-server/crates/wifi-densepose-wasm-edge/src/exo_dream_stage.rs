@@ -147,6 +147,10 @@ pub struct DreamStageDetector {
     last_rem_episode: u32,
     /// Last computed micro-movement energy.
     micro_movement: f32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl DreamStageDetector {
@@ -169,6 +173,8 @@ impl DreamStageDetector {
             rem_episode_len: 0,
             last_rem_episode: 0,
             micro_movement: 0.0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -192,8 +198,7 @@ impl DreamStageDetector {
         _variance: f32,
         presence: i32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
 
@@ -221,7 +226,7 @@ impl DreamStageDetector {
 
         // Warmup period: don't classify yet.
         if self.frame_count < MIN_WARMUP {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Classify candidate stage.
@@ -282,33 +287,25 @@ impl DreamStageDetector {
         };
 
         // Emit events.
-        unsafe {
-            EVENTS[n_ev] = (EVENT_SLEEP_STAGE, self.current_stage as u8 as f32);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_SLEEP_STAGE, self.current_stage as u8 as f32);
+        self.events_len += 1;
 
         // Emit quality periodically (every 20 frames).
         if self.frame_count % 20 == 0 {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_SLEEP_QUALITY, efficiency);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_SLEEP_QUALITY, efficiency);
+            self.events_len += 1;
 
-            unsafe {
-                EVENTS[n_ev] = (EVENT_DEEP_SLEEP_RATIO, deep_ratio);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_DEEP_SLEEP_RATIO, deep_ratio);
+            self.events_len += 1;
         }
 
         // Emit REM episode when in REM or just exited.
         if rem_ep > 0 {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_REM_EPISODE, rem_ep as f32);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_REM_EPISODE, rem_ep as f32);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Classify the sleep stage from physiological features.

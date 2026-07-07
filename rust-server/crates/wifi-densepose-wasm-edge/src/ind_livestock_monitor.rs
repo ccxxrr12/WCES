@@ -92,6 +92,9 @@ pub struct LivestockMonitor {
     frame_count: u32,
     /// Last reported breathing BPM.
     last_bpm: f32,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl LivestockMonitor {
@@ -107,6 +110,8 @@ impl LivestockMonitor {
             escape_cooldown: 0,
             frame_count: 0,
             last_bpm: 0.0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -123,6 +128,8 @@ impl LivestockMonitor {
             escape_cooldown: 0,
             frame_count: 0,
             last_bpm: 0.0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -148,8 +155,7 @@ impl LivestockMonitor {
             self.escape_cooldown -= 1;
         }
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         let raw_present = presence > 0 || motion_energy > MIN_MOTION_ACTIVE;
 
@@ -173,12 +179,12 @@ impl LivestockMonitor {
                 // Escape alert: was present for a while, then suddenly gone.
                 if was_present && had_enough_presence
                     && self.escape_cooldown == 0
-                    && n_events < 4
+                    && self.events_len < 4
                 {
                     self.escape_cooldown = ESCAPE_COOLDOWN;
                     let minutes_present = self.presence_frames as f32 / (20.0 * 60.0);
-                    unsafe { EVENTS[n_events] = (EVENT_ESCAPE_ALERT, minutes_present); }
-                    n_events += 1;
+                    self.events_buf[self.events_len] = (EVENT_ESCAPE_ALERT, minutes_present);
+                    self.events_len += 1;
                 }
 
                 self.presence_frames = 0;
@@ -188,10 +194,10 @@ impl LivestockMonitor {
         // --- Step 2: Periodic presence report ---
         if self.animal_present
             && self.frame_count % PRESENCE_REPORT_INTERVAL == 0
-            && n_events < 4
+            && self.events_len < 4
         {
-            unsafe { EVENTS[n_events] = (EVENT_ANIMAL_PRESENT, breathing_bpm); }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_ANIMAL_PRESENT, breathing_bpm);
+            self.events_len += 1;
         }
 
         // --- Step 3: Stillness detection (only when animal is present) ---
@@ -205,12 +211,12 @@ impl LivestockMonitor {
 
             if self.still_frames >= STILLNESS_FRAMES
                 && !self.stillness_alerted
-                && n_events < 4
+                && self.events_len < 4
             {
                 self.stillness_alerted = true;
                 let minutes_still = self.still_frames as f32 / (20.0 * 60.0);
-                unsafe { EVENTS[n_events] = (EVENT_ABNORMAL_STILLNESS, minutes_still); }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_ABNORMAL_STILLNESS, minutes_still);
+                self.events_len += 1;
             }
         }
 
@@ -225,9 +231,9 @@ impl LivestockMonitor {
 
             if is_labored {
                 self.labored_debounce = self.labored_debounce.saturating_add(1);
-                if self.labored_debounce >= LABORED_DEBOUNCE && n_events < 4 {
-                    unsafe { EVENTS[n_events] = (EVENT_LABORED_BREATHING, breathing_bpm); }
-                    n_events += 1;
+                if self.labored_debounce >= LABORED_DEBOUNCE && self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_LABORED_BREATHING, breathing_bpm);
+                    self.events_len += 1;
                     self.labored_debounce = 0; // Reset to allow repeated alerts.
                 }
             } else {
@@ -235,7 +241,7 @@ impl LivestockMonitor {
             }
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Whether an animal is currently detected.

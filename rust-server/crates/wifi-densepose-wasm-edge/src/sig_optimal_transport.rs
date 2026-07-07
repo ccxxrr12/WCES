@@ -84,12 +84,15 @@ pub struct OptimalTransportDetector {
     frame_count: u32,
     shift_streak: u8,
     subtle_streak: u8,
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl OptimalTransportDetector {
     pub const fn new() -> Self {
         Self { prev_amps: [0.0; MAX_SC], smoothed_dist: 0.0, smoothed_var: 0.0, prev_var: 0.0,
-               initialized: false, frame_count: 0, shift_streak: 0, subtle_streak: 0 }
+               initialized: false, frame_count: 0, shift_streak: 0, subtle_streak: 0,
+               events_buf: [(0, 0.0); 4], events_len: 0 }
     }
 
     fn w1_sorted(a: &[f32], b: &[f32], n: usize) -> f32 {
@@ -126,8 +129,9 @@ impl OptimalTransportDetector {
 
     /// Process one frame of amplitude data. Returns events.
     pub fn process_frame(&mut self, amplitudes: &[f32]) -> &[(i32, f32)] {
+        self.events_len = 0;
         let n = amplitudes.len().min(MAX_SC);
-        if n < 2 { return &[]; }
+        if n < 2 { return &self.events_buf[..self.events_len]; }
         self.frame_count += 1;
         let mut cur = [0.0f32; MAX_SC];
         let mut i = 0; while i < n { cur[i] = amplitudes[i]; i += 1; }
@@ -137,7 +141,7 @@ impl OptimalTransportDetector {
             self.smoothed_var = Self::variance(&cur, n);
             self.prev_var = self.smoothed_var;
             self.initialized = true;
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let raw_w = Self::sliced_w(&cur, &self.prev_amps, n);
@@ -150,29 +154,29 @@ impl OptimalTransportDetector {
 
         i = 0; while i < n { self.prev_amps[i] = cur[i]; i += 1; }
 
-        static mut EV: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut ne = 0usize;
-
-        if self.frame_count % 5 == 0 && ne < 4 {
-            unsafe { EV[ne] = (EVENT_WASSERSTEIN_DISTANCE, self.smoothed_dist); } ne += 1;
+        if self.frame_count % 5 == 0 && self.events_len < 4 {
+            self.events_buf[self.events_len] = (EVENT_WASSERSTEIN_DISTANCE, self.smoothed_dist);
+            self.events_len += 1;
         }
         if self.smoothed_dist > WASS_SHIFT {
             self.shift_streak = self.shift_streak.saturating_add(1);
-            if self.shift_streak >= SHIFT_DEB && ne < 4 {
-                unsafe { EV[ne] = (EVENT_DISTRIBUTION_SHIFT, self.smoothed_dist); } ne += 1;
+            if self.shift_streak >= SHIFT_DEB && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_DISTRIBUTION_SHIFT, self.smoothed_dist);
+                self.events_len += 1;
                 self.shift_streak = 0;
             }
         } else { self.shift_streak = 0; }
 
         if self.smoothed_dist > WASS_SUBTLE && vc < VAR_STABLE {
             self.subtle_streak = self.subtle_streak.saturating_add(1);
-            if self.subtle_streak >= SUBTLE_DEB && ne < 4 {
-                unsafe { EV[ne] = (EVENT_SUBTLE_MOTION, self.smoothed_dist); } ne += 1;
+            if self.subtle_streak >= SUBTLE_DEB && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_SUBTLE_MOTION, self.smoothed_dist);
+                self.events_len += 1;
                 self.subtle_streak = 0;
             }
         } else { self.subtle_streak = 0; }
 
-        unsafe { &EV[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     pub fn distance(&self) -> f32 { self.smoothed_dist }

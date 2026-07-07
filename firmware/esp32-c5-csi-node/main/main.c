@@ -59,11 +59,40 @@ static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 #define MAX_RETRY 10
 
+/* E-4 fix: handle for the dedicated WiFi reconnect task. The STA_DISCONNECTED
+ * event handler used to call vTaskDelay() inline, blocking the WiFi event task
+ * (which services ALL WiFi/IP events) for up to 16 s during exponential
+ * backoff. The delay + esp_wifi_connect() is now delegated to this task via a
+ * task notification carrying the backoff delay in milliseconds. */
+static TaskHandle_t s_reconnect_task_handle = NULL;
+
 /* BUG 4 fix: proper esp_timer_cb_t wrapper avoids UB function-pointer cast.
  * wasm_runtime_on_timer() is void(void); esp_timer expects void(*)(void*). */
 static void wasm_timer_cb(void *arg) {
     (void)arg;
     wasm_runtime_on_timer();
+}
+
+/* E-4 fix: dedicated reconnect task. Waits for a notification from the WiFi
+ * event handler (value = backoff delay in ms), sleeps that long, then calls
+ * esp_wifi_connect(). Runs in its own task context so the WiFi event task is
+ * never blocked by the backoff delay. */
+static void wifi_reconnect_task(void *arg)
+{
+    (void)arg;
+    uint32_t delay_ms;
+    for (;;) {
+        if (xTaskNotifyWait(0, 0xFFFFFFFFUL, &delay_ms, portMAX_DELAY) != pdPASS) {
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        esp_err_t ret = esp_wifi_connect();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_connect() failed: %s — setting FAIL_BIT",
+                     esp_err_to_name(ret));
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        }
+    }
 }
 
 static void event_handler(void *arg, esp_event_base_t event_base,
@@ -90,20 +119,24 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             if (delay_ms > 16000) delay_ms = 16000;
             ESP_LOGI(TAG, "Retrying WiFi connection (%d/%d) reason=%d, backoff=%lu ms",
                      s_retry_num, MAX_RETRY, evt->reason, (unsigned long)delay_ms);
-            /* NOTE: vTaskDelay in the WiFi event handler blocks the WiFi event
-             * task for up to 16s. This is known and tolerated because the
-             * exponential backoff runs only during initial connection (not in
-             * normal operation), and the alternative (spawning a separate retry
-             * task) adds complexity disproportionate to the benefit. */
-            vTaskDelay(pdMS_TO_TICKS(delay_ms));
-            esp_err_t ret = esp_wifi_connect();
-            if (ret != ESP_OK) {
-                /* H-5 fix: If esp_wifi_connect() itself fails (not just a
-                 * disconnect), set FAIL_BIT so the caller doesn't hang
-                 * waiting for an event that may never come. */
-                ESP_LOGE(TAG, "esp_wifi_connect() failed: %s — setting FAIL_BIT",
-                         esp_err_to_name(ret));
-                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            /* E-4 fix: hand the backoff delay to the dedicated reconnect task
+             * instead of calling vTaskDelay() here. The WiFi event task must
+             * stay responsive to service other WiFi/IP events; blocking it for
+             * up to 16 s stalled the entire event loop. The reconnect task
+             * sleeps and then calls esp_wifi_connect() on its own stack. */
+            if (s_reconnect_task_handle != NULL) {
+                xTaskNotify(s_reconnect_task_handle, delay_ms, eSetValueWithOverwrite);
+            } else {
+                /* Fallback: if the reconnect task was never created (init
+                 * failure), preserve the old blocking behaviour so a reconnect
+                 * still happens rather than silently dropping the event. */
+                vTaskDelay(pdMS_TO_TICKS(delay_ms));
+                esp_err_t ret = esp_wifi_connect();
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "esp_wifi_connect() failed: %s — setting FAIL_BIT",
+                             esp_err_to_name(ret));
+                    xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+                }
             }
         } else {
             ESP_LOGE(TAG, "WiFi connect failed after %d retries (reason=%d) — setting FAIL_BIT",
@@ -162,6 +195,14 @@ static void wifi_init_sta(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+
+    /* E-4 fix: spawn the reconnect task before esp_wifi_start() so the very
+     * first STA_DISCONNECTED event (which can arrive during initial connect)
+     * has a task to hand the backoff off to. 2 KB stack is plenty for
+     * vTaskDelay + esp_wifi_connect(). Priority 5 matches the default event
+     * task priority so reconnects are serviced promptly. */
+    xTaskCreate(wifi_reconnect_task, "wifi_reconn", 2048, NULL, 5, &s_reconnect_task_handle);
+
     ESP_ERROR_CHECK(esp_wifi_start());
 
 #if CONFIG_IDF_TARGET_ESP32C5

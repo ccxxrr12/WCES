@@ -50,6 +50,8 @@ pub struct PatternSequenceAnalyzer {
     timer_count: u32,
     lcs_prev: [u16; LCS_WINDOW + 1],
     lcs_curr: [u16; LCS_WINDOW + 1],
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl PatternSequenceAnalyzer {
@@ -59,6 +61,7 @@ impl PatternSequenceAnalyzer {
             pattern_lib: [PatternEntry::empty(); MAX_PATTERNS], n_patterns: 0,
             routine_confidence: 0.0, frame_votes: [0; 5], frames_in_minute: 0,
             timer_count: 0, lcs_prev: [0; LCS_WINDOW + 1], lcs_curr: [0; LCS_WINDOW + 1],
+            events_buf: [(0, 0.0); 4], events_len: 0,
         }
     }
 
@@ -71,9 +74,8 @@ impl PatternSequenceAnalyzer {
 
     /// Called at ~1 Hz. Commits symbols and runs hourly LCS comparison.
     pub fn on_timer(&mut self) -> &[(i32, f32)] {
+        self.events_len = 0;
         self.timer_count += 1;
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n = 0usize;
 
         if self.timer_count % 60 == 0 && self.frames_in_minute > 0 {
             let sym = self.majority_symbol();
@@ -82,14 +84,14 @@ impl PatternSequenceAnalyzer {
             // Deviation check against yesterday.
             if self.day_offset > 0 {
                 let predicted = self.history[self.minute_counter as usize];
-                if sym as u8 != predicted && n < 4 {
-                    unsafe { EVENTS[n] = (EVENT_ROUTINE_DEVIATION, self.minute_counter as f32); }
-                    n += 1;
+                if sym as u8 != predicted && self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_ROUTINE_DEVIATION, self.minute_counter as f32);
+                    self.events_len += 1;
                 }
                 let next_min = (self.minute_counter + 1) % DAY_LEN as u16;
-                if n < 4 {
-                    unsafe { EVENTS[n] = (EVENT_PREDICTION_NEXT, self.history[next_min as usize] as f32); }
-                    n += 1;
+                if self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_PREDICTION_NEXT, self.history[next_min as usize] as f32);
+                    self.events_len += 1;
                 }
             }
             self.minute_counter += 1;
@@ -104,14 +106,14 @@ impl PatternSequenceAnalyzer {
             if wlen >= MIN_PATTERN_LEN {
                 let lcs = self.compute_lcs(start, wlen);
                 self.routine_confidence = if wlen > 0 { lcs as f32 / wlen as f32 } else { 0.0 };
-                if n < 4 { unsafe { EVENTS[n] = (EVENT_PATTERN_CONFIDENCE, self.routine_confidence); } n += 1; }
+                if self.events_len < 4 { self.events_buf[self.events_len] = (EVENT_PATTERN_CONFIDENCE, self.routine_confidence); self.events_len += 1; }
                 if lcs >= MIN_PATTERN_LEN {
                     self.store_pattern(start, wlen);
-                    if n < 4 { unsafe { EVENTS[n] = (EVENT_PATTERN_DETECTED, lcs as f32); } n += 1; }
+                    if self.events_len < 4 { self.events_buf[self.events_len] = (EVENT_PATTERN_DETECTED, lcs as f32); self.events_len += 1; }
                 }
             }
         }
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     fn majority_symbol(&self) -> Symbol {

@@ -74,6 +74,9 @@ pub struct ConfinedSpaceMonitor {
     extraction_alerted: bool,
     /// Immobile alert already fired.
     immobile_alerted: bool,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl ConfinedSpaceMonitor {
@@ -89,6 +92,8 @@ impl ConfinedSpaceMonitor {
             last_breathing_bpm: 0.0,
             extraction_alerted: false,
             immobile_alerted: false,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -110,8 +115,7 @@ impl ConfinedSpaceMonitor {
     ) -> &[(i32, f32)] {
         self.frame_count += 1;
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         // --- Step 1: Debounced presence detection ---
         let raw_present = presence > 0 && variance > MIN_PRESENCE_VAR;
@@ -140,18 +144,18 @@ impl ConfinedSpaceMonitor {
             self.no_motion_frames = 0;
             self.extraction_alerted = false;
             self.immobile_alerted = false;
-            if n_events < 4 {
-                unsafe { EVENTS[n_events] = (EVENT_WORKER_ENTRY, 1.0); }
-                n_events += 1;
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_WORKER_ENTRY, 1.0);
+                self.events_len += 1;
             }
         }
 
         // Exit event.
         if !self.worker_inside && was_inside {
             self.state = WorkerState::Empty;
-            if n_events < 4 {
-                unsafe { EVENTS[n_events] = (EVENT_WORKER_EXIT, 1.0); }
-                n_events += 1;
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_WORKER_EXIT, 1.0);
+                self.events_len += 1;
             }
         }
 
@@ -168,9 +172,9 @@ impl ConfinedSpaceMonitor {
                 }
 
                 // Periodic breathing confirmation.
-                if self.frame_count % BREATHING_REPORT_INTERVAL == 0 && n_events < 4 {
-                    unsafe { EVENTS[n_events] = (EVENT_BREATHING_OK, breathing_bpm); }
-                    n_events += 1;
+                if self.frame_count % BREATHING_REPORT_INTERVAL == 0 && self.events_len < 4 {
+                    self.events_buf[self.events_len] = (EVENT_BREATHING_OK, breathing_bpm);
+                    self.events_len += 1;
                 }
             } else {
                 self.no_breathing_frames += 1;
@@ -192,29 +196,29 @@ impl ConfinedSpaceMonitor {
             // Extraction alert: no breathing for >15 seconds.
             if self.no_breathing_frames >= BREATHING_CEASE_FRAMES
                 && !self.extraction_alerted
-                && n_events < 4
+                && self.events_len < 4
             {
                 self.state = WorkerState::BreathingCeased;
                 self.extraction_alerted = true;
                 let seconds = self.no_breathing_frames as f32 / 20.0;
-                unsafe { EVENTS[n_events] = (EVENT_EXTRACTION_ALERT, seconds); }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_EXTRACTION_ALERT, seconds);
+                self.events_len += 1;
             }
 
             // Immobile alert: no motion for >60 seconds.
             if self.no_motion_frames >= IMMOBILE_FRAMES
                 && !self.immobile_alerted
-                && n_events < 4
+                && self.events_len < 4
             {
                 self.state = WorkerState::Immobile;
                 self.immobile_alerted = true;
                 let seconds = self.no_motion_frames as f32 / 20.0;
-                unsafe { EVENTS[n_events] = (EVENT_IMMOBILE_ALERT, seconds); }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_IMMOBILE_ALERT, seconds);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Current worker state.

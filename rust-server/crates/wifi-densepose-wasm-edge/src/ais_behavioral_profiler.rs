@@ -111,6 +111,8 @@ pub struct BehavioralProfiler {
     obs_cycles: u32,
     cooldown: u16,
     anomaly_count: u32,
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl BehavioralProfiler {
@@ -118,17 +120,17 @@ impl BehavioralProfiler {
         Self {
             stats: [Welford::new(); N_DIM], obs: ObsWindow::new(),
             mature: false, frame_count: 0, obs_cycles: 0, cooldown: 0, anomaly_count: 0,
+            events_buf: [(0, 0.0); 4], events_len: 0,
         }
     }
 
     /// Process one frame. Returns `(event_id, value)` pairs.
     pub fn process_frame(&mut self, present: bool, motion: f32, n_persons: u8) -> &[(i32, f32)] {
+        self.events_len = 0;
         self.frame_count += 1;
         self.cooldown = self.cooldown.saturating_sub(1);
         self.obs.push(present, motion, n_persons);
 
-        static mut EV: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut ne = 0usize;
 
         if self.frame_count % (OBS_WIN as u32) == 0 && self.obs.len == OBS_WIN {
             let feat = self.obs.features();
@@ -139,8 +141,10 @@ impl BehavioralProfiler {
                 if self.obs_cycles >= LEARNING_FRAMES / (OBS_WIN as u32) {
                     self.mature = true;
                     let days = self.frame_count as f32 / (20.0 * 86400.0);
-                    unsafe { EV[ne] = (EVENT_PROFILE_MATURITY, days); }
-                    ne += 1;
+                    if self.events_len < 4 {
+                        self.events_buf[self.events_len] = (EVENT_PROFILE_MATURITY, days);
+                        self.events_len += 1;
+                    }
                 }
             } else {
                 // Score before updating.
@@ -159,12 +163,19 @@ impl BehavioralProfiler {
                 if self.cooldown == 0 {
                     if cz > ANOMALY_Z {
                         self.anomaly_count += 1;
-                        unsafe { EV[ne] = (EVENT_BEHAVIOR_ANOMALY, cz); } ne += 1;
-                        if ne < 4 { unsafe { EV[ne] = (EVENT_PROFILE_DEVIATION, max_d as f32); } ne += 1; }
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_BEHAVIOR_ANOMALY, cz);
+                            self.events_len += 1;
+                        }
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_PROFILE_DEVIATION, max_d as f32);
+                            self.events_len += 1;
+                        }
                         self.cooldown = COOLDOWN;
                     }
-                    if hi_z >= NOVEL_MIN && ne < 4 {
-                        unsafe { EV[ne] = (EVENT_NOVEL_PATTERN, hi_z as f32); } ne += 1;
+                    if hi_z >= NOVEL_MIN && self.events_len < 4 {
+                        self.events_buf[self.events_len] = (EVENT_NOVEL_PATTERN, hi_z as f32);
+                        self.events_len += 1;
                         if self.cooldown == 0 { self.cooldown = COOLDOWN; }
                     }
                 }
@@ -172,11 +183,11 @@ impl BehavioralProfiler {
         }
 
         // Periodic maturity report.
-        if self.mature && self.frame_count % MATURITY_INTERVAL == 0 && ne < 4 {
-            unsafe { EV[ne] = (EVENT_PROFILE_MATURITY, self.frame_count as f32 / (20.0 * 86400.0)); }
-            ne += 1;
+        if self.mature && self.frame_count % MATURITY_INTERVAL == 0 && self.events_len < 4 {
+            self.events_buf[self.events_len] = (EVENT_PROFILE_MATURITY, self.frame_count as f32 / (20.0 * 86400.0));
+            self.events_len += 1;
         }
-        unsafe { &EV[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     pub fn is_mature(&self) -> bool { self.mature }

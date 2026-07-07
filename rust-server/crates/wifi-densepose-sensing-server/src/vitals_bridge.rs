@@ -80,8 +80,14 @@ impl VitalsBridge {
             None => return (None, None, 0.0, 0.0),
         };
 
-        // Uniform weights for breathing extraction
+        // Uniform weights for breathing extraction.
+        // Guard against empty residuals: `1.0 / 0 as f64` would produce Inf,
+        // and passing empty weights to the extractors is undefined. Return
+        // early with no estimates instead.
         let rn = residuals.len().min(64);
+        if rn == 0 {
+            return (None, None, 0.0, 0.0);
+        }
         let uniform_weights: Vec<f64> = vec![1.0 / rn as f64; rn];
 
         // Breathing extraction

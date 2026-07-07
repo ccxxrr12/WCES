@@ -48,6 +48,8 @@ pub struct PromptShield {
     cd_replay: u16,
     cd_inject: u16,
     cd_jam: u16,
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl PromptShield {
@@ -58,20 +60,19 @@ impl PromptShield {
             baseline_snr: 0.0, cal_amp: 0.0, cal_var: 0.0, cal_n: 0,
             calibrated: false, low_snr_run: 0, frame_count: 0,
             cd_replay: 0, cd_inject: 0, cd_jam: 0,
+            events_buf: [(0, 0.0); 4], events_len: 0,
         }
     }
 
     /// Process one CSI frame. Returns `(event_id, value)` pairs.
     pub fn process_frame(&mut self, phases: &[f32], amps: &[f32]) -> &[(i32, f32)] {
+        self.events_len = 0;
         let n = phases.len().min(amps.len()).min(MAX_SC);
-        if n < 2 { return &[]; }
+        if n < 2 { return &self.events_buf[..self.events_len]; }
         self.frame_count += 1;
         self.cd_replay = self.cd_replay.saturating_sub(1);
         self.cd_inject = self.cd_inject.saturating_sub(1);
         self.cd_jam = self.cd_jam.saturating_sub(1);
-
-        static mut EV: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut ne = 0usize;
 
         // Frame features: mean phase, mean amp, amp variance.
         let (mut m_ph, mut m_a) = (0.0f32, 0.0f32);
@@ -98,7 +99,7 @@ impl PromptShield {
             }
             let h = self.fnv1a(m_ph, m_a, a_var);
             self.push_hash(h);
-            return unsafe { &EV[..0] };
+            return &self.events_buf[..self.events_len];
         }
 
         // ── 1. Replay ───────────────────────────────────────────────────
@@ -106,8 +107,11 @@ impl PromptShield {
         let replay = self.has_hash(h);
         self.push_hash(h);
         if replay && self.cd_replay == 0 {
-            unsafe { EV[ne] = (EVENT_REPLAY_ATTACK, 1.0); }
-            ne += 1; self.cd_replay = COOLDOWN;
+            if self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_REPLAY_ATTACK, 1.0);
+                self.events_len += 1;
+            }
+            self.cd_replay = COOLDOWN;
         }
 
         // ── 2. Injection ────────────────────────────────────────────────
@@ -120,9 +124,9 @@ impl PromptShield {
             }
             jc as f32 / n as f32
         } else { 0.0 };
-        if inj_f >= INJECTION_FRAC && self.cd_inject == 0 && ne < 4 {
-            unsafe { EV[ne] = (EVENT_INJECTION_DETECTED, inj_f); }
-            ne += 1; self.cd_inject = COOLDOWN;
+        if inj_f >= INJECTION_FRAC && self.cd_inject == 0 && self.events_len < 4 {
+            self.events_buf[self.events_len] = (EVENT_INJECTION_DETECTED, inj_f);
+            self.events_len += 1; self.cd_inject = COOLDOWN;
         }
 
         // ── 3. Jamming ──────────────────────────────────────────────────
@@ -131,14 +135,14 @@ impl PromptShield {
         if self.baseline_snr > 0.0 && cur_snr < self.baseline_snr * JAMMING_SNR_FRAC {
             self.low_snr_run = self.low_snr_run.saturating_add(1);
         } else { self.low_snr_run = 0; }
-        if self.low_snr_run >= JAMMING_CONSEC && self.cd_jam == 0 && ne < 4 {
+        if self.low_snr_run >= JAMMING_CONSEC && self.cd_jam == 0 && self.events_len < 4 {
             let r = if cur_snr > 0.0001 { self.baseline_snr / cur_snr } else { 1000.0 };
-            unsafe { EV[ne] = (EVENT_JAMMING_DETECTED, 10.0 * log10f(r)); }
-            ne += 1; self.cd_jam = COOLDOWN;
+            self.events_buf[self.events_len] = (EVENT_JAMMING_DETECTED, 10.0 * log10f(r));
+            self.events_len += 1; self.cd_jam = COOLDOWN;
         }
 
         // ── 4. Integrity (periodic) ─────────────────────────────────────
-        if self.frame_count % 20 == 0 && ne < 4 {
+        if self.frame_count % 20 == 0 && self.events_len < 4 {
             let mut s = 1.0f32;
             if replay { s -= 0.4; }
             if inj_f > 0.0 { s -= (inj_f / INJECTION_FRAC).min(1.0) * 0.3; }
@@ -146,12 +150,12 @@ impl PromptShield {
                 let r = cur_snr / self.baseline_snr;
                 if r < 0.5 { s -= (1.0 - r * 2.0).min(0.3); }
             }
-            unsafe { EV[ne] = (EVENT_SIGNAL_INTEGRITY, if s < 0.0 { 0.0 } else { s }); }
-            ne += 1;
+            self.events_buf[self.events_len] = (EVENT_SIGNAL_INTEGRITY, if s < 0.0 { 0.0 } else { s });
+            self.events_len += 1;
         }
 
         for i in 0..n { self.prev_amps[i] = amps[i]; }
-        unsafe { &EV[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     fn fnv1a(&self, ph: f32, amp: f32, var: f32) -> u32 {

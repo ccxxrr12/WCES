@@ -78,13 +78,21 @@ impl std::fmt::Debug for OnnxSession {
 
 impl OnnxSession {
     /// Create a new ONNX session from a file
-    pub fn from_file<P: AsRef<Path>>(path: P, _options: &InferenceOptions) -> NnResult<Self> {
+    pub fn from_file<P: AsRef<Path>>(path: P, options: &InferenceOptions) -> NnResult<Self> {
         let path = path.as_ref();
-        info!(?path, "Loading ONNX model");
+        info!(?path, num_threads = options.num_threads, "Loading ONNX model");
 
-        // Build session using ort 2.0 API
-        let session = Session::builder()
-            .map_err(|e| NnError::model_load(format!("Failed to create session builder: {}", e)))?
+        // Build session using ort 2.0 API. Honor `InferenceOptions::num_threads`
+        // when it is set (>0); otherwise fall back to ORT's default thread
+        // count. N3: previously `_options` was ignored entirely.
+        let mut builder = Session::builder()
+            .map_err(|e| NnError::model_load(format!("Failed to create session builder: {}", e)))?;
+        if options.num_threads > 0 {
+            builder = builder
+                .with_intra_threads(options.num_threads)
+                .map_err(|e| NnError::model_load(format!("Failed to set intra threads: {}", e)))?;
+        }
+        let session = builder
             .commit_from_file(path)
             .map_err(|e| NnError::model_load(format!("Failed to load model: {}", e)))?;
 
@@ -142,11 +150,19 @@ impl OnnxSession {
     }
 
     /// Create from in-memory bytes
-    pub fn from_bytes(bytes: &[u8], _options: &InferenceOptions) -> NnResult<Self> {
-        info!("Loading ONNX model from bytes");
+    pub fn from_bytes(bytes: &[u8], options: &InferenceOptions) -> NnResult<Self> {
+        info!(num_threads = options.num_threads, "Loading ONNX model from bytes");
 
-        let session = Session::builder()
-            .map_err(|e| NnError::model_load(format!("Failed to create session builder: {}", e)))?
+        // N3: honor `InferenceOptions::num_threads` (>0) instead of ignoring
+        // the options argument.
+        let mut builder = Session::builder()
+            .map_err(|e| NnError::model_load(format!("Failed to create session builder: {}", e)))?;
+        if options.num_threads > 0 {
+            builder = builder
+                .with_intra_threads(options.num_threads)
+                .map_err(|e| NnError::model_load(format!("Failed to set intra threads: {}", e)))?;
+        }
+        let session = builder
             .commit_from_memory(bytes)
             .map_err(|e| NnError::model_load(format!("Failed to load model from bytes: {}", e)))?;
 
@@ -202,57 +218,76 @@ impl OnnxSession {
         &self.output_names
     }
 
-    /// Run inference
+    /// Run inference.
+    ///
+    /// N4: every input declared by the model is fed from the `inputs` map (any
+    /// missing input is now a hard error instead of being silently dropped
+    /// after the first input). N5: output tensor extraction failures are now
+    /// surfaced as errors instead of being silently skipped.
     pub fn run(&mut self, inputs: HashMap<String, Tensor>) -> NnResult<HashMap<String, Tensor>> {
-        // Get the first input tensor
-        let first_input_name = self.input_names.first()
-            .ok_or_else(|| NnError::inference("No input names defined"))?;
+        if self.input_names.is_empty() {
+            return Err(NnError::inference("No input names defined"));
+        }
 
-        let tensor = inputs
-            .get(first_input_name)
-            .ok_or_else(|| NnError::invalid_input(format!("Missing input: {}", first_input_name)))?;
+        // Build the ort input map for *all* declared inputs.
+        let mut session_inputs: Vec<(
+            std::borrow::Cow<'_, str>,
+            ort::session::SessionInputValue<'_>,
+        )> = Vec::with_capacity(self.input_names.len());
+        for name in &self.input_names {
+            let tensor = inputs.get(name).ok_or_else(|| {
+                NnError::invalid_input(format!("Missing input: {}", name))
+            })?;
+            let arr = tensor.as_array4()?;
 
-        let arr = tensor.as_array4()?;
+            // Get shape and data for ort tensor creation
+            let shape: Vec<i64> = arr.shape().iter().map(|&d| d as i64).collect();
+            let data: Vec<f32> = arr.iter().cloned().collect();
 
-        // Get shape and data for ort tensor creation
-        let shape: Vec<i64> = arr.shape().iter().map(|&d| d as i64).collect();
-        let data: Vec<f32> = arr.iter().cloned().collect();
-
-        // Create ORT tensor from shape and data
-        let ort_tensor = ort::value::Tensor::from_array((shape, data))
-            .map_err(|e| NnError::tensor_op(format!("Failed to create ORT tensor: {}", e)))?;
-
-        // Build input map - inputs! macro returns Vec directly
-        let session_inputs = ort::inputs![first_input_name.as_str() => ort_tensor];
+            // Create ORT tensor from shape and data
+            let ort_tensor = ort::value::Tensor::from_array((shape, data))
+                .map_err(|e| NnError::tensor_op(format!("Failed to create ORT tensor: {}", e)))?;
+            session_inputs.push((name.as_str().into(), ort_tensor.into()));
+        }
 
         // Run session
         let session_outputs = self.session
             .run(session_inputs)
             .map_err(|e| NnError::inference(format!("Inference failed: {}", e)))?;
 
-        // Extract outputs
+        // Extract outputs. N5: extraction failures are now hard errors.
         let mut result = HashMap::new();
 
         for name in self.output_names.iter() {
             if let Some(output) = session_outputs.get(name.as_str()) {
-                // Try to extract tensor - returns (shape, data) tuple in ort 2.0
-                if let Ok((shape, data)) = output.try_extract_tensor::<f32>() {
-                    let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+                // try_extract_tensor returns (&Shape, &[f32]) in ort 2.0.
+                match output.try_extract_tensor::<f32>() {
+                    Ok((shape, data)) => {
+                        let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
 
-                    if dims.len() == 4 {
-                        // Convert to 4D array
-                        let arr4 = ndarray::Array4::from_shape_vec(
-                            (dims[0], dims[1], dims[2], dims[3]),
-                            data.to_vec(),
-                        ).map_err(|e| NnError::tensor_op(format!("Shape error: {}", e)))?;
-                        result.insert(name.clone(), Tensor::Float4D(arr4));
-                    } else {
-                        // Handle other dimensionalities
-                        let arr_dyn = ndarray::ArrayD::from_shape_vec(
-                            ndarray::IxDyn(&dims),
-                            data.to_vec(),
-                        ).map_err(|e| NnError::tensor_op(format!("Shape error: {}", e)))?;
-                        result.insert(name.clone(), Tensor::FloatND(arr_dyn));
+                        if dims.len() == 4 {
+                            // Convert to 4D array
+                            let arr4 = ndarray::Array4::from_shape_vec(
+                                (dims[0], dims[1], dims[2], dims[3]),
+                                data.to_vec(),
+                            )
+                            .map_err(|e| NnError::tensor_op(format!("Shape error: {}", e)))?;
+                            result.insert(name.clone(), Tensor::Float4D(arr4));
+                        } else {
+                            // Handle other dimensionalities
+                            let arr_dyn = ndarray::ArrayD::from_shape_vec(
+                                ndarray::IxDyn(&dims),
+                                data.to_vec(),
+                            )
+                            .map_err(|e| NnError::tensor_op(format!("Shape error: {}", e)))?;
+                            result.insert(name.clone(), Tensor::FloatND(arr_dyn));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(NnError::inference(format!(
+                            "output '{}' extract failed: {}",
+                            name, e
+                        )));
                     }
                 }
             }
@@ -351,6 +386,10 @@ impl Backend for OnnxBackend {
     }
 
     fn warmup(&self) -> NnResult<()> {
+        // NOTE (P2): this warmup only constructs dummy inputs for 4-D float
+        // tensors. Models with non-4-D inputs (e.g. 2-D, 3-D, or dynamic-rank)
+        // are silently skipped here, so warmup may be a no-op for them. A
+        // future improvement should handle arbitrary ranks.
         let session = self.session.read();
         let mut dummy_inputs = HashMap::new();
 

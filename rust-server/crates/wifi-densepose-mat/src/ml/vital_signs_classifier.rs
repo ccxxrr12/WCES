@@ -899,13 +899,26 @@ impl VitalSignsClassifier {
         let heartbeat = self.classify_heartbeat_rules(features);
         let movement = self.classify_movement_rules(features);
 
-        let overall_confidence = [
-            breathing.as_ref().map(|b| b.confidence),
-            heartbeat.as_ref().map(|h| h.confidence),
-            movement.as_ref().map(|m| m.confidence),
-        ].iter()
+        let overall_confidence = {
+            let confidences: Vec<f32> = [
+                breathing.as_ref().map(|b| b.confidence),
+                heartbeat.as_ref().map(|h| h.confidence),
+                movement.as_ref().map(|m| m.confidence),
+            ]
+            .iter()
             .filter_map(|&c| c)
-            .sum::<f32>() / 3.0;
+            .collect();
+            // Divide by the number of classifiers that actually produced a
+            // result, not a hard-coded 3.0. When only a subset of detectors
+            // fires (e.g. heartbeat disabled or below threshold), dividing by
+            // 3.0 understates the true confidence and can wrongly suppress
+            // detections below the ensemble threshold.
+            if confidences.is_empty() {
+                0.0
+            } else {
+                confidences.iter().sum::<f32>() / confidences.len() as f32
+            }
+        };
 
         let combined_uncertainty = UncertaintyEstimate::new(
             1.0 - overall_confidence,
@@ -1095,27 +1108,54 @@ impl VitalSignsClassifier {
 
     /// Estimate heart rate from features
     fn estimate_heart_rate(&self, features: &VitalSignsFeatures) -> f32 {
-        // Heart rate from phase variations
-        let phase_power = features.phase_features.iter()
-            .take(10)
-            .map(|&x| x.abs())
-            .sum::<f32>() / 10.0;
+        // Heart rate band: 0.8-2.0 Hz = 48-120 BPM (typical adult 60-100 BPM).
+        // Search the amplitude spectrum for a peak within this band, mirroring
+        // estimate_breathing_rate's spectral approach but in the cardiac
+        // frequency range. spectral_features holds the FFT power spectrum of
+        // the amplitude signal; index 63 is overwritten with the dominant
+        // frequency (Hz) so it is skipped during the peak search.
+        const HEART_RATE_MIN_HZ: f32 = 0.8;
+        const HEART_RATE_MAX_HZ: f32 = 2.0;
+        // FFT size used by extract_spectral_features (upper bound of the
+        // 128.min(signal.len().next_power_of_two()) expression).
+        const FFT_SIZE: f64 = 128.0;
 
-        // Estimate based on heartbeat band power ratio
-        let power_ratio = features.heartbeat_band_power /
-            (features.breathing_band_power + 0.001);
+        let sample_rate = features.sample_rate;
+        if sample_rate > 0.0 && features.spectral_features.len() >= 64 {
+            let freq_resolution = (sample_rate / FFT_SIZE) as f32;
+            if freq_resolution > 0.0 {
+                let mut best_power: f32 = 0.0;
+                let mut best_freq_hz: f32 = 0.0;
+                for (i, &power) in features.spectral_features.iter().enumerate() {
+                    if i == 63 {
+                        continue;
+                    }
+                    let freq_hz = i as f32 * freq_resolution;
+                    if freq_hz >= HEART_RATE_MIN_HZ
+                        && freq_hz <= HEART_RATE_MAX_HZ
+                        && power > best_power
+                    {
+                        best_power = power;
+                        best_freq_hz = freq_hz;
+                    }
+                }
 
-        // Base rate estimation (simplified)
-        let base_rate = 70.0 + phase_power * 20.0;
+                if best_power > 0.0 {
+                    return (best_freq_hz * 60.0).clamp(40.0, 180.0);
+                }
+            }
+        }
 
-        // Adjust based on power characteristics
-        let adjusted = if power_ratio > 0.5 {
-            base_rate * 1.1
-        } else {
-            base_rate * 0.9
-        };
-
-        adjusted.clamp(40.0, 180.0)
+        // Fallback: no usable spectral peak in the heartbeat band (e.g. when
+        // the sample rate is too high for the FFT size to resolve 0.8-2.0 Hz).
+        // Use the ratio of heartbeat-band to breathing-band power to bias the
+        // estimate away from the breathing harmonic. A stronger cardiac
+        // component (higher ratio) maps to a higher rate within the normal
+        // adult range, instead of the previous constant ~70 BPM output.
+        let power_ratio = features.heartbeat_band_power
+            / (features.breathing_band_power + 0.001);
+        let base = 60.0 + (power_ratio * 40.0).clamp(0.0, 40.0);
+        base.clamp(40.0, 180.0)
     }
 
     /// Rule-based movement classification

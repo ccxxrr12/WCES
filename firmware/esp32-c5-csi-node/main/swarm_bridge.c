@@ -139,10 +139,15 @@ void swarm_bridge_update_happiness(const float *vector, uint8_t dim)
 void swarm_bridge_get_stats(uint32_t *regs, uint32_t *heartbeats,
                             uint32_t *ingests, uint32_t *errors)
 {
-    if (regs)       *regs       = s_cnt_regs;
-    if (heartbeats) *heartbeats = s_cnt_heartbeats;
-    if (ingests)    *ingests    = s_cnt_ingests;
-    if (errors)     *errors     = s_cnt_errors;
+    /* E-6 fix: counters are mutated by swarm_task on Core 0 and read here from
+     * arbitrary tasks. Use relaxed atomic loads so the caller never observes a
+     * torn 32-bit read and the compiler doesn't cache the value across the call.
+     * Relaxed ordering is sufficient because the counters are best-effort
+     * diagnostics, not participating in release/acquire protocols. */
+    if (regs)       *regs       = __atomic_load_n(&s_cnt_regs, __ATOMIC_RELAXED);
+    if (heartbeats) *heartbeats = __atomic_load_n(&s_cnt_heartbeats, __ATOMIC_RELAXED);
+    if (ingests)    *ingests    = __atomic_load_n(&s_cnt_ingests, __ATOMIC_RELAXED);
+    if (errors)     *errors     = __atomic_load_n(&s_cnt_errors, __ATOMIC_RELAXED);
 }
 
 /* ---- HTTP POST helper ---- */

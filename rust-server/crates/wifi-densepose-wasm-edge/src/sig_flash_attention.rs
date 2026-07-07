@@ -32,6 +32,9 @@ pub struct FlashAttention {
     frame_count: u32,
     last_peak: usize,
     last_centroid: f32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
 }
 
 impl FlashAttention {
@@ -42,6 +45,7 @@ impl FlashAttention {
             smoothed_entropy: MAX_ENTROPY,
             initialized: false, frame_count: 0,
             last_peak: 0, last_centroid: 0.0,
+            events_buf: [(0, 0.0); 3],
         }
     }
 
@@ -50,7 +54,12 @@ impl FlashAttention {
         let n_sc = phases.len().min(amplitudes.len()).min(MAX_SC);
         if n_sc < N_GROUPS { return &[]; }
 
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
+        // NaN guard: bail out if any input is non-finite.
+        for i in 0..n_sc {
+            if !phases[i].is_finite() || !amplitudes[i].is_finite() {
+                return &[];
+            }
+        }
 
         // Per-group means for Q and V.
         let subs_per = n_sc / N_GROUPS;
@@ -117,12 +126,10 @@ impl FlashAttention {
         for g in 0..N_GROUPS { self.prev_group_phases[g] = q[g]; }
 
         // Emit events.
-        unsafe {
-            EVENTS[0] = (EVENT_ATTENTION_PEAK_SC, peak_idx as f32);
-            EVENTS[1] = (EVENT_ATTENTION_SPREAD, self.smoothed_entropy);
-            EVENTS[2] = (EVENT_SPATIAL_FOCUS_ZONE, centroid);
-            &EVENTS[..3]
-        }
+        self.events_buf[0] = (EVENT_ATTENTION_PEAK_SC, peak_idx as f32);
+        self.events_buf[1] = (EVENT_ATTENTION_SPREAD, self.smoothed_entropy);
+        self.events_buf[2] = (EVENT_SPATIAL_FOCUS_ZONE, centroid);
+        &self.events_buf[..3]
     }
 
     pub fn weights(&self) -> &[f32; N_GROUPS] { &self.attention_weights }

@@ -1049,7 +1049,6 @@ async fn main() {
             DegradationConfig {
                 cooldown_secs: deg.map(|d| d.cooldown_secs).unwrap_or(300),
                 max_cache_size: deg.map(|d| d.max_cache_size).unwrap_or(32),
-                network_failure_threshold: deg.map(|d| d.network_failure_threshold).unwrap_or(5),
                 cache_ttl_secs: deg.map(|d| d.cache_ttl_secs).unwrap_or(120),
             }
         };

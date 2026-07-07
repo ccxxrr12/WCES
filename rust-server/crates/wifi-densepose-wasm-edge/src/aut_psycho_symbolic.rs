@@ -302,6 +302,8 @@ pub struct PsychoSymbolicEngine {
     frame_count: u32,
     /// Coherence estimate (fed externally or from host).
     coherence: f32,
+    events_buf: [(i32, f32); MAX_EVENTS],
+    events_len: usize,
 }
 
 impl PsychoSymbolicEngine {
@@ -313,6 +315,7 @@ impl PsychoSymbolicEngine {
             prev_motion: 0.0,
             frame_count: 0,
             coherence: 1.0,
+            events_buf: [(0, 0.0); MAX_EVENTS], events_len: 0,
         }
     }
 
@@ -340,9 +343,7 @@ impl PsychoSymbolicEngine {
         n_persons: f32,
         time_bucket: f32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); MAX_EVENTS] = [(0, 0.0); MAX_EVENTS];
-        let mut n_events = 0usize;
-
+        self.events_len = 0;
         self.frame_count += 1;
 
         // Build feature vector.
@@ -371,9 +372,9 @@ impl PsychoSymbolicEngine {
                 self.fired_rules |= 1 << i;
 
                 // Emit RULE_FIRED event (up to budget).
-                if n_events < MAX_EVENTS {
-                    unsafe { EVENTS[n_events] = (EVENT_RULE_FIRED, i as f32); }
-                    n_events += 1;
+                if self.events_len < MAX_EVENTS {
+                    self.events_buf[self.events_len] = (EVENT_RULE_FIRED, i as f32);
+                    self.events_len += 1;
                 }
 
                 let cid = rule.conclusion_id as usize;
@@ -392,10 +393,10 @@ impl PsychoSymbolicEngine {
         for &(a, b) in &CONTRADICTION_PAIRS {
             if fired_conclusions[a as usize] > 0.0 && fired_conclusions[b as usize] > 0.0 {
                 self.contradiction_count += 1;
-                if n_events < MAX_EVENTS {
+                if self.events_len < MAX_EVENTS {
                     let encoded = (a as f32) * 100.0 + (b as f32);
-                    unsafe { EVENTS[n_events] = (EVENT_CONTRADICTION, encoded); }
-                    n_events += 1;
+                    self.events_buf[self.events_len] = (EVENT_CONTRADICTION, encoded);
+                    self.events_len += 1;
                 }
                 // Suppress the weaker conclusion.
                 if fired_conclusions[a as usize] < fired_conclusions[b as usize] {
@@ -413,12 +414,12 @@ impl PsychoSymbolicEngine {
         }
 
         // Emit winning inference.
-        if best_confidence > 0.0 && n_events < MAX_EVENTS {
-            unsafe { EVENTS[n_events] = (EVENT_INFERENCE_RESULT, best_conclusion as f32); }
-            n_events += 1;
-            if n_events < MAX_EVENTS {
-                unsafe { EVENTS[n_events] = (EVENT_INFERENCE_CONFIDENCE, best_confidence); }
-                n_events += 1;
+        if best_confidence > 0.0 && self.events_len < MAX_EVENTS {
+            self.events_buf[self.events_len] = (EVENT_INFERENCE_RESULT, best_conclusion as f32);
+            self.events_len += 1;
+            if self.events_len < MAX_EVENTS {
+                self.events_buf[self.events_len] = (EVENT_INFERENCE_CONFIDENCE, best_confidence);
+                self.events_len += 1;
             }
         }
 
@@ -426,7 +427,7 @@ impl PsychoSymbolicEngine {
         self.prev_motion = motion;
         self.prev_conclusion = best_conclusion;
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the bitmap of rules that fired in the last frame.

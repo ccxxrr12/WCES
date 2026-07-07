@@ -182,18 +182,26 @@ fn make_window(kind: WindowFunction, size: usize) -> Vec<f64> {
 /// * `lambda` - Gating strength: 0.1 = mild, 0.3 = moderate, 0.5 = aggressive
 ///
 /// # Returns
-/// Gated spectrogram as Vec<f32>, same shape as input
+/// Gated spectrogram as Vec<f32>, same shape as input, or a
+/// `SpectrogramError::DimensionMismatch` when `spectrogram.len()` does not
+/// equal `n_freq * n_time`.
 pub fn gate_spectrogram(
     spectrogram: &[f32],
     n_freq: usize,
     n_time: usize,
     lambda: f32,
-) -> Vec<f32> {
-    debug_assert_eq!(spectrogram.len(), n_freq * n_time,
-        "spectrogram length must equal n_freq * n_time");
+) -> Result<Vec<f32>, SpectrogramError> {
+    // Runtime dimension check: previously a debug_assert_eq! that silently
+    // passed mismatched data to attn_mincut in release builds.
+    if spectrogram.len() != n_freq * n_time {
+        return Err(SpectrogramError::DimensionMismatch {
+            expected: n_freq * n_time,
+            got: spectrogram.len(),
+        });
+    }
 
     if n_freq == 0 || n_time == 0 {
-        return spectrogram.to_vec();
+        return Ok(spectrogram.to_vec());
     }
 
     // Q = K = V = spectrogram (self-attention over time frames)
@@ -207,7 +215,7 @@ pub fn gate_spectrogram(
         /*tau=*/ 2,
         /*eps=*/ 1e-7_f32,
     );
-    result.output
+    Ok(result.output)
 }
 
 /// Errors from spectrogram computation.
@@ -221,6 +229,9 @@ pub enum SpectrogramError {
 
     #[error("Window size must be > 0")]
     InvalidWindowSize,
+
+    #[error("Dimension mismatch: expected {expected} elements (n_freq * n_time), got {got}")]
+    DimensionMismatch { expected: usize, got: usize },
 }
 
 #[cfg(test)]
@@ -353,7 +364,7 @@ mod gate_tests {
         let n_freq = 16_usize;
         let n_time = 10_usize;
         let spectrogram: Vec<f32> = (0..n_freq * n_time).map(|i| i as f32 * 0.01).collect();
-        let gated = gate_spectrogram(&spectrogram, n_freq, n_time, 0.3);
+        let gated = gate_spectrogram(&spectrogram, n_freq, n_time, 0.3).unwrap();
         assert_eq!(gated.len(), n_freq * n_time);
     }
 
@@ -363,7 +374,7 @@ mod gate_tests {
         let n_time = 4_usize;
         let spectrogram: Vec<f32> = vec![1.0; n_freq * n_time];
         // Uniform input — gated output should also be approximately uniform
-        let gated = gate_spectrogram(&spectrogram, n_freq, n_time, 0.01);
+        let gated = gate_spectrogram(&spectrogram, n_freq, n_time, 0.01).unwrap();
         assert_eq!(gated.len(), n_freq * n_time);
         // All values should be finite
         assert!(gated.iter().all(|x| x.is_finite()));

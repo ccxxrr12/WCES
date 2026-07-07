@@ -10,6 +10,12 @@ use super::{
 };
 use crate::MatError;
 
+/// Radius (in metres) within which two detections are merged into the
+/// same survivor rather than creating a duplicate (M14). 2.0 m matches
+/// the typical localisation uncertainty and avoids double-counting a
+/// single individual whose position estimate jitters between scans.
+const MERGE_RADIUS_METERS: f64 = 2.0;
+
 /// Unique identifier for a disaster event
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -290,7 +296,7 @@ impl DisasterEvent {
     ) -> Result<&Survivor, MatError> {
         // Check if this might be an existing survivor
         let existing_id = if let Some(loc) = &location {
-            self.find_nearby_survivor(loc, 2.0).cloned()
+            self.find_nearby_survivor(loc, MERGE_RADIUS_METERS).cloned()
         } else {
             None
         };

@@ -142,6 +142,22 @@ impl CsiFingerprint {
     /// among the remaining three features so that the total weight still
     /// sums to 1.0.
     pub fn distance(&self, other: &CsiFingerprint) -> f32 {
+        // M11: NaN / Inf guard. A non-finite feature value (e.g. from a
+        // corrupt reading) would propagate through the weighted sum and
+        // produce a meaningless distance that silently defeats matching.
+        // Return f32::MAX so the pair is treated as "no match".
+        if !self.breathing_rate_bpm.is_finite()
+            || !other.breathing_rate_bpm.is_finite()
+            || !self.breathing_amplitude.is_finite()
+            || !other.breathing_amplitude.is_finite()
+            || self.heartbeat_rate_bpm.map_or(false, |v| !v.is_finite())
+            || other.heartbeat_rate_bpm.map_or(false, |v| !v.is_finite())
+            || self.location_hint.iter().any(|v| !v.is_finite())
+            || other.location_hint.iter().any(|v| !v.is_finite())
+        {
+            return f32::MAX;
+        }
+
         // --- normalised feature deltas ---
 
         let d_breathing_rate =

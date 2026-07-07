@@ -316,7 +316,10 @@ mod tests {
 
     #[test]
     fn test_patient_record_crud() {
-        let db = PatientRecordDB::open("data/test_patients").unwrap();
+        // L11: use CARGO_MANIFEST_DIR so the test does not depend on the
+        // process CWD being the crate root.
+        let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/test_patients");
+        let db = PatientRecordDB::open(db_path).unwrap();
 
         let mut record = PatientRecord::new("PAT-TEST-001");
         record.name = Some("测试伤员".into());
@@ -351,12 +354,13 @@ mod tests {
 
         // Cleanup
         drop(db);
-        let _ = std::fs::remove_dir_all("data/test_patients");
+        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_node_index_updated_on_reassign() {
-        let db = PatientRecordDB::open("data/test_patients_idx").unwrap();
+        let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/test_patients_idx");
+        let db = PatientRecordDB::open(db_path).unwrap();
 
         let mut record = PatientRecord::new("PAT-IDX-001");
         record.node_id = Some(1);
@@ -370,6 +374,6 @@ mod tests {
         assert!(db.get_by_node_id(2).unwrap().is_some());
 
         drop(db);
-        let _ = std::fs::remove_dir_all("data/test_patients_idx");
+        let _ = std::fs::remove_dir_all(db_path);
     }
 }

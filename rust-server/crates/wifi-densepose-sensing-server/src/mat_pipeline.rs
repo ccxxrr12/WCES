@@ -25,7 +25,7 @@
 //! - Deceased (黑): 无生命体征
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 // ── 输入类型 (来自服务器的 VitalSigns) ──────────────────────────────────────
 
@@ -328,7 +328,7 @@ pub struct TriageEngine {
     survivors: HashMap<String, TrackedSurvivor>,
     /// Lost survivors preserved for re-ID. Pruned after 300s.
     lost_pool: Vec<(TrackedSurvivor, f64)>,
-    alerts: Vec<AlertSnapshot>,
+    alerts: VecDeque<AlertSnapshot>,
     counter: u32,
     start_time: f64,
     /// Per-survivor recent RSSI readings from each node, for multi-node triangulation
@@ -338,7 +338,7 @@ pub struct TriageEngine {
 impl TriageEngine {
     pub fn new(config: TriageConfig) -> Self {
         Self {
-            config, survivors: HashMap::new(), lost_pool: Vec::new(), alerts: Vec::new(),
+            config, survivors: HashMap::new(), lost_pool: Vec::new(), alerts: VecDeque::new(),
             counter: 0, start_time: now_secs(),
             node_observations: HashMap::new(),
         }
@@ -432,18 +432,18 @@ impl TriageEngine {
                 s.deterioration_count += 1;
                 if s.deterioration_count >= self.config.deterioration_window {
                     s.deterioration_count = 0;
-                    self.alerts.push(AlertSnapshot {
+                    self.alerts.push_back(AlertSnapshot {
                         time: chrono_now(),
                         survivor_id: sid.clone(),
                         alert_type: "DETERIORATION".to_string(),
                         message: format!("{} → {}", s.prev_triage.name(), s.triage.name()),
                         priority: s.triage.priority(),
                     });
-                    // Cap alerts to prevent unbounded memory growth in long-running deployments
+                    // Cap alerts to prevent unbounded memory growth in long-running deployments.
+                    // Use pop_front() in a loop instead of drain(0..n) which is O(n) for Vec.
                     const MAX_ALERTS: usize = 500;
-                    if self.alerts.len() > MAX_ALERTS {
-                        let drop_count = self.alerts.len() - MAX_ALERTS;
-                        self.alerts.drain(0..drop_count);
+                    while self.alerts.len() > MAX_ALERTS {
+                        self.alerts.pop_front();
                     }
                 }
             } else {
@@ -619,7 +619,7 @@ impl TriageEngine {
                 severity: severity.to_string(),
                 rescuer_estimate: rescuer,
             },
-            alerts: self.alerts.clone(),
+            alerts: self.alerts.iter().cloned().collect(),
         }
     }
 }

@@ -265,14 +265,28 @@ impl Tensor {
         }
     }
 
-    /// Apply softmax along axis
+    /// Apply softmax along the given axis.
+    ///
+    /// Normalizes each 1-D lane along `axis` so that it sums to 1, using the
+    /// numerically stable (subtract-max) formulation.
     pub fn softmax(&self, axis: usize) -> NnResult<Tensor> {
         match self {
             Tensor::Float4D(a) => {
-                let max = a.fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
-                let exp = a.mapv(|x| (x - max).exp());
-                let sum = exp.sum();
-                Ok(Tensor::Float4D(exp / sum))
+                if axis >= a.ndim() {
+                    return Err(NnError::tensor_op("softmax: axis out of range"));
+                }
+                let mut out = a.to_owned();
+                let ax = ndarray::Axis(axis);
+                for mut lane in out.lanes_mut(ax) {
+                    let max = lane.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    let sum: f32 = lane.iter().map(|x| (x - max).exp()).sum();
+                    if sum > 0.0 && sum.is_finite() {
+                        for x in lane.iter_mut() {
+                            *x = (*x - max).exp() / sum;
+                        }
+                    }
+                }
+                Ok(Tensor::Float4D(out))
             }
             _ => Err(NnError::tensor_op("Softmax not supported for this tensor type")),
         }
@@ -282,6 +296,9 @@ impl Tensor {
     pub fn argmax(&self, axis: usize) -> NnResult<Tensor> {
         match self {
             Tensor::Float4D(a) => {
+                if axis >= a.ndim() {
+                    return Err(NnError::tensor_op("argmax: axis out of range"));
+                }
                 let result = a.map_axis(ndarray::Axis(axis), |row| {
                     row.iter()
                         .enumerate()
@@ -322,19 +339,45 @@ impl Tensor {
     }
 
     /// Get min value
+    ///
+    /// Returns an error for empty arrays instead of silently returning
+    /// `+INFINITY` (which would be a meaningless result from a fold seed).
     pub fn min(&self) -> NnResult<f32> {
         match self {
-            Tensor::Float4D(a) => Ok(a.fold(f32::INFINITY, |acc, &x| acc.min(x))),
-            Tensor::FloatND(a) => Ok(a.fold(f32::INFINITY, |acc, &x| acc.min(x))),
+            Tensor::Float4D(a) => {
+                if a.is_empty() {
+                    return Err(NnError::tensor_op("min: empty tensor"));
+                }
+                Ok(a.fold(f32::INFINITY, |acc, &x| acc.min(x)))
+            }
+            Tensor::FloatND(a) => {
+                if a.is_empty() {
+                    return Err(NnError::tensor_op("min: empty tensor"));
+                }
+                Ok(a.fold(f32::INFINITY, |acc, &x| acc.min(x)))
+            }
             _ => Err(NnError::tensor_op("Min not supported for this tensor type")),
         }
     }
 
     /// Get max value
+    ///
+    /// Returns an error for empty arrays instead of silently returning
+    /// `-INFINITY` (which would be a meaningless result from a fold seed).
     pub fn max(&self) -> NnResult<f32> {
         match self {
-            Tensor::Float4D(a) => Ok(a.fold(f32::NEG_INFINITY, |acc, &x| acc.max(x))),
-            Tensor::FloatND(a) => Ok(a.fold(f32::NEG_INFINITY, |acc, &x| acc.max(x))),
+            Tensor::Float4D(a) => {
+                if a.is_empty() {
+                    return Err(NnError::tensor_op("max: empty tensor"));
+                }
+                Ok(a.fold(f32::NEG_INFINITY, |acc, &x| acc.max(x)))
+            }
+            Tensor::FloatND(a) => {
+                if a.is_empty() {
+                    return Err(NnError::tensor_op("max: empty tensor"));
+                }
+                Ok(a.fold(f32::NEG_INFINITY, |acc, &x| acc.max(x)))
+            }
             _ => Err(NnError::tensor_op("Max not supported for this tensor type")),
         }
     }

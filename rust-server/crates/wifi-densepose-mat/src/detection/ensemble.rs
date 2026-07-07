@@ -11,6 +11,7 @@
 
 use crate::domain::{
     BreathingType, MovementType, TriageStatus, VitalSignsReading,
+    BRADYPNEA_THRESHOLD, TACHYPNEA_THRESHOLD,
 };
 
 /// Configuration for the ensemble classifier
@@ -163,7 +164,7 @@ impl EnsembleClassifier {
             }
 
             let rate = breathing.rate_bpm;
-            if rate < 10.0 || rate > 30.0 {
+            if rate < BRADYPNEA_THRESHOLD || rate > TACHYPNEA_THRESHOLD {
                 return TriageStatus::Immediate;
             }
         }
@@ -184,11 +185,15 @@ impl EnsembleClassifier {
             return TriageStatus::Immediate;
         }
 
-        // Has breathing above threshold - assess triage level
+        // Has breathing above threshold - assess triage level.
+        // Both branches use the START thresholds (BRADYPNEA/TACHYPNEA) for
+        // consistency with TriageCalculator (P0-5). Rates outside [10, 30]
+        // already returned Immediate above, so this secondary check now
+        // classifies the non-critical range based on movement.
         if let Some(ref breathing) = reading.breathing {
             let rate = breathing.rate_bpm;
 
-            if rate < 12.0 || rate > 24.0 {
+            if rate < BRADYPNEA_THRESHOLD || rate > TACHYPNEA_THRESHOLD {
                 if has_movement {
                     return TriageStatus::Delayed;
                 }

@@ -113,6 +113,10 @@ pub struct GestureLanguageDetector {
     last_confidence: f32,
     /// Total frames processed.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl GestureLanguageDetector {
@@ -131,6 +135,8 @@ impl GestureLanguageDetector {
             last_letter: 255,
             last_confidence: 0.0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -201,8 +207,7 @@ impl GestureLanguageDetector {
         motion_energy: f32,
         presence: i32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
         self.since_last_letter += 1;
@@ -212,7 +217,7 @@ impl GestureLanguageDetector {
         // No person -> reset gesture state.
         if presence == 0 {
             self.reset_gesture();
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Word boundary detection ──
@@ -223,30 +228,22 @@ impl GestureLanguageDetector {
                 if self.gesture_fill >= MIN_GESTURE_FILL && self.gesture_active {
                     let (letter, confidence) = self.match_gesture();
                     if letter < MAX_TEMPLATES as u8 && self.since_last_letter >= DEBOUNCE_FRAMES {
-                        unsafe {
-                            EVENTS[n_ev] = (EVENT_LETTER_RECOGNIZED, letter as f32);
-                        }
-                        n_ev += 1;
-                        unsafe {
-                            EVENTS[n_ev] = (EVENT_LETTER_CONFIDENCE, confidence);
-                        }
-                        n_ev += 1;
+                        self.events_buf[self.events_len] = (EVENT_LETTER_RECOGNIZED, letter as f32);
+                        self.events_len += 1;
+                        self.events_buf[self.events_len] = (EVENT_LETTER_CONFIDENCE, confidence);
+                        self.events_len += 1;
                         self.last_letter = letter;
                         self.last_confidence = confidence;
                         self.since_last_letter = 0;
                     } else {
-                        unsafe {
-                            EVENTS[n_ev] = (EVENT_GESTURE_REJECTED, 1.0);
-                        }
-                        n_ev += 1;
+                        self.events_buf[self.events_len] = (EVENT_GESTURE_REJECTED, 1.0);
+                        self.events_len += 1;
                     }
                 }
 
                 // Emit word boundary.
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_WORD_BOUNDARY, 1.0);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_WORD_BOUNDARY, 1.0);
+                self.events_len += 1;
                 self.word_boundary_emitted = true;
                 self.reset_gesture();
             }
@@ -264,7 +261,7 @@ impl GestureLanguageDetector {
             }
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Match the current gesture buffer against all loaded templates.

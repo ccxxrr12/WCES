@@ -100,8 +100,14 @@ pub struct Timestamp {
 
 impl Timestamp {
     /// Creates a new timestamp from seconds and nanoseconds.
+    ///
+    /// In debug builds, asserts that `nanos < 1_000_000_000`. In release
+    /// builds, out-of-range `nanos` are wrapped via modulo to keep the
+    /// struct invariant without panicking.
     #[must_use]
     pub fn new(seconds: i64, nanos: u32) -> Self {
+        debug_assert!(nanos < 1_000_000_000, "nanos must be < 1_000_000_000, got {}", nanos);
+        let nanos = if nanos >= 1_000_000_000 { nanos % 1_000_000_000 } else { nanos };
         Self { seconds, nanos }
     }
 
@@ -378,7 +384,17 @@ pub struct CsiFrame {
 
 impl CsiFrame {
     /// Creates a new CSI frame from raw complex data.
+    ///
+    /// In debug builds, asserts that the data dimensions are consistent with
+    /// the antenna configuration in the metadata (`data.nrows()` should equal
+    /// `metadata.antenna_config.spatial_streams()`).
     pub fn new(metadata: CsiMetadata, data: Array2<Complex64>) -> Self {
+        debug_assert!(
+            data.nrows() == metadata.antenna_config.spatial_streams(),
+            "data nrows ({}) must match antenna_config.spatial_streams ({})",
+            data.nrows(),
+            metadata.antenna_config.spatial_streams(),
+        );
         let amplitude = data.mapv(num_complex::Complex::norm);
         let phase = data.mapv(num_complex::Complex::arg);
 
@@ -410,8 +426,13 @@ impl CsiFrame {
     }
 
     /// Returns the amplitude variance, useful for motion detection.
+    ///
+    /// Returns `0.0` for an empty array (where `var()` would produce NaN).
     #[must_use]
     pub fn amplitude_variance(&self) -> f64 {
+        if self.amplitude.is_empty() {
+            return 0.0;
+        }
         self.amplitude.var(0.0)
     }
 }
@@ -492,16 +513,28 @@ impl ProcessedSignal {
     }
 
     /// Returns the shape of the signal tensor [time, streams, subcarriers].
+    ///
+    /// Returns `(0, 0, 0)` if the tensor is not 3-dimensional, rather than
+    /// panicking on index out-of-bounds.
     #[must_use]
     pub fn shape(&self) -> (usize, usize, usize) {
         let shape = self.amplitude_tensor.shape();
+        if shape.len() != 3 {
+            return (0, 0, 0);
+        }
         (shape[0], shape[1], shape[2])
     }
 
     /// Returns the total number of time steps in the signal.
+    ///
+    /// Returns `0` if the tensor is not 3-dimensional.
     #[must_use]
     pub fn num_time_steps(&self) -> usize {
-        self.amplitude_tensor.shape()[0]
+        let shape = self.amplitude_tensor.shape();
+        if shape.len() != 3 {
+            return 0;
+        }
+        shape[0]
     }
 }
 
@@ -762,8 +795,13 @@ pub struct BoundingBox {
 
 impl BoundingBox {
     /// Creates a new bounding box.
+    ///
+    /// If `x_min > x_max` or `y_min > y_max`, the values are swapped so that
+    /// the invariant `x_min <= x_max` and `y_min <= y_max` always holds.
     #[must_use]
     pub fn new(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
+        let (x_min, x_max) = if x_min > x_max { (x_max, x_min) } else { (x_min, x_max) };
+        let (y_min, y_max) = if y_min > y_max { (y_max, y_min) } else { (y_min, y_max) };
         Self {
             x_min,
             y_min,

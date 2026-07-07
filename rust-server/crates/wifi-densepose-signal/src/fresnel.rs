@@ -245,10 +245,24 @@ fn amplitude_variation(signal: &[f64]) -> f64 {
 ///
 /// # Returns
 /// Some((d1, d2)) if solvable with ≥3 observations, None otherwise
+///
+/// # WARNING: This is a stub implementation
+///
+/// The linearized system uses coefficients [1/w, -1/w] for [d1, d2], which
+/// makes the normal-equations matrix `A^T A` degenerate (its two rows are
+/// negatives of each other, giving the trivial solution d1 = -d2). The
+/// Tikhonov regularization keeps the solver from diverging, but the resulting
+/// distances are NOT physically meaningful. A proper Fresnel-ellipse equation
+/// solver is required for trustworthy geometry estimates.
 pub fn solve_fresnel_geometry(
     observations: &[(f32, f32)],
     d_total: f32,
 ) -> Option<(f32, f32)> {
+    tracing::warn!(
+        "solve_fresnel_geometry is a stub; the linear system is degenerate \
+         (d1=-d2) and results are not physically meaningful"
+    );
+
     let n = observations.len();
     if n < 3 {
         return None;

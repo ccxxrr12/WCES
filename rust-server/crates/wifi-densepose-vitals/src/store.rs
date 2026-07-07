@@ -5,11 +5,12 @@
 //! becomes available (ADR-021 phase 2).
 
 use crate::types::{VitalReading, VitalStatus};
+use std::collections::VecDeque;
 
 /// Simple vital sign store with capacity-limited ring buffer semantics.
 pub struct VitalSignStore {
     /// Stored readings (oldest first).
-    readings: Vec<VitalReading>,
+    readings: VecDeque<VitalReading>,
     /// Maximum number of readings to retain.
     max_readings: usize,
 }
@@ -42,7 +43,7 @@ impl VitalSignStore {
     #[must_use]
     pub fn new(max_readings: usize) -> Self {
         Self {
-            readings: Vec::with_capacity(max_readings.min(4096)),
+            readings: VecDeque::with_capacity(max_readings.min(4096)),
             max_readings: max_readings.max(1),
         }
     }
@@ -58,24 +59,27 @@ impl VitalSignStore {
     /// If the store is at capacity, the oldest reading is evicted.
     pub fn push(&mut self, reading: VitalReading) {
         if self.readings.len() >= self.max_readings {
-            self.readings.remove(0);
+            self.readings.pop_front();
         }
-        self.readings.push(reading);
+        self.readings.push_back(reading);
     }
 
     /// Get the most recent reading, if any.
     #[must_use]
     pub fn latest(&self) -> Option<&VitalReading> {
-        self.readings.last()
+        self.readings.back()
     }
 
     /// Get the last `n` readings (most recent last).
     ///
     /// Returns fewer than `n` if the store contains fewer readings.
     #[must_use]
-    pub fn history(&self, n: usize) -> &[VitalReading] {
+    pub fn history(&mut self, n: usize) -> &[VitalReading] {
         let start = self.readings.len().saturating_sub(n);
-        &self.readings[start..]
+        // make_contiguous() rearranges the ring buffer into a single
+        // contiguous slice so we can return a `&[T]` view.
+        let slice = self.readings.make_contiguous();
+        &slice[start..]
     }
 
     /// Compute summary statistics over all stored readings.

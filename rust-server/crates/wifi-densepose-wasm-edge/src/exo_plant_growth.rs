@@ -119,6 +119,10 @@ pub struct PlantGrowthDetector {
     frame_count: u32,
     /// Frames since last drift computation.
     drift_interval_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl PlantGrowthDetector {
@@ -156,6 +160,8 @@ impl PlantGrowthDetector {
             empty_frames: 0,
             frame_count: 0,
             drift_interval_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -174,21 +180,20 @@ impl PlantGrowthDetector {
         variance: &[f32],
         presence: i32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
 
         // Only accumulate data when room is empty.
         if presence != 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let n_sc = core::cmp::min(amplitudes.len(), MAX_SC);
         let n_sc = core::cmp::min(n_sc, phases.len());
         let n_sc = core::cmp::min(n_sc, variance.len());
         if n_sc < N_GROUPS {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.empty_frames += 1;
@@ -196,7 +201,7 @@ impl PlantGrowthDetector {
         // Compute per-group means.
         let subs_per = n_sc / N_GROUPS;
         if subs_per == 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let mut group_amp = [0.0f32; N_GROUPS];
@@ -237,7 +242,7 @@ impl PlantGrowthDetector {
 
         // Need enough data before analysis.
         if self.empty_frames < MIN_EMPTY_FRAMES {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Initialize baseline snapshot on first analysis pass.
@@ -247,7 +252,7 @@ impl PlantGrowthDetector {
             }
             self.baseline_initialized = true;
             self.drift_interval_count = 0;
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.drift_interval_count += 1;
@@ -264,10 +269,8 @@ impl PlantGrowthDetector {
             self.drift_interval_count = 0;
 
             if fabsf(avg_drift) > GROWTH_THRESHOLD {
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_GROWTH_RATE, avg_drift);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_GROWTH_RATE, avg_drift);
+                self.events_len += 1;
             }
         }
 
@@ -288,10 +291,8 @@ impl PlantGrowthDetector {
             if avg_osc > CIRCADIAN_MIN_MAGNITUDE {
                 // Normalize to [0, 1] range (cap at 1.0).
                 let normalized = if avg_osc > 1.0 { 1.0 } else { avg_osc };
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_CIRCADIAN_PHASE, normalized);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_CIRCADIAN_PHASE, normalized);
+                self.events_len += 1;
             }
         }
 
@@ -315,10 +316,8 @@ impl PlantGrowthDetector {
             }
             // Need majority of groups to agree.
             if amp_rise_count >= (N_GROUPS / 2) as u8 && var_drop_count >= 2 {
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_WILT_DETECTED, 1.0);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_WILT_DETECTED, 1.0);
+                self.events_len += 1;
             }
         }
 
@@ -333,14 +332,12 @@ impl PlantGrowthDetector {
                 }
             }
             if drop_count >= (N_GROUPS / 2) as u8 {
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_WATERING_EVENT, 1.0);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_WATERING_EVENT, 1.0);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the number of empty-room frames accumulated.

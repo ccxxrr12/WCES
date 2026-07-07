@@ -154,6 +154,19 @@ pub struct DetectionPipeline {
 impl DetectionPipeline {
     /// Create a new detection pipeline
     pub fn new(config: DetectionConfig) -> Self {
+        // Validate sample rate: a zero/negative value causes division-by-zero
+        // in CsiDataBuffer (timestamps, duration, max_samples window) and
+        // downstream detectors. This is a startup-time configuration error;
+        // failing fast with a clear message is preferable to propagating
+        // NaN/Inf through the pipeline.
+        assert!(
+            config.sample_rate > 0.0,
+            "DetectionPipeline::new: config.sample_rate must be > 0.0 (got {}); \
+             a zero or negative sample rate causes division-by-zero in the \
+             detection pipeline",
+            config.sample_rate
+        );
+
         let ml_pipeline = if config.enable_ml {
             config.ml_config.clone().map(MlDetectionPipeline::new)
         } else {

@@ -68,6 +68,10 @@ pub extern "C" fn on_frame(n_subcarriers: i32) {
             amplitudes[i] = host_get_amplitude(i as i32);
             variances[i] = host_get_variance(i as i32);
         }
+        // NaN/Inf guard: bail out if the host returned invalid CSI data.
+        if !phases[i].is_finite() || !amplitudes[i].is_finite() || !variances[i].is_finite() {
+            return;
+        }
     }
 
     let presence = unsafe { host_get_presence() };

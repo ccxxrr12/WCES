@@ -414,11 +414,12 @@ impl SurvivorTracker {
         // ----------------------------------------------------------------
         for track in &mut self.tracks {
             if track.lifecycle.is_lost() {
-                let was_lost = true;
+                // P3: the previous `was_lost` variable was always true
+                // (assigned and never modified), so it has been removed.
                 track
                     .lifecycle
                     .check_lost_expiry(now, self.config.max_lost_age_secs);
-                if was_lost && track.lifecycle.is_terminal() {
+                if track.lifecycle.is_terminal() {
                     result.terminated_track_ids.push(track.id.clone());
                     track.terminated_at = Some(now);
                 }

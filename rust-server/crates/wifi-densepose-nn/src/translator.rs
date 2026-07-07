@@ -9,6 +9,7 @@ use crate::tensor::{Tensor, TensorShape, TensorStats};
 use ndarray::Array4;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::warn;
 
 /// Configuration for the modality translator
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,8 +422,13 @@ impl ModalityTranslator {
         let (batch, in_channels, in_height, in_width) = input.dim();
         let (out_channels, _, kernel_h, kernel_w) = weights.conv_weight.dim();
 
-        let out_height = (in_height + 2 * self.config.padding - kernel_h) / stride + 1;
-        let out_width = (in_width + 2 * self.config.padding - kernel_w) / stride + 1;
+        // Use saturating_sub to avoid integer underflow when the kernel is
+        // larger than the padded input (P2 fix). A zero/negative intermediate
+        // would otherwise wrap on `usize` and produce a garbage output size.
+        let out_height =
+            (in_height + 2 * self.config.padding).saturating_sub(kernel_h) / stride + 1;
+        let out_width =
+            (in_width + 2 * self.config.padding).saturating_sub(kernel_w) / stride + 1;
 
         let mut output = Array4::zeros((batch, out_channels, out_height, out_width));
 
@@ -542,7 +548,15 @@ impl ModalityTranslator {
         }
     }
 
-    /// Apply multi-head attention
+    /// Apply multi-head attention.
+    ///
+    /// NOTE: Attention is not yet implemented; returns input unchanged. The
+    /// `flat` array and `weights` argument are currently unused beyond
+    /// constructing a uniform attention-weight tensor. A full Q·K^T·V
+    /// implementation is intentionally deferred because this is the native
+    /// (non-ONNX) inference path and the attention math is complex; the
+    /// placeholder avoids silently corrupting callers while making the stub
+    /// behavior loud via a `tracing::warn!`.
     fn apply_attention(
         &self,
         input: &Array4<f32>,
@@ -551,20 +565,36 @@ impl ModalityTranslator {
         let (batch, channels, height, width) = input.dim();
         let seq_len = height * width;
 
-        // Flatten spatial dimensions
-        let mut flat = ndarray::Array2::zeros((batch, seq_len * channels));
-        for b in 0..batch {
-            for h in 0..height {
-                for w in 0..width {
-                    for c in 0..channels {
-                        flat[[b, (h * width + w) * channels + c]] = input[[b, c, h, w]];
+        // Flatten spatial dimensions (retained for API parity; currently unused
+        // by the stub, hence the leading underscore binding).
+        let _flat = {
+            let mut flat = ndarray::Array2::zeros((batch, seq_len * channels));
+            for b in 0..batch {
+                for h in 0..height {
+                    for w in 0..width {
+                        for c in 0..channels {
+                            flat[[b, (h * width + w) * channels + c]] = input[[b, c, h, w]];
+                        }
                     }
                 }
             }
-        }
+            flat
+        };
 
-        // For simplicity, return input unchanged with identity attention
-        let attention_weights = Array4::from_elem((batch, self.config.attention_heads, seq_len, seq_len), 1.0 / seq_len as f32);
+        // Weights are accepted for API compatibility but not yet applied.
+        let _ = weights;
+
+        warn!(
+            "apply_attention is a stub, returning input unchanged \
+             (use_attention=true); Q*K^T*V is not implemented on the native path"
+        );
+
+        // Return input unchanged with a uniform attention-weight tensor so the
+        // caller still receives a well-shaped output.
+        let attention_weights = Array4::from_elem(
+            (batch, self.config.attention_heads, seq_len, seq_len),
+            1.0 / seq_len as f32,
+        );
 
         Ok((input.clone(), attention_weights))
     }
@@ -582,6 +612,13 @@ impl ModalityTranslator {
         }
 
         let n = pred_arr.len() as f32;
+        // Guard against division by zero on empty tensors (P2 fix); an empty
+        // pair of inputs has no meaningful loss.
+        if n == 0.0 {
+            return Err(NnError::invalid_input(
+                "compute_loss: cannot compute loss on empty tensors",
+            ));
+        }
         let loss = match loss_type {
             LossType::MSE => {
                 pred_arr

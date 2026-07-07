@@ -62,6 +62,9 @@ pub struct MicroHnsw {
     frame_count: u32,
     last_nearest: usize,
     last_distance: f32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
 }
 
 impl MicroHnsw {
@@ -70,6 +73,7 @@ impl MicroHnsw {
         Self {
             nodes: [EMPTY; MAX_VECTORS], n_vectors: 0, entry_point: usize::MAX,
             frame_count: 0, last_nearest: 0, last_distance: f32::MAX,
+            events_buf: [(0, 0.0); 4],
         }
     }
 
@@ -194,9 +198,8 @@ impl MicroHnsw {
     pub fn process_frame(&mut self, features: &[f32]) -> &[(i32, f32)] {
         self.frame_count += 1;
         if self.n_vectors == 0 {
-            static mut EMPTY: [(i32, f32); 1] = [(0, 0.0); 1];
-            unsafe { EMPTY[0] = (EVENT_LIBRARY_SIZE, 0.0); }
-            return unsafe { &EMPTY[..1] };
+            self.events_buf[0] = (EVENT_LIBRARY_SIZE, 0.0);
+            return &self.events_buf[..1];
         }
         let (nearest_id, distance) = self.search(features);
         self.last_nearest = nearest_id;
@@ -205,14 +208,11 @@ impl MicroHnsw {
             self.nodes[nearest_id].label
         } else { CLASS_UNKNOWN };
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        unsafe {
-            EVENTS[0] = (EVENT_NEAREST_MATCH_ID, nearest_id as f32);
-            EVENTS[1] = (EVENT_MATCH_DISTANCE, distance);
-            EVENTS[2] = (EVENT_CLASSIFICATION, label as f32);
-            EVENTS[3] = (EVENT_LIBRARY_SIZE, self.n_vectors as f32);
-        }
-        unsafe { &EVENTS[..4] }
+        self.events_buf[0] = (EVENT_NEAREST_MATCH_ID, nearest_id as f32);
+        self.events_buf[1] = (EVENT_MATCH_DISTANCE, distance);
+        self.events_buf[2] = (EVENT_CLASSIFICATION, label as f32);
+        self.events_buf[3] = (EVENT_LIBRARY_SIZE, self.n_vectors as f32);
+        &self.events_buf[..4]
     }
 
     pub fn size(&self) -> usize { self.n_vectors }

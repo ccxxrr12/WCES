@@ -77,6 +77,10 @@ pub struct SleepApneaDetector {
     timer_count: u32,
     /// Most recently computed AHI.
     last_ahi: f32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl SleepApneaDetector {
@@ -90,6 +94,8 @@ impl SleepApneaDetector {
             monitoring_secs: 0,
             timer_count: 0,
             last_ahi: 0.0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -104,8 +110,7 @@ impl SleepApneaDetector {
     ) -> &[(i32, f32)] {
         self.timer_count += 1;
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         // Only monitor when subject is present.
         if presence < PRESENCE_ACTIVE {
@@ -115,11 +120,11 @@ impl SleepApneaDetector {
                 self.record_episode(self.current_start, dur);
                 self.in_apnea = false;
                 self.low_breath_secs = 0;
-                unsafe { EVENTS[n] = (EVENT_APNEA_END, dur as f32); }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_APNEA_END, dur as f32);
+                self.events_len += 1;
             }
             self.low_breath_secs = 0;
-            return unsafe { &EVENTS[..n] };
+            return &self.events_buf[..self.events_len];
         }
 
         self.monitoring_secs += 1;
@@ -129,7 +134,7 @@ impl SleepApneaDetector {
         // Treat NaN as invalid — skip detection for this frame.
         if breathing_bpm != breathing_bpm {
             // NaN: f32::NAN != f32::NAN is true.
-            return unsafe { &EVENTS[..n] };
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Apnea detection ─────────────────────────────────────────────
@@ -140,8 +145,8 @@ impl SleepApneaDetector {
                 // Apnea onset — backdate start to when breathing first dropped.
                 self.in_apnea = true;
                 self.current_start = self.timer_count.saturating_sub(self.low_breath_secs);
-                unsafe { EVENTS[n] = (EVENT_APNEA_START, breathing_bpm); }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_APNEA_START, breathing_bpm);
+                self.events_len += 1;
             }
         } else {
             // Breathing resumed.
@@ -149,25 +154,25 @@ impl SleepApneaDetector {
                 let dur = self.timer_count.saturating_sub(self.current_start);
                 self.record_episode(self.current_start, dur);
                 self.in_apnea = false;
-                unsafe { EVENTS[n] = (EVENT_APNEA_END, dur as f32); }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_APNEA_END, dur as f32);
+                self.events_len += 1;
             }
             self.low_breath_secs = 0;
         }
 
         // ── Periodic AHI update ─────────────────────────────────────────
-        if self.timer_count % AHI_REPORT_INTERVAL == 0 && self.monitoring_secs > 0 && n < 4 {
+        if self.timer_count % AHI_REPORT_INTERVAL == 0 && self.monitoring_secs > 0 && self.events_len < 4 {
             let hours = self.monitoring_secs as f32 / 3600.0;
             self.last_ahi = if hours > 0.001 {
                 self.episode_count as f32 / hours
             } else {
                 0.0
             };
-            unsafe { EVENTS[n] = (EVENT_AHI_UPDATE, self.last_ahi); }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_AHI_UPDATE, self.last_ahi);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     fn record_episode(&mut self, start: u32, duration: u32) {

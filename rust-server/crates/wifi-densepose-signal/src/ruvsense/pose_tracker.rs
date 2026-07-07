@@ -160,11 +160,12 @@ impl KeypointState {
         ];
 
         // Innovation covariance S = H * P * H^T + R
-        // Since H = [I3 | 0], S is just the top-left 3x3 of P + R
+        // Since H = [I3 | 0], S is just the top-left 3x3 of P + R.
+        // Lower-bound covariance terms to avoid 0/0 = NaN when r=0 and cov=0.
         let s = [
-            self.covariance[0] + r,
-            self.covariance[6] + r,
-            self.covariance[11] + r,
+            self.covariance[0].max(1e-12) + r,
+            self.covariance[6].max(1e-12) + r,
+            self.covariance[11].max(1e-12) + r,
         ];
 
         // Kalman gain K = P * H^T * S^-1
@@ -189,6 +190,12 @@ impl KeypointState {
         self.covariance[0] *= 1.0 - k[0][0];
         self.covariance[6] *= 1.0 - k[1][1];
         self.covariance[11] *= 1.0 - k[2][2];
+        // Cross-covariance (position-velocity) decay: without this the
+        // off-diagonal terms grow unbounded because predict() keeps adding
+        // cross_q while update() only scaled the diagonal.
+        self.covariance[3] *= 1.0 - k[0][0];   // cov(x, vx)
+        self.covariance[9] *= 1.0 - k[1][1];   // cov(y, vy)
+        self.covariance[14] *= 1.0 - k[2][2];  // cov(z, vz)
     }
 
     /// Compute the Mahalanobis distance between this state and a measurement.
@@ -463,6 +470,11 @@ impl Default for TrackerConfig {
 ///
 /// Manages a collection of `PoseTrack` instances with automatic lifecycle
 /// management, detection-to-track assignment, and re-identification.
+//
+// TODO: Detection-to-track assignment not yet implemented (ruvector-mincut
+// integration pending). Currently tracks are created/updated only through
+// explicit create_track/update_keypoints calls; the min-cut matcher loop
+// described in the module docs is not wired up.
 #[derive(Debug)]
 pub struct PoseTracker {
     config: TrackerConfig,
@@ -567,16 +579,42 @@ impl PoseTracker {
     ///
     /// cost = position_weight * mahalanobis(track, detection.position)
     ///      + embedding_weight * (1 - cosine_sim(track.embedding, detection.embedding))
+    ///
+    /// # TODO: Detection-to-track assignment not yet implemented
+    ///
+    /// The module documentation mentions a `ruvector-mincut::DynamicPersonMatcher`
+    /// based assignment loop, but the loop that would call this cost function is
+    /// not yet implemented. This helper only computes a pairwise cost and applies
+    /// a Mahalanobis gate; callers must wire it into an actual matcher.
     pub fn assignment_cost(
         &self,
         track: &PoseTrack,
         detection_centroid: &[f32; 3],
         detection_embedding: &[f32],
     ) -> f32 {
-        // Position cost: Mahalanobis distance at centroid
+        // Position cost: Mahalanobis distance at centroid.
+        // Aggregate the actual per-keypoint position variance from the track
+        // (mean of the diagonal variances across all keypoints) instead of
+        // relying on KeypointState::new's default 0.01, which would make the
+        // gate behave identically for fresh and well-established tracks.
         let centroid_kp = track.centroid();
-        let centroid_state = KeypointState::new(centroid_kp[0], centroid_kp[1], centroid_kp[2]);
+        let mut pos_var_sum = 0.0_f32;
+        for kp in &track.keypoints {
+            pos_var_sum += kp.covariance[0] + kp.covariance[6] + kp.covariance[11];
+        }
+        let pos_var = (pos_var_sum / (3.0 * NUM_KEYPOINTS as f32)).max(1e-6);
+
+        let mut centroid_state = KeypointState::new(centroid_kp[0], centroid_kp[1], centroid_kp[2]);
+        centroid_state.covariance[0] = pos_var;
+        centroid_state.covariance[6] = pos_var;
+        centroid_state.covariance[11] = pos_var;
         let maha = centroid_state.mahalanobis_distance(detection_centroid);
+
+        // Mahalanobis gating: reject associations that exceed the configured gate.
+        // Returning f32::MAX signals "do not associate" to the (future) matcher.
+        if maha > self.config.mahalanobis_gate {
+            return f32::MAX;
+        }
 
         // Embedding cost: 1 - cosine similarity
         let embed_cost = 1.0 - cosine_similarity(&track.embedding, detection_embedding);

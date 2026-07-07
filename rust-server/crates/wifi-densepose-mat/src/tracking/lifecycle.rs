@@ -89,7 +89,9 @@ impl TrackLifecycle {
     pub fn hit(&mut self) {
         match &self.state {
             TrackState::Tentative { hits } => {
-                let new_hits = hits + 1;
+                // M13: saturating_add avoids u32 overflow on extremely
+                // long tentative windows.
+                let new_hits = hits.saturating_add(1);
                 if new_hits >= self.birth_hits_required {
                     self.state = TrackState::Active;
                     self.active_miss_count = 0;
@@ -120,7 +122,9 @@ impl TrackLifecycle {
                 self.state = TrackState::Terminated;
             }
             TrackState::Active => {
-                self.active_miss_count += 1;
+                // M13: saturating_add avoids u32 overflow on a track
+                // that misses for an extremely long time.
+                self.active_miss_count = self.active_miss_count.saturating_add(1);
                 if self.active_miss_count >= self.max_active_misses {
                     self.state = TrackState::Lost {
                         miss_count: 0,
@@ -129,7 +133,7 @@ impl TrackLifecycle {
                 }
             }
             TrackState::Lost { miss_count, lost_since } => {
-                let new_count = miss_count + 1;
+                let new_count = miss_count.saturating_add(1);
                 let since = *lost_since;
                 self.state = TrackState::Lost {
                     miss_count: new_count,

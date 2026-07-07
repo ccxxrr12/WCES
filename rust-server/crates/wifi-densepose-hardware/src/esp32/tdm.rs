@@ -1,4 +1,4 @@
-﻿//! TDM (Time-Division Multiplexed) sensing protocol for multistatic WiFi sensing.
+//! TDM (Time-Division Multiplexed) sensing protocol for multistatic WiFi sensing.
 //!
 //! Implements the TDMA sensing schedule described in ADR-029 (RuvSense) and
 //! ADR-031 (WCES). Each ESP32 node transmits NDP frames in its assigned slot
@@ -445,13 +445,17 @@ impl TdmCoordinator {
             *flag = false;
         }
 
-        // Measure drift from the previous cycle
+        // Measure drift from the previous cycle.
+        // Use an exponential moving average (EMA) with a 0.1 smoothing factor
+        // so that one-off application-layer call latency (scheduling jitter,
+        // thread wakeup delay, etc.) is not permanently accumulated as clock
+        // drift. Without decay, `cumulative_drift_us` would grow without bound.
         let now = Instant::now();
         if let Some(prev) = self.last_cycle_start {
             let actual_us = now.duration_since(prev).as_micros() as f64;
             let expected_us = self.schedule.cycle_period().as_micros() as f64;
             let drift = actual_us - expected_us;
-            self.cumulative_drift_us += drift;
+            self.cumulative_drift_us = self.cumulative_drift_us * 0.9 + drift * 0.1;
         }
         self.last_cycle_start = Some(now);
 
@@ -481,6 +485,26 @@ impl TdmCoordinator {
     /// index is unexpected (the coordinator is lenient to allow out-of-order
     /// completions in degraded conditions).
     pub fn complete_slot(&mut self, slot_index: usize, capture_quality: f32) -> TdmSlotCompleted {
+        // Time-window enforcement: warn (do not reject) if the slot completes
+        // far outside its expected window. This surfaces timing violations
+        // without blocking degraded-mode operation.
+        let now = Instant::now();
+        if let Some(start) = self.last_cycle_start {
+            if let Some(offset) = TdmSlot::start_offset(self.schedule.slots(), slot_index) {
+                let expected_start = start + offset;
+                let late = now.saturating_duration_since(expected_start);
+                if let Some(slot) = self.schedule.slot(slot_index) {
+                    if late > slot.total_duration() * 2 {
+                        tracing::warn!(
+                            slot = slot_index,
+                            ?late,
+                            "slot completed far outside its window"
+                        );
+                    }
+                }
+            }
+        }
+
         let quality = capture_quality.clamp(0.0, 1.0);
         let tx_node_id = self
             .schedule

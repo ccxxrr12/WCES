@@ -92,6 +92,10 @@ pub struct SpikingTracker {
     frame_count: u32,
     /// Frames since last zone transition.
     frames_since_transition: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl SpikingTracker {
@@ -120,6 +124,8 @@ impl SpikingTracker {
             track_active: false,
             frame_count: 0,
             frames_since_transition: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -242,9 +248,8 @@ impl SpikingTracker {
     }
 
     /// Construct event output.
-    fn build_events(&self, zone: i8, was_active: bool) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n = 0usize;
+    fn build_events(&mut self, zone: i8, was_active: bool) -> &[(i32, f32)] {
+        self.events_len = 0;
 
         // Mean spike rate across all zones.
         let mut total_rate = 0.0f32;
@@ -255,29 +260,29 @@ impl SpikingTracker {
 
         if zone >= 0 {
             // TRACK_UPDATE with zone ID.
-            unsafe { EVENTS[n] = (EVENT_TRACK_UPDATE, zone as f32); }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_TRACK_UPDATE, zone as f32);
+            self.events_len += 1;
 
             // TRACK_VELOCITY.
-            unsafe { EVENTS[n] = (EVENT_TRACK_VELOCITY, self.velocity_ema); }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_TRACK_VELOCITY, self.velocity_ema);
+            self.events_len += 1;
 
             // SPIKE_RATE.
-            unsafe { EVENTS[n] = (EVENT_SPIKE_RATE, mean_rate); }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_SPIKE_RATE, mean_rate);
+            self.events_len += 1;
         } else {
             // SPIKE_RATE even when no track.
-            unsafe { EVENTS[n] = (EVENT_SPIKE_RATE, mean_rate); }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_SPIKE_RATE, mean_rate);
+            self.events_len += 1;
 
             // TRACK_LOST if we had a track before.
             if was_active {
-                unsafe { EVENTS[n] = (EVENT_TRACK_LOST, self.prev_zone as f32); }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_TRACK_LOST, self.prev_zone as f32);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the current tracked zone (-1 if lost).

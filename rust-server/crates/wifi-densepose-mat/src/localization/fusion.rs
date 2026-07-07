@@ -1,5 +1,7 @@
 //! Position fusion combining multiple localization techniques.
 
+use std::collections::VecDeque;
+
 use crate::domain::{
     Coordinates3D, LocationUncertainty, ScanZone, VitalSignsReading,
     DepthEstimate, DebrisProfile,
@@ -69,11 +71,24 @@ impl LocalizationService {
         )?;
 
         // Combine into 3D position
+        let mut uncertainty = self.combine_uncertainties(&position_2d.uncertainty, &depth_estimate);
+
+        // The RSSI values feeding this estimate come from
+        // simulate_rssi_measurements, a placeholder that synthesizes readings
+        // from the zone center rather than the survivor's actual position
+        // (no real sensor source is wired in yet). Cap the confidence at 0.1
+        // so downstream consumers treat the result as near-guesswork and do
+        // not propagate false precision. Remove this cap once real RSSI
+        // integration (ADR-012 / ADR-013) replaces simulate_rssi_measurements.
+        if uncertainty.confidence > 0.1 {
+            uncertainty.confidence = 0.1;
+        }
+
         let position_3d = Coordinates3D::new(
             position_2d.x,
             position_2d.y,
             -depth_estimate.depth, // Negative = below surface
-            self.combine_uncertainties(&position_2d.uncertainty, &depth_estimate),
+            uncertainty,
         );
 
         Some(position_3d)
@@ -105,6 +120,20 @@ impl LocalizationService {
         vitals: &VitalSignsReading,
         zone: &ScanZone,
     ) -> Vec<(String, f64)> {
+        // PLACEHOLDER: no real RSSI source is wired in (ESP32 mesh ADR-012 /
+        // Linux WiFi ADR-013 not yet connected). The values synthesized here
+        // are derived from the zone center, NOT the survivor's actual
+        // position, so the resulting triangulation is a deterministic
+        // placeholder. The downstream estimate_position caps the confidence
+        // at 0.1 to flag this. Real RSSI integration must replace this
+        // function (see C-9).
+        tracing::warn!(
+            zone_id = %zone.id(),
+            "simulate_rssi_measurements: synthesizing RSSI from zone center \
+             (placeholder, no real sensor source); localization confidence \
+             will be capped at 0.1"
+        );
+
         // Log-distance path loss model parameters (C-9 defaults).
         const REF_RSSI: f64 = -30.0; // RSSI at 1m reference distance (dBm)
         const PATH_LOSS_EXP: f64 = 3.0; // Path-loss exponent n (indoor)
@@ -217,7 +246,7 @@ fn deterministic_noise(seed: &str, std: f64) -> f64 {
 /// Fuses multiple position estimates
 pub struct PositionFuser {
     /// History of position estimates for smoothing
-    history: parking_lot::RwLock<Vec<PositionEstimate>>,
+    history: parking_lot::RwLock<VecDeque<PositionEstimate>>,
     /// Maximum history size
     max_history: usize,
 }
@@ -256,7 +285,7 @@ impl PositionFuser {
     /// Create a new position fuser
     pub fn new() -> Self {
         Self {
-            history: parking_lot::RwLock::new(Vec::new()),
+            history: parking_lot::RwLock::new(VecDeque::new()),
             max_history: 20,
         }
     }
@@ -264,11 +293,12 @@ impl PositionFuser {
     /// Add a position estimate
     pub fn add_estimate(&self, estimate: PositionEstimate) {
         let mut history = self.history.write();
-        history.push(estimate);
+        history.push_back(estimate);
 
-        // Keep only recent history
+        // Keep only recent history. M3: VecDeque::pop_front is O(1),
+        // avoiding the O(n) memmove that Vec::remove(0) performs.
         if history.len() > self.max_history {
-            history.remove(0);
+            history.pop_front();
         }
     }
 

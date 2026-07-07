@@ -97,6 +97,10 @@ pub struct RespiratoryDistressDetector {
 
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl RespiratoryDistressDetector {
@@ -116,6 +120,8 @@ impl RespiratoryDistressDetector {
             cd_cs: 0,
             last_distress: 0.0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -163,15 +169,14 @@ impl RespiratoryDistressDetector {
             self.var_mean += d / self.var_count as f32;
         }
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         // ── Tachypnea ───────────────────────────────────────────────────
         if breathing_bpm > TACHYPNEA_THRESH {
             self.tachy_count = self.tachy_count.saturating_add(1);
-            if self.tachy_count >= SUSTAINED_SECS && self.cd_tachy == 0 && n < 4 {
-                unsafe { EVENTS[n] = (EVENT_TACHYPNEA, breathing_bpm); }
-                n += 1;
+            if self.tachy_count >= SUSTAINED_SECS && self.cd_tachy == 0 && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_TACHYPNEA, breathing_bpm);
+                self.events_len += 1;
                 self.cd_tachy = COOLDOWN_SECS;
             }
         } else {
@@ -182,31 +187,31 @@ impl RespiratoryDistressDetector {
         if self.var_count >= BASELINE_SECS && self.var_mean > 0.001 {
             let current_var = self.recent_var_mean();
             let ratio = current_var / self.var_mean;
-            if ratio > LABORED_VAR_RATIO && self.cd_labored == 0 && n < 4 {
-                unsafe { EVENTS[n] = (EVENT_LABORED_BREATHING, ratio); }
-                n += 1;
+            if ratio > LABORED_VAR_RATIO && self.cd_labored == 0 && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_LABORED_BREATHING, ratio);
+                self.events_len += 1;
                 self.cd_labored = COOLDOWN_SECS;
             }
         }
 
         // ── Cheyne-Stokes (autocorrelation) ─────────────────────────────
-        if self.bpm_len >= AC_WINDOW && self.cd_cs == 0 && n < 4 {
+        if self.bpm_len >= AC_WINDOW && self.cd_cs == 0 && self.events_len < 4 {
             if let Some(period) = self.detect_cheyne_stokes() {
-                unsafe { EVENTS[n] = (EVENT_CHEYNE_STOKES, period as f32); }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_CHEYNE_STOKES, period as f32);
+                self.events_len += 1;
                 self.cd_cs = COOLDOWN_SECS;
             }
         }
 
         // ── Composite distress level ────────────────────────────────────
-        if self.frame_count % DISTRESS_REPORT_INTERVAL == 0 && n < 4 {
+        if self.frame_count % DISTRESS_REPORT_INTERVAL == 0 && self.events_len < 4 {
             let score = self.compute_distress_score(breathing_bpm, variance);
             self.last_distress = score;
-            unsafe { EVENTS[n] = (EVENT_RESP_DISTRESS_LEVEL, score); }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_RESP_DISTRESS_LEVEL, score);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Mean of recent variance samples.

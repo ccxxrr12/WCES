@@ -198,6 +198,15 @@ impl DepthEstimator {
         let estimated_depth = avg_extra_path / 4.0; // Empirical factor
 
         let attenuation_per_meter = debris_profile.attenuation_factor();
+
+        // Guard against a zero/negligible attenuation coefficient (same guard
+        // as estimate_depth above): without it the attenuation-based depth
+        // estimate divides by ~0, producing Inf/NaN that corrupts the fused
+        // depth. Bail out so the caller falls back to other depth sources.
+        if attenuation_per_meter < 0.1 {
+            return None;
+        }
+
         let attenuation_based_depth = direct_path_attenuation / attenuation_per_meter;
 
         // Combine estimates

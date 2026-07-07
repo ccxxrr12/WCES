@@ -122,6 +122,9 @@ pub struct InterferenceSearch {
     prev_winner: u8,
     /// Frame counter.
     frame_count: u32,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl InterferenceSearch {
@@ -135,6 +138,8 @@ impl InterferenceSearch {
             converged: false,
             prev_winner: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -178,37 +183,30 @@ impl InterferenceSearch {
         self.converged = winner_prob > CONVERGENCE_PROB;
 
         // ── Build output events ──
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         // Emit winner periodically or on change.
         let winner_changed = winner_idx as u8 != self.prev_winner;
         if winner_changed || self.frame_count % WINNER_EMIT_INTERVAL == 0 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_HYPOTHESIS_WINNER, winner_idx as f32);
-            }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_HYPOTHESIS_WINNER, winner_idx as f32);
+            self.events_len += 1;
         }
 
         // Emit amplitude periodically.
         if self.frame_count % AMPLITUDE_EMIT_INTERVAL == 0 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_HYPOTHESIS_AMPLITUDE, winner_prob);
-            }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_HYPOTHESIS_AMPLITUDE, winner_prob);
+            self.events_len += 1;
         }
 
         // Emit iteration count periodically.
         if self.frame_count % ITERATION_EMIT_INTERVAL == 0 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_SEARCH_ITERATIONS, self.iteration_count as f32);
-            }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_SEARCH_ITERATIONS, self.iteration_count as f32);
+            self.events_len += 1;
         }
 
         self.prev_winner = winner_idx as u8;
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Apply the oracle: set boost/dampen factors based on CSI evidence.

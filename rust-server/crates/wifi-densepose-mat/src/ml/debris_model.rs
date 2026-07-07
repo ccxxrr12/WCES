@@ -221,8 +221,11 @@ impl DebrisClassification {
             return 1;
         }
 
-        // Map entropy to layer count (1-5)
-        (1.0 + normalized_entropy * 4.0).round() as u8
+        // Map entropy to layer count (1-5). P3: clamp at 255 before the
+        // `as u8` cast to defend against u8 overflow (which would panic in
+        // debug / wrap in release) if normalized_entropy exceeds its
+        // expected [0, 1] range due to upstream anomalies.
+        (1.0 + normalized_entropy * 4.0).round().min(255.0) as u8
     }
 
     /// Get secondary material if composite
@@ -593,9 +596,17 @@ impl DebrisModel {
         // Apply softmax
         let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let exp_sum: f32 = scores.iter().map(|&s| (s - max_score).exp()).sum();
-        let probabilities: Vec<f32> = scores.iter()
-            .map(|&s| (s - max_score).exp() / exp_sum)
-            .collect();
+        // M-6: guard against NaN / division-by-zero if the rule scores are
+        // degenerate (matching the classify_onnx softmax guard above).
+        // Fall back to a uniform distribution instead of producing NaNs.
+        let probabilities: Vec<f32> = if !exp_sum.is_finite() || exp_sum <= 0.0 {
+            let uniform = 1.0 / scores.len() as f32;
+            scores.iter().map(|_| uniform).collect()
+        } else {
+            scores.iter()
+                .map(|&s| (s - max_score).exp() / exp_sum)
+                .collect()
+        };
 
         Ok(DebrisClassification::new(probabilities))
     }

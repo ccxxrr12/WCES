@@ -110,8 +110,11 @@ impl MovementClassifier {
         let mean = signal.iter().sum::<f64>() / n as f64;
         let centered: Vec<f64> = signal.iter().map(|x| x - mean).collect();
 
-        let variance: f64 = centered.iter().map(|x| x * x).sum();
-        if variance == 0.0 {
+        // P3: this is the sum of squared deviations (not divided by n),
+        // used as the autocorrelation normaliser; renamed from `variance`
+        // to avoid implying it is a statistical variance.
+        let sum_of_squares: f64 = centered.iter().map(|x| x * x).sum();
+        if sum_of_squares == 0.0 {
             return 0.0;
         }
 
@@ -126,7 +129,7 @@ impl MovementClassifier {
                 .map(|(a, b)| a * b)
                 .sum();
 
-            let normalized_corr = corr / variance;
+            let normalized_corr = corr / sum_of_squares;
             if normalized_corr > max_corr {
                 max_corr = normalized_corr;
             }

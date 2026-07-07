@@ -100,6 +100,15 @@ static uint8_t  s_hop_index   = 0;
 /** Handle for the periodic hop timer. NULL when timer is not running. */
 static esp_timer_handle_t s_hop_timer = NULL;
 
+/** E-3 fix: spinlock guarding the hop table (s_hop_channels / s_hop_count /
+ *  s_hop_index / s_dwell_ms). csi_collector_set_hop_table() can be called from
+ *  any task (e.g. NVS config, HTTP command) while csi_hop_next_channel() runs
+ *  from the esp_timer task. Without protection, a table swap mid-hop could
+ *  read a stale s_hop_count with a new s_hop_channels, indexing out of bounds.
+ *  A spinlock (not the WiFi mutex) is used because the critical section is
+ *  brief (memcpy of ≤16 bytes) and must not block. */
+static portMUX_TYPE s_hop_spinlock = portMUX_INITIALIZER_UNLOCKED;
+
 /**
  * Serialize CSI data into ADR-018 binary frame format.
  *
@@ -442,10 +451,15 @@ void csi_collector_set_hop_table(const uint8_t *channels, uint8_t hop_count, uin
         dwell_ms = 10;
     }
 
+    /* E-3 fix: take the spinlock while swapping the table so csi_hop_next_channel
+     * (running from the timer task) never observes a half-updated table. The
+     * critical section is a short memcpy + three scalar stores. */
+    taskENTER_CRITICAL(&s_hop_spinlock);
     memcpy(s_hop_channels, channels, hop_count);
     s_hop_count = hop_count;
     s_dwell_ms  = dwell_ms;
     s_hop_index = 0;
+    taskEXIT_CRITICAL(&s_hop_spinlock);
 
     ESP_LOGI(TAG, "Hop table set: %u channels, dwell=%lu ms", (unsigned)hop_count,
              (unsigned long)dwell_ms);
@@ -461,8 +475,13 @@ void csi_hop_next_channel(void)
         return;
     }
 
+    /* E-3 fix: read the hop index/count/channel atomically against
+     * csi_collector_set_hop_table() which may be swapping the table concurrently. */
+    uint8_t channel;
+    taskENTER_CRITICAL(&s_hop_spinlock);
     s_hop_index = (s_hop_index + 1) % s_hop_count;
-    uint8_t channel = s_hop_channels[s_hop_index];
+    channel = s_hop_channels[s_hop_index];
+    taskEXIT_CRITICAL(&s_hop_spinlock);
 
     /*
      * esp_wifi_set_channel() changes the primary channel.

@@ -65,15 +65,22 @@ impl CsiVitalPreprocessor {
         let mut residuals = vec![0.0; n];
 
         for (i, residual) in residuals.iter_mut().enumerate().take(n) {
+            let amp = frame.amplitudes[i];
+            // Guard: NaN/Inf in the input amplitudes would permanently poison
+            // the EMA predictions (a single NaN propagates to all future
+            // predictions). Skip illegal samples, leaving the residual at 0.0.
+            if !amp.is_finite() {
+                continue;
+            }
             if self.initialized[i] {
                 // Compute residual: observed - predicted
-                *residual = frame.amplitudes[i] - self.predictions[i];
+                *residual = amp - self.predictions[i];
                 // Update EMA prediction
                 self.predictions[i] =
-                    self.alpha * frame.amplitudes[i] + (1.0 - self.alpha) * self.predictions[i];
+                    self.alpha * amp + (1.0 - self.alpha) * self.predictions[i];
             } else {
                 // First observation: seed the prediction
-                self.predictions[i] = frame.amplitudes[i];
+                self.predictions[i] = amp;
                 self.initialized[i] = true;
                 // First-frame residual is zero (no prior to compare against)
                 *residual = 0.0;

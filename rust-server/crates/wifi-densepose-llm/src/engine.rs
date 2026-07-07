@@ -219,12 +219,17 @@ impl LlmAnalysisEngine {
             let total = chars.len();
             for (i, chunk) in chars.chunks(chunk_size).enumerate() {
                 let text: String = chunk.iter().collect();
-                let _ = tx.send(StreamToken {
+                // L5: if the consumer dropped the receiver, stop pushing
+                // chunks instead of spinning through the rest of the payload.
+                if tx.send(StreamToken {
                     survivor_id: patient_id.clone(),
                     token_index: i as u32,
                     text,
                     is_complete: i * chunk_size >= total - chunk_size,
-                });
+                }).is_err() {
+                    tracing::debug!("stream consumer dropped, aborting fallback stream");
+                    return;
+                }
                 tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
             }
             let _ = tx.send(StreamToken {

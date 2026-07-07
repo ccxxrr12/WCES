@@ -112,17 +112,49 @@ impl LocationUncertainty {
     pub fn combine(&self, other: &LocationUncertainty) -> LocationUncertainty {
         // Weighted combination based on confidence
         let total_conf = self.confidence + other.confidence;
+
+        // If both estimates carry zero confidence, the weighted averages
+        // below divide by zero and produce NaN weights (0.0 / 0.0 = NaN),
+        // which then poison the fused confidence. Return a conservative
+        // max-uncertainty / zero-confidence result instead.
+        if total_conf <= 0.0 {
+            return LocationUncertainty {
+                horizontal_error: f64::MAX,
+                vertical_error: f64::MAX,
+                confidence: 0.0,
+            };
+        }
+
         let w1 = self.confidence / total_conf;
         let w2 = other.confidence / total_conf;
 
-        // Combined uncertainty is reduced when multiple estimates agree
+        // Combined uncertainty is reduced when multiple estimates agree.
+        // Guard the inverse-variance sum against zero variances (zero error),
+        // which would otherwise yield Inf and propagate through the harmonic
+        // combination.
         let h_var1 = self.horizontal_error * self.horizontal_error;
         let h_var2 = other.horizontal_error * other.horizontal_error;
-        let combined_h_var = 1.0 / (1.0/h_var1 + 1.0/h_var2);
+        let combined_h_var = if h_var1 > 0.0 && h_var2 > 0.0 {
+            1.0 / (1.0 / h_var1 + 1.0 / h_var2)
+        } else if h_var1 > 0.0 {
+            h_var1
+        } else if h_var2 > 0.0 {
+            h_var2
+        } else {
+            0.0
+        };
 
         let v_var1 = self.vertical_error * self.vertical_error;
         let v_var2 = other.vertical_error * other.vertical_error;
-        let combined_v_var = 1.0 / (1.0/v_var1 + 1.0/v_var2);
+        let combined_v_var = if v_var1 > 0.0 && v_var2 > 0.0 {
+            1.0 / (1.0 / v_var1 + 1.0 / v_var2)
+        } else if v_var1 > 0.0 {
+            v_var1
+        } else if v_var2 > 0.0 {
+            v_var2
+        } else {
+            0.0
+        };
 
         LocationUncertainty {
             horizontal_error: combined_h_var.sqrt(),
@@ -218,7 +250,9 @@ impl DebrisProfile {
     pub fn attenuation_factor(&self) -> f64 {
         let base = self.primary_material.attenuation_coefficient();
         let moisture_factor = self.moisture_content.attenuation_multiplier();
-        let void_factor = 1.0 - (self.void_fraction * 0.3); // Voids reduce attenuation
+        // Voids reduce attenuation. Clamp at 0 so an out-of-range
+        // void_fraction (> 3.33) cannot flip the factor negative (M2).
+        let void_factor = (1.0 - (self.void_fraction * 0.3)).max(0.0);
 
         base * moisture_factor * void_factor
     }

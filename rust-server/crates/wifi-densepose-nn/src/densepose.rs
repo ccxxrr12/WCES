@@ -108,6 +108,25 @@ impl DensePoseConfig {
         if self.hidden_channels.is_empty() {
             return Err(NnError::config("hidden_channels must not be empty"));
         }
+        if !self.hidden_channels.iter().all(|&c| c > 0) {
+            return Err(NnError::config("hidden_channels must all be positive"));
+        }
+        if self.kernel_size == 0 {
+            return Err(NnError::config("kernel_size must be positive"));
+        }
+        if self.padding >= self.kernel_size {
+            return Err(NnError::config(
+                "padding must be smaller than kernel_size to produce a valid output",
+            ));
+        }
+        if !self.dropout_rate.is_finite() || self.dropout_rate < 0.0 || self.dropout_rate >= 1.0 {
+            return Err(NnError::config(
+                "dropout_rate must be in the range [0.0, 1.0)",
+            ));
+        }
+        if self.output_stride == 0 {
+            return Err(NnError::config("output_stride must be positive"));
+        }
         Ok(())
     }
 
@@ -420,13 +439,40 @@ impl DensePoseHead {
         })
     }
 
-    /// Compute segmentation confidence from logits
+    /// Compute segmentation confidence from logits.
+    ///
+    /// Applies softmax over the class axis (axis=1) and returns, per pixel, the
+    /// maximum class probability as the confidence. The result has shape
+    /// `(batch, 1, height, width)`. N1 fixed the underlying `softmax()` so this
+    /// now produces a proper per-pixel confidence map.
     fn compute_segmentation_confidence(&self, logits: &Tensor) -> NnResult<Tensor> {
-        // Apply softmax and take max probability
         let probs = logits.softmax(1)?;
-        // For simplicity, return the softmax output
-        // In a full implementation, we'd compute max along channel axis
-        Ok(probs)
+        // Take the max probability along the channel axis (axis=1) as the
+        // per-pixel confidence.
+        match &probs {
+            Tensor::Float4D(a) => {
+                let (batch, channels, height, width) = a.dim();
+                let mut conf = Array4::zeros((batch, 1, height, width));
+                for b in 0..batch {
+                    for h in 0..height {
+                        for w in 0..width {
+                            let mut max_p = 0.0f32;
+                            for c in 0..channels {
+                                let p = a[[b, c, h, w]];
+                                if p > max_p {
+                                    max_p = p;
+                                }
+                            }
+                            conf[[b, 0, h, w]] = max_p;
+                        }
+                    }
+                }
+                Ok(Tensor::Float4D(conf))
+            }
+            _ => Err(NnError::tensor_op(
+                "compute_segmentation_confidence: expected 4D float tensor",
+            )),
+        }
     }
 
     /// Compute UV confidence from predictions

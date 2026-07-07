@@ -17,6 +17,11 @@ static struct sockaddr_in s_dest_addr;
 
 static int sender_init_internal(const char *ip, uint16_t port)
 {
+    /* E-1 fix: close any previously-opened socket before creating a new one.
+     * Without this, repeated calls to stream_sender_init_with() leak the old
+     * file descriptor (lwIP's CONFIG_LWIP_MAX_SOCKETS is only 16 on C5). */
+    if (s_sock >= 0) { close(s_sock); s_sock = -1; }
+
     s_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s_sock < 0) { ESP_LOGE(TAG, "socket errno %d", errno); return -1; }
 

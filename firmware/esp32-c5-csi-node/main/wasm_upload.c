@@ -290,23 +290,32 @@ static esp_err_t wasm_list_handler(httpd_req_t *req)
     uint8_t count = 0;
     wasm_runtime_get_info(info, &count);
 
-    /* Build JSON array (larger buffer for manifest fields). */
-    char response[2048];
+    /* E-2 fix: 2048-byte response buffer plus the info[] array previously sat
+     * entirely on the httpd task stack (default 4 KB, often reduced on C5).
+     * Move the response buffer to the heap so the handler stays well within
+     * the stack budget. resp_size replaces sizeof(response) in the clamp
+     * macro below because sizeof() on a pointer would yield 4/8 bytes. */
+    const size_t resp_size = 2048;
+    char *response = malloc(resp_size);
+    if (response == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
     int pos = 0;
 
     /* H-2 fix: snprintf returns the number of chars that WOULD have been
      * written, which can exceed the remaining buffer space. Without
-     * clamping, pos grows past sizeof(response), and the subsequent
-     * sizeof(response) - pos wraps (unsigned arithmetic) to a huge value,
+     * clamping, pos grows past resp_size, and the subsequent
+     * resp_size - pos wraps (unsigned arithmetic) to a huge value,
      * causing a buffer overflow. We clamp each return value and stop
      * writing once the buffer is full. */
 #define SNPRINTF_CLAMP(fmt, ...) \
     do { \
-        if (pos >= 0 && (size_t)pos < sizeof(response)) { \
-            int _w = snprintf(response + pos, sizeof(response) - (size_t)pos, \
+        if (pos >= 0 && (size_t)pos < resp_size) { \
+            int _w = snprintf(response + pos, resp_size - (size_t)pos, \
                               fmt, ##__VA_ARGS__); \
             if (_w > 0) { \
-                size_t _avail = sizeof(response) - (size_t)pos - 1; \
+                size_t _avail = resp_size - (size_t)pos - 1; \
                 pos += (_w < (int)_avail) ? _w : (int)_avail; \
             } \
         } \
@@ -315,7 +324,7 @@ static esp_err_t wasm_list_handler(httpd_req_t *req)
     SNPRINTF_CLAMP("{\"modules\":[");
 
     for (uint8_t i = 0; i < WASM_MAX_MODULES; i++) {
-        if ((size_t)pos >= sizeof(response) - 1) break;  /* buffer full */
+        if ((size_t)pos >= resp_size - 1) break;  /* buffer full */
         if (i > 0) SNPRINTF_CLAMP(",");
         uint32_t mean_us = (info[i].frame_count > 0)
                            ? (info[i].total_us / info[i].frame_count) : 0;
@@ -342,6 +351,7 @@ static esp_err_t wasm_list_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, pos);
+    free(response);
     return ESP_OK;
 }
 
@@ -353,9 +363,14 @@ static int parse_module_id_from_uri(const char *uri, const char *prefix)
 {
     const char *id_str = uri + strlen(prefix);
     if (*id_str == '\0') return -1;
-    int id = atoi(id_str);
-    if (id < 0 || id >= WASM_MAX_MODULES) return -1;
-    return id;
+    /* E-7 fix: atoi() silently returns 0 for non-numeric input ("abc" → 0),
+     * which would resolve to module slot 0 and let a malformed URI target an
+     * unrelated module. strtol() with endptr validation rejects any input that
+     * contains non-digit characters or overflows. */
+    char *endptr;
+    long id = strtol(id_str, &endptr, 10);
+    if (*endptr != '\0' || id < 0 || id >= WASM_MAX_MODULES) return -1;
+    return (int)id;
 }
 
 static esp_err_t wasm_start_handler(httpd_req_t *req)

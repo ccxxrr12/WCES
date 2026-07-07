@@ -165,6 +165,10 @@ pub struct BreathingSyncDetector {
     group_coherence: f32,
     /// Total frames processed.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl BreathingSyncDetector {
@@ -183,6 +187,8 @@ impl BreathingSyncDetector {
             any_synced: false,
             group_coherence: 0.0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -201,8 +207,7 @@ impl BreathingSyncDetector {
         _breathing_bpm: f32,
         n_persons: i32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
 
@@ -214,32 +219,30 @@ impl BreathingSyncDetector {
         if n_pers < 2 {
             // Reset pair states when fewer than 2 persons.
             if self.any_synced {
-                unsafe {
-                    EVENTS[n_ev] = (EVENT_SYNC_LOST, 1.0);
-                }
-                n_ev += 1;
+                self.events_buf[self.events_len] = (EVENT_SYNC_LOST, 1.0);
+                self.events_len += 1;
                 self.any_synced = false;
                 self.prev_sync_count = 0;
             }
-            return unsafe { &EVENTS[..n_ev] };
+            return &self.events_buf[..self.events_len];
         }
 
         let n_sc = core::cmp::min(phases.len(), MAX_SC);
         let n_sc = core::cmp::min(n_sc, variance.len());
         if n_sc < N_GROUPS {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Assign subcarrier groups to persons.
         // With 8 groups and n_pers persons, each person gets groups_per groups.
         let groups_per = N_GROUPS / n_pers;
         if groups_per == 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let subs_per = n_sc / N_GROUPS;
         if subs_per == 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Compute per-group mean phase, then assign to persons.
@@ -270,7 +273,7 @@ impl BreathingSyncDetector {
 
         // Need enough data before pairwise analysis.
         if self.frame_count < MIN_FRAMES {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Compute pairwise cross-correlation.
@@ -331,36 +334,28 @@ impl BreathingSyncDetector {
 
         // Emit events.
         if self.any_synced && !was_any_synced {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_SYNC_DETECTED, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_SYNC_DETECTED, 1.0);
+            self.events_len += 1;
         }
 
         if was_any_synced && !self.any_synced {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_SYNC_LOST, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_SYNC_LOST, 1.0);
+            self.events_len += 1;
         }
 
         if sync_count != self.prev_sync_count && sync_count > 0 {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_SYNC_PAIR_COUNT, sync_count as f32);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_SYNC_PAIR_COUNT, sync_count as f32);
+            self.events_len += 1;
         }
         self.prev_sync_count = sync_count;
 
         // Emit coherence periodically (every 10 frames).
         if self.frame_count % 10 == 0 {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_GROUP_COHERENCE, self.group_coherence);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_GROUP_COHERENCE, self.group_coherence);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute normalized cross-correlation between two person channels

@@ -20,24 +20,26 @@ pub fn complex_phase(data: &Array2<Complex64>) -> Array2<f64> {
 /// Unwraps phase values to remove discontinuities.
 ///
 /// Phase unwrapping corrects for the 2*pi jumps that occur when phase
-/// values wrap around from pi to -pi.
+/// values wrap around from pi to -pi. Uses an O(n) cumulative-offset
+/// algorithm: the diff is computed on the *original* (wrapped) phase
+/// values, and a running offset accumulates the total correction.
 #[must_use]
 pub fn unwrap_phase(phase: &Array1<f64>) -> Array1<f64> {
     let mut unwrapped = phase.clone();
     let pi = std::f64::consts::PI;
     let two_pi = 2.0 * pi;
+    let mut offset = 0.0;
 
     for i in 1..unwrapped.len() {
-        let diff = unwrapped[i] - unwrapped[i - 1];
+        // Diff on original (wrapped) values — not on already-adjusted
+        // unwrapped[i-1] — so each 2*pi jump is detected exactly once.
+        let diff = phase[i] - phase[i - 1];
         if diff > pi {
-            for j in i..unwrapped.len() {
-                unwrapped[j] -= two_pi;
-            }
+            offset -= two_pi;
         } else if diff < -pi {
-            for j in i..unwrapped.len() {
-                unwrapped[j] += two_pi;
-            }
+            offset += two_pi;
         }
+        unwrapped[i] += offset;
     }
 
     unwrapped
@@ -70,9 +72,15 @@ pub fn normalize_zscore(data: &Array1<f64>) -> Array1<f64> {
 }
 
 /// Calculates the Signal-to-Noise Ratio in dB.
+///
+/// Returns `0.0` if either input is empty (where division by `len() == 0`
+/// would produce NaN). Returns `f64::INFINITY` if the noise power is zero.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn calculate_snr_db(signal: &Array1<f64>, noise: &Array1<f64>) -> f64 {
+    if signal.is_empty() || noise.is_empty() {
+        return 0.0;
+    }
     let signal_power: f64 = signal.iter().map(|x| x * x).sum::<f64>() / signal.len() as f64;
     let noise_power: f64 = noise.iter().map(|x| x * x).sum::<f64>() / noise.len() as f64;
 

@@ -89,6 +89,16 @@ pub fn extract_bvp(
     if sample_rate <= 0.0 {
         return Err(BvpError::InvalidConfig("sample_rate must be > 0".into()));
     }
+    // Guard divide-by-zero in wavelength = c / f_c and velocity mapping.
+    if config.carrier_frequency <= 0.0 {
+        return Err(BvpError::InvalidConfig("carrier_frequency must be > 0".into()));
+    }
+    if config.n_velocity_bins == 0 {
+        return Err(BvpError::InvalidConfig("n_velocity_bins must be > 0".into()));
+    }
+    if config.max_velocity <= 0.0 {
+        return Err(BvpError::InvalidConfig("max_velocity must be > 0".into()));
+    }
 
     let wavelength = 2.998e8 / config.carrier_frequency;
     let n_frames = (n_samples - config.window_size) / config.hop_size + 1;
@@ -148,10 +158,25 @@ pub fn extract_bvp(
     let mut bvp = Array2::zeros((config.n_velocity_bins, n_frames));
 
     for (v_idx, &velocity) in velocity_bins.iter().enumerate() {
-        // Convert velocity to Doppler frequency
+        // Convert velocity to Doppler frequency. Keep the sign so that
+        // approaching (+v) and receding (-v) motions are NOT folded together
+        // by an absolute value — folding would discard radial direction info.
         let doppler_freq = 2.0 * velocity / wavelength;
-        // Convert to FFT bin index
-        let fft_bin = (doppler_freq.abs() / freq_resolution).round() as usize;
+        // Convert signed Doppler frequency to an FFT bin index. Positive
+        // Doppler maps forward from bin 0; negative Doppler maps backward
+        // from the high end of the velocity bin range so the two directions
+        // occupy distinct bins. Use i64 to avoid usize underflow on negatives.
+        let raw_bin = if doppler_freq >= 0.0 {
+            (doppler_freq / freq_resolution).round() as i64
+        } else {
+            config.n_velocity_bins as i64
+                - ((-doppler_freq / freq_resolution).round() as i64)
+        };
+        // Clamp to a valid index into `aggregated` (which has n_fft_bins rows).
+        let fft_bin = raw_bin
+            .max(0)
+            .min((n_fft_bins as i64) - 1)
+            .min((config.n_velocity_bins as i64) - 1) as usize;
 
         if fft_bin < n_fft_bins {
             for frame in 0..n_frames {

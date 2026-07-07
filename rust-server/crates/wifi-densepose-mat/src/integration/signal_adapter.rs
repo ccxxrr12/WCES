@@ -123,6 +123,15 @@ impl SignalAdapter {
     ) -> Result<Vec<f64>, AdapterError> {
         use rustfft::{FftPlanner, num_complex::Complex};
 
+        // M7: guard against sample_rate == 0, which would make
+        // freq_resolution zero and turn low_bin / high_bin into usize::MAX
+        // via inf-to-int conversion.
+        if self.sample_rate <= 0.0 {
+            return Err(AdapterError::Signal(
+                "sample_rate must be > 0 for frequency-band extraction".into(),
+            ));
+        }
+
         let n = signal.len().min(self.window_size);
         if n < 32 {
             return Err(AdapterError::Signal("Signal too short".into()));

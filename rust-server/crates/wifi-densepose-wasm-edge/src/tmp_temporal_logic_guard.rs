@@ -45,19 +45,23 @@ pub struct TemporalLogicGuard {
     vio_counts: [u32; NUM_RULES],
     frame_idx: u32,
     report_interval: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 12],
+    events_len: usize,
 }
 
 impl TemporalLogicGuard {
     pub const fn new() -> Self {
         Self { rules: [Rule::new(); NUM_RULES], vio_counts: [0; NUM_RULES],
-               frame_idx: 0, report_interval: 200 }
+               frame_idx: 0, report_interval: 200,
+               events_buf: [(0, 0.0); 12], events_len: 0 }
     }
 
     /// Process one frame. Returns events to emit.
     pub fn on_frame(&mut self, input: &FrameInput) -> &[(i32, f32)] {
         self.frame_idx += 1;
-        static mut EV: [(i32, f32); 12] = [(0, 0.0); 12];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         // G-rules (0-3, 6): violated when condition holds on any frame.
         let checks: [(usize, bool); 5] = [
@@ -75,10 +79,11 @@ impl TemporalLogicGuard {
                     self.rules[rid].state = RuleState::Violated;
                     self.rules[rid].vio_frame = self.frame_idx;
                     self.vio_counts[rid] += 1;
-                    if n + 1 < 12 { unsafe {
-                        EV[n] = (EVENT_LTL_VIOLATION, rid as f32);
-                        EV[n+1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
-                    } n += 2; }
+                    if self.events_len + 1 < 12 {
+                        self.events_buf[self.events_len] = (EVENT_LTL_VIOLATION, rid as f32);
+                        self.events_buf[self.events_len + 1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
+                        self.events_len += 2;
+                    }
                 }
             } else { self.rules[rid].state = RuleState::Satisfied; }
             g += 1;
@@ -86,18 +91,20 @@ impl TemporalLogicGuard {
 
         // Rule 4: F(motion_start -> motion_end within 300s).
         if self.check_deadline_rule(4, input.motion_energy > 0.1, MOTION_STOP_DEADLINE) {
-            if n + 1 < 12 { unsafe {
-                EV[n] = (EVENT_LTL_VIOLATION, 4.0);
-                EV[n+1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
-            } n += 2; }
+            if self.events_len + 1 < 12 {
+                self.events_buf[self.events_len] = (EVENT_LTL_VIOLATION, 4.0);
+                self.events_buf[self.events_len + 1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
+                self.events_len += 2;
+            }
         }
 
         // Rule 5: G(breathing>40 -> alert within 5s).
         if self.check_deadline_rule(5, input.breathing_bpm > 40.0, FAST_BREATH_DEADLINE) {
-            if n + 1 < 12 { unsafe {
-                EV[n] = (EVENT_LTL_VIOLATION, 5.0);
-                EV[n+1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
-            } n += 2; }
+            if self.events_len + 1 < 12 {
+                self.events_buf[self.events_len] = (EVENT_LTL_VIOLATION, 5.0);
+                self.events_buf[self.events_len + 1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
+                self.events_len += 2;
+            }
         }
 
         // Rule 7: G(seizure -> !normal_gait within 60s).
@@ -113,10 +120,11 @@ impl TemporalLogicGuard {
                     self.rules[7].state = RuleState::Violated;
                     self.rules[7].vio_frame = self.frame_idx;
                     self.vio_counts[7] += 1;
-                    if n + 1 < 12 { unsafe {
-                        EV[n] = (EVENT_LTL_VIOLATION, 7.0);
-                        EV[n+1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
-                    } n += 2; }
+                    if self.events_len + 1 < 12 {
+                        self.events_buf[self.events_len] = (EVENT_LTL_VIOLATION, 7.0);
+                        self.events_buf[self.events_len + 1] = (EVENT_COUNTEREXAMPLE, self.frame_idx as f32);
+                        self.events_len += 2;
+                    }
                 } else if self.frame_idx >= self.rules[7].deadline {
                     self.rules[7].state = RuleState::Satisfied;
                 }
@@ -128,11 +136,11 @@ impl TemporalLogicGuard {
             }
         }
 
-        if self.frame_idx % self.report_interval == 0 && n < 12 {
-            unsafe { EV[n] = (EVENT_LTL_SATISFACTION, self.satisfied_count() as f32); }
-            n += 1;
+        if self.frame_idx % self.report_interval == 0 && self.events_len < 12 {
+            self.events_buf[self.events_len] = (EVENT_LTL_SATISFACTION, self.satisfied_count() as f32);
+            self.events_len += 1;
         }
-        unsafe { &EV[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Generic deadline rule: condition triggers pending, expiry = violation,

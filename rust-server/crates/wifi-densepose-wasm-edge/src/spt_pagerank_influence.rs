@@ -58,6 +58,8 @@ pub struct PageRankInfluence {
     n_persons: usize,
     /// Frame counter.
     frame_count: u32,
+    events_buf: [(i32, f32); 8],
+    events_len: usize,
 }
 
 impl PageRankInfluence {
@@ -68,6 +70,7 @@ impl PageRankInfluence {
             prev_rank: [0.25; MAX_PERSONS],
             n_persons: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 8], events_len: 0,
         }
     }
 
@@ -78,13 +81,14 @@ impl PageRankInfluence {
     ///
     /// Returns a slice of (event_id, value) pairs to emit.
     pub fn process_frame(&mut self, phases: &[f32], n_persons: usize) -> &[(i32, f32)] {
+        self.events_len = 0;
         let np = if n_persons < 1 { 1 } else if n_persons > MAX_PERSONS { MAX_PERSONS } else { n_persons };
         self.n_persons = np;
         self.frame_count += 1;
 
         let n_sc = phases.len().min(MAX_SC);
         if n_sc < SC_PER_PERSON {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── 1. Build adjacency from cross-correlation ────────────────────
@@ -191,10 +195,7 @@ impl PageRankInfluence {
     }
 
     /// Build output events into a static buffer.
-    fn build_events(&self, np: usize) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 8] = [(0, 0.0); 8];
-        let mut n = 0usize;
-
+    fn build_events(&mut self, np: usize) -> &[(i32, f32)] {
         // Find dominant person.
         let mut best_idx = 0usize;
         let mut best_rank = self.rank[0];
@@ -206,31 +207,29 @@ impl PageRankInfluence {
         }
 
         // Emit dominant person every frame.
-        unsafe {
-            EVENTS[n] = (EVENT_DOMINANT_PERSON, best_idx as f32);
+        if self.events_len < 8 {
+            self.events_buf[self.events_len] = (EVENT_DOMINANT_PERSON, best_idx as f32);
+            self.events_len += 1;
         }
-        n += 1;
 
         // Emit influence score every frame.
-        unsafe {
-            EVENTS[n] = (EVENT_INFLUENCE_SCORE, best_rank);
+        if self.events_len < 8 {
+            self.events_buf[self.events_len] = (EVENT_INFLUENCE_SCORE, best_rank);
+            self.events_len += 1;
         }
-        n += 1;
 
         // Emit change events for persons whose rank shifted significantly.
         for i in 0..np {
             let delta = self.rank[i] - self.prev_rank[i];
-            if fabsf(delta) > CHANGE_THRESHOLD && n < 8 {
+            if fabsf(delta) > CHANGE_THRESHOLD && self.events_len < 8 {
                 // Encode: integer part = person_id, fractional = clamped delta.
                 let encoded = i as f32 + delta.clamp(-0.49, 0.49);
-                unsafe {
-                    EVENTS[n] = (EVENT_INFLUENCE_CHANGE, encoded);
-                }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_INFLUENCE_CHANGE, encoded);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the current PageRank score for a person.

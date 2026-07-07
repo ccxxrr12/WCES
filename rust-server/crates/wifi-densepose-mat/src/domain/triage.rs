@@ -5,27 +5,45 @@
 
 use super::{VitalSignsReading, BreathingType, MovementType};
 
+/// START protocol bradypnea threshold (breaths/min).
+///
+/// Respiration rates below this are classified as TooSlow / Immediate.
+/// Shared by `TriageCalculator` and the ensemble classifier so both layers
+/// apply the same START boundary (P0-5: previously the ensemble used a
+/// divergent `<12 || >24` rule).
+pub const BRADYPNEA_THRESHOLD: f32 = 10.0;
+
+/// START protocol tachypnea threshold (breaths/min).
+///
+/// Respiration rates above this are classified as TooFast / Immediate.
+pub const TACHYPNEA_THRESHOLD: f32 = 30.0;
+
 /// Triage status following START protocol
+///
+/// Discriminant values are part of the project's hard constraint and must
+/// not be reordered: `Unknown=0, Minor=1, Delayed=2, Immediate=3,
+/// Deceased=4`. They are used as stable wire/serialization identifiers
+/// and for severity comparisons.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TriageStatus {
-    /// Immediate (Red) - Life-threatening, requires immediate intervention
-    /// RPM: Respiration >30 or <10, or absent pulse, or unable to follow commands
-    Immediate,
-
-    /// Delayed (Yellow) - Serious but stable, can wait for treatment
-    /// RPM: Normal respiration, pulse present, follows commands, non-life-threatening
-    Delayed,
+    /// Unknown - Insufficient data for classification
+    Unknown = 0,
 
     /// Minor (Green) - Walking wounded, minimal treatment needed
     /// Can walk, minor injuries
-    Minor,
+    Minor = 1,
+
+    /// Delayed (Yellow) - Serious but stable, can wait for treatment
+    /// RPM: Normal respiration, pulse present, follows commands, non-life-threatening
+    Delayed = 2,
+
+    /// Immediate (Red) - Life-threatening, requires immediate intervention
+    /// RPM: Respiration >30 or <10, or absent pulse, or unable to follow commands
+    Immediate = 3,
 
     /// Deceased (Black) - No vital signs, or not breathing after airway cleared
-    Deceased,
-
-    /// Unknown - Insufficient data for classification
-    Unknown,
+    Deceased = 4,
 }
 
 impl TriageStatus {
@@ -134,10 +152,10 @@ impl TriageCalculator {
                     return BreathingAssessment::Agonal;
                 }
 
-                // Check rate
-                if breathing.rate_bpm < 10.0 {
+                // Check rate (START protocol thresholds)
+                if breathing.rate_bpm < BRADYPNEA_THRESHOLD {
                     BreathingAssessment::TooSlow
-                } else if breathing.rate_bpm > 30.0 {
+                } else if breathing.rate_bpm > TACHYPNEA_THRESHOLD {
                     BreathingAssessment::TooFast
                 } else {
                     BreathingAssessment::Normal

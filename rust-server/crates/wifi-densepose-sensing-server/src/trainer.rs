@@ -434,8 +434,8 @@ impl Trainer {
         // falls back to the toy `predict_keypoints` linear probe (for testing
         // only). Production deployments should use `Trainer::with_transformer`
         // to get the full CsiToPoseTransformer forward pass.
-        eprintln!(
-            "warn: Trainer::new created without transformer — predict_keypoints \
+        tracing::warn!(
+            "Trainer::new created without transformer — predict_keypoints \
              uses a testing-only placeholder; use Trainer::with_transformer for production"
         );
         let optimizer = SgdOptimizer::new(config.lr, config.momentum, config.weight_decay);

@@ -91,6 +91,10 @@ pub struct EnergyAuditor {
     frame_count: u32,
     /// Total occupied frames (for overall utilization).
     total_occupied_frames: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl EnergyAuditor {
@@ -105,6 +109,8 @@ impl EnergyAuditor {
             after_hours_presence: 0,
             frame_count: 0,
             total_occupied_frames: 0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -161,39 +167,32 @@ impl EnergyAuditor {
         }
 
         // Build events.
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         // After-hours alert.
-        if self.after_hours_presence >= AFTER_HOURS_ALERT_FRAMES && n_events < 3 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_AFTER_HOURS_ALERT, self.current_hour as f32);
-            }
-            n_events += 1;
+        if self.after_hours_presence >= AFTER_HOURS_ALERT_FRAMES && self.events_len < 3 {
+            self.events_buf[self.events_len] = (EVENT_AFTER_HOURS_ALERT, self.current_hour as f32);
+            self.events_len += 1;
         }
 
         // Periodic summary.
         if self.frame_count % SUMMARY_INTERVAL == 0 {
             // Emit current hour's occupancy rate.
             let rate = self.histogram[d][h].occupancy_rate();
-            if n_events < 3 {
-                unsafe {
-                    EVENTS[n_events] = (EVENT_SCHEDULE_SUMMARY, rate);
-                }
-                n_events += 1;
+            if self.events_len < 3 {
+                self.events_buf[self.events_len] = (EVENT_SCHEDULE_SUMMARY, rate);
+                self.events_len += 1;
             }
 
             // Emit overall utilization rate.
-            if n_events < 3 {
+            if self.events_len < 3 {
                 let util = self.utilization_rate();
-                unsafe {
-                    EVENTS[n_events] = (EVENT_UTILIZATION_RATE, util);
-                }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_UTILIZATION_RATE, util);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Check if a given hour is after-hours.

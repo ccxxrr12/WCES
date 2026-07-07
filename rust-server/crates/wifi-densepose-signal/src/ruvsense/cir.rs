@@ -154,6 +154,10 @@ pub enum CirError {
     /// ISTA did not converge within the iteration budget.
     #[error("ISTA did not converge in {iters} iters (residual {residual:.3e})")]
     SolverDivergence { iters: u32, residual: f32 },
+
+    /// Unsupported bandwidth passed to `CirConfig::for_bandwidth_mhz`.
+    #[error("unsupported bandwidth {0} MHz (use ht20/ht40/he20/he40 explicitly)")]
+    UnsupportedBandwidth(u16),
 }
 
 // ---------------------------------------------------------------------------
@@ -306,14 +310,14 @@ impl CirConfig {
     /// `20` → `ht20()`, `40` → `ht40()`. For HE-LTF tiers, call
     /// `he20()` / `he40()` directly — bandwidth alone is ambiguous between
     /// HT and HE PHY classes.
-    pub fn for_bandwidth_mhz(mhz: u16) -> Self {
+    ///
+    /// Returns `Err(CirError::UnsupportedBandwidth)` for any bandwidth other
+    /// than 20 or 40 MHz, instead of panicking.
+    pub fn for_bandwidth_mhz(mhz: u16) -> Result<Self, CirError> {
         match mhz {
-            20 => Self::ht20(),
-            40 => Self::ht40(),
-            other => panic!(
-                "for_bandwidth_mhz: unsupported bandwidth {} MHz (use ht20/ht40/he20/he40 explicitly)",
-                other
-            ),
+            20 => Ok(Self::ht20()),
+            40 => Ok(Self::ht40()),
+            other => Err(CirError::UnsupportedBandwidth(other)),
         }
     }
 
@@ -462,6 +466,11 @@ struct FftOperator {
 
 impl FftOperator {
     fn new(active_indices: &[i32], g: usize, k: usize) -> Self {
+        // Guard: idx.rem_euclid(g as i32) and plan_fft_forward(g) both panic
+        // (integer division by zero / zero-size FFT) when g == 0. Fail with a
+        // clear message instead of the opaque downstream panic.
+        assert!(g > 0, "FftOperator::new: g (num_taps) must be > 0, got 0");
+
         let mut planner = FftPlanner::<f32>::new();
         let bins = active_indices
             .iter()
@@ -1368,7 +1377,7 @@ mod tests {
     ) -> wifi_densepose_core::types::CsiFrame {
         use ndarray::Array2;
         use num_complex::Complex64;
-        use wifi_densepose_core::types::{CsiFrame, CsiMetadata, DeviceId, FrequencyBand};
+        use wifi_densepose_core::types::{AntennaConfig, CsiFrame, CsiMetadata, DeviceId, FrequencyBand};
 
         let delta_f = 312_500.0_f64; // 312.5 kHz subcarrier spacing (802.11n)
         let n = num_subcarriers;
@@ -1382,7 +1391,10 @@ mod tests {
             let angle = std::f64::consts::TAU * (sc_idx as f64) * delta_f * tau_sec;
             data[[0, ki]] = Complex64::new(0.8 * angle.cos(), 0.8 * angle.sin());
         }
-        let meta = CsiMetadata::new(DeviceId::new("test"), FrequencyBand::Band2_4GHz, 6);
+        let mut meta = CsiMetadata::new(DeviceId::new("test"), FrequencyBand::Band2_4GHz, 6);
+        // Synthetic single-antenna frame: use a 1x1 antenna config so metadata
+        // matches the (1, n) data shape.
+        meta.antenna_config = AntennaConfig::new(1, 1);
         CsiFrame::new(meta, data)
     }
 

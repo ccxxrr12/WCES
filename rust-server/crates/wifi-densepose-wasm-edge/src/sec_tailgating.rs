@@ -75,6 +75,8 @@ pub struct TailgateDetector {
     var_accum: f32,
     var_count: u32,
     noise_floor: f32,
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl TailgateDetector {
@@ -95,6 +97,7 @@ impl TailgateDetector {
             var_accum: 0.0,
             var_count: 0,
             noise_floor: 0.5,
+            events_buf: [(0, 0.0); 3], events_len: 0,
         }
     }
 
@@ -106,12 +109,10 @@ impl TailgateDetector {
         _n_persons: i32,
         variance: f32,
     ) -> &[(i32, f32)] {
+        self.events_len = 0;
         self.frame_count += 1;
         self.cd_tailgate = self.cd_tailgate.saturating_sub(1);
         self.cd_passage = self.cd_passage.saturating_sub(1);
-
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut ne = 0usize;
 
         // Update noise floor estimate (exponential moving average of variance).
         self.var_accum += variance;
@@ -168,37 +169,31 @@ impl TailgateDetector {
                     self.state = PeakState::InPeak;
                     self.peak_max = motion_energy;
                     self.peak_frames = 1;
-                    return unsafe { &EVENTS[..0] };
+                    return &self.events_buf[..self.events_len];
                 }
 
                 // Window expired — evaluate passage.
                 if self.frames_since_peak >= TAILGATE_WINDOW {
                     if self.peaks_in_window >= 2 {
                         // Multiple peaks detected = tailgating.
-                        if self.cd_tailgate == 0 && ne < 3 {
-                            unsafe {
-                                EVENTS[ne] = (EVENT_TAILGATE_DETECTED, self.peaks_in_window as f32);
-                            }
-                            ne += 1;
+                        if self.cd_tailgate == 0 && self.events_len < 3 {
+                            self.events_buf[self.events_len] = (EVENT_TAILGATE_DETECTED, self.peaks_in_window as f32);
+                            self.events_len += 1;
                             self.cd_tailgate = COOLDOWN;
                             self.tailgate_count += 1;
                         }
 
                         // Also emit multi-passage.
-                        if self.cd_passage == 0 && ne < 3 {
-                            unsafe {
-                                EVENTS[ne] = (EVENT_MULTI_PASSAGE, self.peaks_in_window as f32);
-                            }
-                            ne += 1;
+                        if self.cd_passage == 0 && self.events_len < 3 {
+                            self.events_buf[self.events_len] = (EVENT_MULTI_PASSAGE, self.peaks_in_window as f32);
+                            self.events_len += 1;
                             self.cd_passage = COOLDOWN;
                         }
                     } else if self.peaks_in_window == 1 {
                         // Single passage.
-                        if self.cd_passage == 0 && ne < 3 {
-                            unsafe {
-                                EVENTS[ne] = (EVENT_SINGLE_PASSAGE, self.peak_energies[0]);
-                            }
-                            ne += 1;
+                        if self.cd_passage == 0 && self.events_len < 3 {
+                            self.events_buf[self.events_len] = (EVENT_SINGLE_PASSAGE, self.peak_energies[0]);
+                            self.events_len += 1;
                             self.cd_passage = COOLDOWN;
                             self.single_passages += 1;
                         }
@@ -212,7 +207,7 @@ impl TailgateDetector {
         }
 
         self.prev_energy = motion_energy;
-        unsafe { &EVENTS[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     pub fn frame_count(&self) -> u32 { self.frame_count }

@@ -18,7 +18,7 @@
 //! which expects 64-point FFT, 52 active tones, 156 delay taps.
 
 use wifi_densepose_signal::ruvsense::cir::{CirEstimator, CirConfig, Cir};
-use wifi_densepose_core::types::{CsiFrame, CsiMetadata, DeviceId, FrequencyBand};
+use wifi_densepose_core::types::{AntennaConfig, CsiFrame, CsiMetadata, DeviceId, FrequencyBand};
 use ndarray::Array2;
 use num_complex::Complex64;
 
@@ -94,6 +94,10 @@ impl CirBridge {
             FrequencyBand::Band2_4GHz,
             6,
         );
+        // ESP32-C5 node has a single RX antenna; override the default SIMO_1X3
+        // so metadata matches the (1, n) data shape built above.
+        let mut meta = meta;
+        meta.antenna_config = AntennaConfig::new(1, 1);
         let csi_frame = CsiFrame::new(meta, data);
 
         // Run ISTA sparse CIR estimation.

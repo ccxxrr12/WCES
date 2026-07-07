@@ -9,6 +9,11 @@ use super::{
     triage::TriageCalculator,
 };
 
+/// Minimum confidence required to generate an alert for a high-priority
+/// survivor (Immediate or Delayed triage). Below this threshold the
+/// detection is considered too uncertain to alert rescue teams (M15).
+const ALERT_CONFIDENCE_THRESHOLD: f64 = 0.5;
+
 /// Unique identifier for a survivor
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -344,11 +349,12 @@ impl Survivor {
             return false;
         }
 
-        // Alert for high-priority survivors
+        // Alert for high-priority survivors whose confidence meets the
+        // configurable threshold (M15).
         matches!(
             self.triage_status,
             TriageStatus::Immediate | TriageStatus::Delayed
-        ) && self.confidence >= 0.5
+        ) && self.confidence >= ALERT_CONFIDENCE_THRESHOLD
     }
 
     /// Mark that alert was sent

@@ -195,7 +195,22 @@ esp_err_t rvf_verify_signature(const rvf_parsed_t *parsed, const uint8_t *data,
         return ESP_ERR_NOT_FOUND;
     }
 
-    /* Signature covers: header + manifest + wasm payload. */
+    /* Signature covers: header + manifest + wasm payload.
+     *
+     * E-8 note: the test_vectors section is intentionally NOT covered by the
+     * signature. test_vectors are offline validation fixtures (expected I/O
+     * pairs used to sanity-check the module after loading), not runtime code
+     * or capabilities. Excluding them from the signed region allows test
+     * vectors to be regenerated or extended (e.g. adding coverage for a new
+     * firmware build) without forcing the module to be re-signed. The
+     * integrity of the executable payload itself is still fully guaranteed:
+     * header (magic/version/lengths), manifest (capabilities/budget/hash),
+     * and the WASM bytecode are all within signed_len.
+     *
+     * If test-vector tamper resistance becomes a requirement, extend
+     * signed_len by parsed->test_vectors_len and update the RVF builder to
+     * sign the same region. That change is deliberately not made here to
+     * avoid breaking existing signed modules. */
     uint32_t signed_len = RVF_HEADER_SIZE + RVF_MANIFEST_SIZE + parsed->wasm_len;
 
     /*

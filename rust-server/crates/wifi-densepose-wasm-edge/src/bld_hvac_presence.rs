@@ -68,6 +68,9 @@ pub struct HvacPresenceDetector {
     absence_frames: u32,
     /// Frame counter.
     frame_count: u32,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl HvacPresenceDetector {
@@ -79,6 +82,8 @@ impl HvacPresenceDetector {
             presence_frames: 0,
             absence_frames: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -159,8 +164,7 @@ impl HvacPresenceDetector {
         }
 
         // Build output events.
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         if self.frame_count % EMIT_INTERVAL == 0 {
             // Occupied status: 1.0 = occupied, 0.0 = vacant.
@@ -168,36 +172,30 @@ impl HvacPresenceDetector {
                 HvacState::Occupied | HvacState::DeparturePending => 1.0,
                 _ => 0.0,
             };
-            unsafe {
-                EVENTS[n] = (EVENT_HVAC_OCCUPIED, occupied_val);
-            }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_HVAC_OCCUPIED, occupied_val);
+            self.events_len += 1;
 
             // Activity level: 0.0 = sedentary, 1.0 = active, plus raw EMA.
             let activity_val = match self.activity {
                 ActivityLevel::Sedentary => 0.0 + self.motion_ema.min(0.99),
                 ActivityLevel::Active => 1.0,
             };
-            unsafe {
-                EVENTS[n] = (EVENT_ACTIVITY_LEVEL, activity_val);
-            }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_ACTIVITY_LEVEL, activity_val);
+            self.events_len += 1;
         }
 
         // Departure countdown: emit remaining time fraction when pending.
         if self.state == HvacState::DeparturePending
             && self.frame_count % EMIT_INTERVAL == 0
-            && n < 3
+            && self.events_len < 3
         {
             let remaining = DEPARTURE_TIMEOUT.saturating_sub(self.absence_frames);
             let fraction = remaining as f32 / DEPARTURE_TIMEOUT as f32;
-            unsafe {
-                EVENTS[n] = (EVENT_DEPARTURE_COUNTDOWN, fraction);
-            }
-            n += 1;
+            self.events_buf[self.events_len] = (EVENT_DEPARTURE_COUNTDOWN, fraction);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get current HVAC state.

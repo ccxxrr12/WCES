@@ -53,11 +53,74 @@ pub(crate) async fn load_model(
     if model_id.is_empty() {
         return Json(serde_json::json!({ "error": "missing 'id' field", "success": false }));
     }
+
+    // Resolve the model file path: look up in discovered_models first (gives
+    // the absolute path captured during scan), then fall back to the
+    // conventional {data_dir}/data/models/{id}.rvf location.
+    let model_path: PathBuf = {
+        let s = state.read().await;
+        let from_discovery = s.discovered_models.iter()
+            .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(&model_id))
+            .and_then(|m| m.get("path").and_then(|v| v.as_str()).map(String::from));
+        match from_discovery {
+            Some(p) => PathBuf::from(p),
+            None => s.data_dir.join("data/models").join(format!("{model_id}.rvf")),
+        }
+    };
+
+    // Actually load the model weights via ProgressiveLoader. Previously this
+    // handler was a stub that only set active_model_id/model_loaded flags
+    // without loading any weights, so the UI reported "loaded" while no
+    // inference data was present.
+    let data = match std::fs::read(&model_path) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("Failed to read model file {}: {e}", model_path.display());
+            return Json(serde_json::json!({
+                "error": format!("cannot read model file: {e}"),
+                "success": false,
+                "model_id": model_id,
+            }));
+        }
+    };
+    let mut loader = match crate::rvf_pipeline::ProgressiveLoader::new(&data) {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("ProgressiveLoader init failed for {model_id}: {e}");
+            return Json(serde_json::json!({
+                "error": format!("model load failed: {e}"),
+                "success": false,
+                "model_id": model_id,
+            }));
+        }
+    };
+    // Load Layer A (manifest + index). Non-fatal if it fails — ProgressiveLoader
+    // itself is valid; matches main.rs load_layer_a behaviour.
+    let layer_a = match loader.load_layer_a() {
+        Ok(la) => {
+            info!("  Layer A ready: model={} v{} ({} segments)", la.model_name, la.version, la.n_segments);
+            serde_json::json!({
+                "model_name": la.model_name,
+                "version": la.version,
+                "n_segments": la.n_segments,
+            })
+        }
+        Err(e) => {
+            warn!("Layer A load failed for {model_id}: {e}");
+            serde_json::json!({})
+        }
+    };
+
     let mut s = state.write().await;
     s.active_model_id = Some(model_id.clone());
     s.model_loaded = true;
-    info!("Model loaded: {model_id}");
-    Json(serde_json::json!({ "success": true, "model_id": model_id }))
+    s.progressive_loader = Some(loader);
+    info!("Model loaded: {model_id} ({})", model_path.display());
+    Json(serde_json::json!({
+        "success": true,
+        "model_id": model_id,
+        "layer_a": layer_a,
+    }))
 }
 
 /// POST /api/v1/models/unload —unload the current model.
@@ -113,6 +176,7 @@ pub(crate) async fn list_lora_profiles(
 
 /// POST /api/v1/models/lora/activate —activate a LoRA adapter profile.
 pub(crate) async fn activate_lora_profile(
+    State(state): State<SharedState>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let profile = body.get("profile")
@@ -123,8 +187,18 @@ pub(crate) async fn activate_lora_profile(
     if profile.is_empty() {
         return Json(serde_json::json!({ "error": "missing 'profile' field", "success": false }));
     }
+    // Persist the active profile name in state so other handlers (e.g.
+    // sona_profiles, model_layers) can report the actual active profile.
+    // Previously this handler only logged + returned success without
+    // persisting the selection.
+    let mut s = state.write().await;
+    s.active_sona_profile = Some(profile.clone());
     info!("LoRA profile activated: {profile}");
-    Json(serde_json::json!({ "success": true, "profile": profile }))
+    Json(serde_json::json!({
+        "success": true,
+        "profile": profile,
+        "active_sona_profile": s.active_sona_profile.clone(),
+    }))
 }
 
 // ── Scanner helpers ─────────────────────────────────────────────────────────

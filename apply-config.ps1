@@ -291,8 +291,11 @@ if ($VITAL_INTERVAL) {
 if ([float]$FALL_THRESH -gt 0) {
     $nvsParts += '--fall-thresh ' + $NvsFallThresh
 }
-if ($PASS) {
-    $nvsParts += '--password "' + $PASS + '"'
+if ($PASS -and $PASS -ne '""') {
+    # W-3 fix: reuse the Kconfig-escaped password for the NVS hint so a password
+    # containing " does not break the displayed command line. The condition
+    # mirrors the sdkconfig block above so $PassEscaped is always defined here.
+    $nvsParts += '--password "' + $PassEscaped + '"'
 }
 Write-Host ($nvsParts -join ' ') -ForegroundColor Gray
 Write-Host ""

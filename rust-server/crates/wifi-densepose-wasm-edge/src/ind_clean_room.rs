@@ -65,6 +65,9 @@ pub struct CleanRoomMonitor {
     total_violations: u32,
     /// Total turbulent events.
     total_turbulent: u32,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl CleanRoomMonitor {
@@ -82,6 +85,8 @@ impl CleanRoomMonitor {
             occupied_frames: 0,
             total_violations: 0,
             total_turbulent: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -100,6 +105,8 @@ impl CleanRoomMonitor {
             occupied_frames: 0,
             total_violations: 0,
             total_turbulent: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -146,13 +153,12 @@ impl CleanRoomMonitor {
             }
         }
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         // --- Step 1: Emit count changes ---
-        if count != self.prev_count && n_events < 4 {
-            unsafe { EVENTS[n_events] = (EVENT_OCCUPANCY_COUNT, count as f32); }
-            n_events += 1;
+        if count != self.prev_count && self.events_len < 4 {
+            self.events_buf[self.events_len] = (EVENT_OCCUPANCY_COUNT, count as f32);
+            self.events_len += 1;
         }
 
         // --- Step 2: Occupancy violation ---
@@ -160,14 +166,14 @@ impl CleanRoomMonitor {
             self.violation_debounce = self.violation_debounce.saturating_add(1);
             if self.violation_debounce >= VIOLATION_DEBOUNCE
                 && self.violation_cooldown == 0
-                && n_events < 4
+                && self.events_len < 4
             {
                 self.total_violations += 1;
                 self.violation_cooldown = VIOLATION_COOLDOWN;
                 // Value encodes: count * 10 + max_allowed.
                 let val = count as f32;
-                unsafe { EVENTS[n_events] = (EVENT_OCCUPANCY_VIOLATION, val); }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_OCCUPANCY_VIOLATION, val);
+                self.events_len += 1;
             }
         } else {
             self.violation_debounce = 0;
@@ -178,29 +184,29 @@ impl CleanRoomMonitor {
             self.turbulent_debounce = self.turbulent_debounce.saturating_add(1);
             if self.turbulent_debounce >= TURBULENT_DEBOUNCE
                 && self.turbulent_cooldown == 0
-                && n_events < 4
+                && self.events_len < 4
             {
                 self.total_turbulent += 1;
                 self.turbulent_cooldown = TURBULENT_COOLDOWN;
-                unsafe { EVENTS[n_events] = (EVENT_TURBULENT_MOTION, motion_energy); }
-                n_events += 1;
+                self.events_buf[self.events_len] = (EVENT_TURBULENT_MOTION, motion_energy);
+                self.events_len += 1;
             }
         } else {
             self.turbulent_debounce = 0;
         }
 
         // --- Step 4: Periodic compliance report ---
-        if self.frame_count % COMPLIANCE_REPORT_INTERVAL == 0 && n_events < 4 {
+        if self.frame_count % COMPLIANCE_REPORT_INTERVAL == 0 && self.events_len < 4 {
             let compliance_pct = if self.occupied_frames > 0 {
                 (self.compliant_frames as f32 / self.occupied_frames as f32) * 100.0
             } else {
                 100.0
             };
-            unsafe { EVENTS[n_events] = (EVENT_COMPLIANCE_REPORT, compliance_pct); }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_COMPLIANCE_REPORT, compliance_pct);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Current occupancy count.

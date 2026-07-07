@@ -87,6 +87,10 @@ pub struct CardiacArrhythmiaDetector {
     cd_hrv: u16,
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl CardiacArrhythmiaDetector {
@@ -106,6 +110,8 @@ impl CardiacArrhythmiaDetector {
             cd_missed: 0,
             cd_hrv: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -122,14 +128,13 @@ impl CardiacArrhythmiaDetector {
         self.cd_missed = self.cd_missed.saturating_sub(1);
         self.cd_hrv = self.cd_hrv.saturating_sub(1);
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         // Ignore invalid / zero / NaN readings.
         // NaN comparisons return false, so we must check explicitly to prevent
         // NaN from contaminating the EMA and RMSSD calculations.
         if !(hr_bpm >= 1.0) {
-            return unsafe { &EVENTS[..n] };
+            return &self.events_buf[..self.events_len];
         }
 
         // ── EMA update ──────────────────────────────────────────────────
@@ -155,9 +160,9 @@ impl CardiacArrhythmiaDetector {
         // ── Tachycardia ─────────────────────────────────────────────────
         if hr_bpm > TACHY_THRESH {
             self.tachy_count = self.tachy_count.saturating_add(1);
-            if self.tachy_count >= SUSTAINED_SECS && self.cd_tachy == 0 && n < 4 {
-                unsafe { EVENTS[n] = (EVENT_TACHYCARDIA, hr_bpm); }
-                n += 1;
+            if self.tachy_count >= SUSTAINED_SECS && self.cd_tachy == 0 && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_TACHYCARDIA, hr_bpm);
+                self.events_len += 1;
                 self.cd_tachy = COOLDOWN_SECS;
             }
         } else {
@@ -167,9 +172,9 @@ impl CardiacArrhythmiaDetector {
         // ── Bradycardia ─────────────────────────────────────────────────
         if hr_bpm < BRADY_THRESH {
             self.brady_count = self.brady_count.saturating_add(1);
-            if self.brady_count >= SUSTAINED_SECS && self.cd_brady == 0 && n < 4 {
-                unsafe { EVENTS[n] = (EVENT_BRADYCARDIA, hr_bpm); }
-                n += 1;
+            if self.brady_count >= SUSTAINED_SECS && self.cd_brady == 0 && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_BRADYCARDIA, hr_bpm);
+                self.events_len += 1;
                 self.cd_brady = COOLDOWN_SECS;
             }
         } else {
@@ -179,24 +184,24 @@ impl CardiacArrhythmiaDetector {
         // ── Missed beat ─────────────────────────────────────────────────
         if self.ema_init && self.hr_ema > 1.0 {
             let drop_frac = (self.hr_ema - hr_bpm) / self.hr_ema;
-            if drop_frac > MISSED_BEAT_DROP && self.cd_missed == 0 && n < 4 {
-                unsafe { EVENTS[n] = (EVENT_MISSED_BEAT, hr_bpm); }
-                n += 1;
+            if drop_frac > MISSED_BEAT_DROP && self.cd_missed == 0 && self.events_len < 4 {
+                self.events_buf[self.events_len] = (EVENT_MISSED_BEAT, hr_bpm);
+                self.events_len += 1;
                 self.cd_missed = COOLDOWN_SECS;
             }
         }
 
         // ── HRV (RMSSD) anomaly ─────────────────────────────────────────
-        if self.rr_len >= HRV_WINDOW && n < 4 {
+        if self.rr_len >= HRV_WINDOW && self.events_len < 4 {
             let rmssd = self.compute_rmssd();
             if (rmssd < RMSSD_LOW || rmssd > RMSSD_HIGH) && self.cd_hrv == 0 {
-                unsafe { EVENTS[n] = (EVENT_HRV_ANOMALY, rmssd); }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_HRV_ANOMALY, rmssd);
+                self.events_len += 1;
                 self.cd_hrv = COOLDOWN_SECS;
             }
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute RMSSD from the RR-diff ring buffer.

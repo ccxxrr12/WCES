@@ -148,6 +148,10 @@ pub struct VitalTrendAnalyzer {
     apnea_counter: u32,
     /// Timer call count.
     timer_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 8],
+    events_len: usize,
 }
 
 impl VitalTrendAnalyzer {
@@ -161,6 +165,8 @@ impl VitalTrendAnalyzer {
             tachycardia_count: 0,
             apnea_counter: 0,
             timer_count: 0,
+            events_buf: [(0, 0.0); 8],
+            events_len: 0,
         }
     }
 
@@ -169,20 +175,20 @@ impl VitalTrendAnalyzer {
     /// Returns events as (event_type, value) pairs.
     pub fn on_timer(&mut self, breathing_bpm: f32, heartrate_bpm: f32) -> &[(i32, f32)] {
         self.timer_count += 1;
+        // NaN guard: sanitize non-finite inputs to 0.0 before recording.
+        let breathing_bpm = if breathing_bpm.is_finite() { breathing_bpm } else { 0.0 };
+        let heartrate_bpm = if heartrate_bpm.is_finite() { heartrate_bpm } else { 0.0 };
         self.breathing.push(breathing_bpm);
         self.heartrate.push(heartrate_bpm);
 
-        static mut EVENTS: [(i32, f32); 8] = [(0, 0.0); 8];
-        let mut n = 0usize;
+        self.events_len = 0;
 
         // ── Apnea detection (highest priority) ──────────────────────────
         if breathing_bpm < 1.0 {
             self.apnea_counter += 1;
             if self.apnea_counter >= APNEA_SECONDS {
-                unsafe {
-                    EVENTS[n] = (EVENT_APNEA, self.apnea_counter as f32);
-                }
-                n += 1;
+                self.events_buf[self.events_len] = (EVENT_APNEA, self.apnea_counter as f32);
+                self.events_len += 1;
             }
         } else {
             self.apnea_counter = 0;
@@ -191,11 +197,9 @@ impl VitalTrendAnalyzer {
         // ── Bradypnea (sustained low breathing) ────────────────────────
         if breathing_bpm > 0.0 && breathing_bpm < BRADYPNEA_THRESH {
             self.bradypnea_count = self.bradypnea_count.saturating_add(1);
-            if self.bradypnea_count >= ALERT_DEBOUNCE && n < 7 {
-                unsafe {
-                    EVENTS[n] = (EVENT_BRADYPNEA, breathing_bpm);
-                }
-                n += 1;
+            if self.bradypnea_count >= ALERT_DEBOUNCE && self.events_len < 7 {
+                self.events_buf[self.events_len] = (EVENT_BRADYPNEA, breathing_bpm);
+                self.events_len += 1;
             }
         } else {
             self.bradypnea_count = 0;
@@ -204,11 +208,9 @@ impl VitalTrendAnalyzer {
         // ── Tachypnea (sustained high breathing) ───────────────────────
         if breathing_bpm > TACHYPNEA_THRESH {
             self.tachypnea_count = self.tachypnea_count.saturating_add(1);
-            if self.tachypnea_count >= ALERT_DEBOUNCE && n < 7 {
-                unsafe {
-                    EVENTS[n] = (EVENT_TACHYPNEA, breathing_bpm);
-                }
-                n += 1;
+            if self.tachypnea_count >= ALERT_DEBOUNCE && self.events_len < 7 {
+                self.events_buf[self.events_len] = (EVENT_TACHYPNEA, breathing_bpm);
+                self.events_len += 1;
             }
         } else {
             self.tachypnea_count = 0;
@@ -217,11 +219,9 @@ impl VitalTrendAnalyzer {
         // ── Bradycardia ────────────────────────────────────────────────
         if heartrate_bpm > 0.0 && heartrate_bpm < BRADYCARDIA_THRESH {
             self.bradycardia_count = self.bradycardia_count.saturating_add(1);
-            if self.bradycardia_count >= ALERT_DEBOUNCE && n < 7 {
-                unsafe {
-                    EVENTS[n] = (EVENT_BRADYCARDIA, heartrate_bpm);
-                }
-                n += 1;
+            if self.bradycardia_count >= ALERT_DEBOUNCE && self.events_len < 7 {
+                self.events_buf[self.events_len] = (EVENT_BRADYCARDIA, heartrate_bpm);
+                self.events_len += 1;
             }
         } else {
             self.bradycardia_count = 0;
@@ -230,11 +230,9 @@ impl VitalTrendAnalyzer {
         // ── Tachycardia ────────────────────────────────────────────────
         if heartrate_bpm > TACHYCARDIA_THRESH {
             self.tachycardia_count = self.tachycardia_count.saturating_add(1);
-            if self.tachycardia_count >= ALERT_DEBOUNCE && n < 7 {
-                unsafe {
-                    EVENTS[n] = (EVENT_TACHYCARDIA, heartrate_bpm);
-                }
-                n += 1;
+            if self.tachycardia_count >= ALERT_DEBOUNCE && self.events_len < 7 {
+                self.events_buf[self.events_len] = (EVENT_TACHYCARDIA, heartrate_bpm);
+                self.events_len += 1;
             }
         } else {
             self.tachycardia_count = 0;
@@ -244,21 +242,17 @@ impl VitalTrendAnalyzer {
         if self.timer_count % 60 == 0 && self.breathing.len >= WINDOW_1M {
             let br_avg = self.breathing.mean_last(WINDOW_1M);
             let hr_avg = self.heartrate.mean_last(WINDOW_1M);
-            if n < 7 {
-                unsafe {
-                    EVENTS[n] = (EVENT_BREATHING_AVG, br_avg);
-                }
-                n += 1;
+            if self.events_len < 7 {
+                self.events_buf[self.events_len] = (EVENT_BREATHING_AVG, br_avg);
+                self.events_len += 1;
             }
-            if n < 8 {
-                unsafe {
-                    EVENTS[n] = (EVENT_HEARTRATE_AVG, hr_avg);
-                }
-                n += 1;
+            if self.events_len < 8 {
+                self.events_buf[self.events_len] = (EVENT_HEARTRATE_AVG, hr_avg);
+                self.events_len += 1;
             }
         }
 
-        unsafe { &EVENTS[..n] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the 1-minute breathing average.

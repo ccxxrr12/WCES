@@ -96,6 +96,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Spawn task to forward broadcast messages to client
     let subs_clone = subscriptions.clone();
     let forward_task = tokio::spawn(async move {
+        // Heartbeat timer. Use a single `interval` created once outside the
+        // loop: `tokio::select!` drops the branch future on every iteration,
+        // so a fresh `sleep(30s)` would be reset each time a broadcast
+        // arrives and the heartbeat could effectively never fire under
+        // active traffic. `interval` retains its own tick schedule across
+        // dropped `.tick()` futures. The first tick is scheduled 30s out
+        // (matching the previous `sleep` semantics); `MissedTickBehavior::
+        // Skip` prevents burst catch-up after a slow period.
+        let mut heartbeat = tokio::time::interval_at(
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            Duration::from_secs(30),
+        );
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 // Receive from broadcast channel
@@ -129,8 +143,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                 }
-                // Periodic heartbeat
-                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                // Periodic heartbeat (schedule retained across select iterations)
+                _ = heartbeat.tick() => {
                     let heartbeat = WebSocketMessage::Heartbeat {
                         timestamp: chrono::Utc::now(),
                     };

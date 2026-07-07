@@ -37,25 +37,43 @@ pub struct OutputValidator {
 impl OutputValidator {
     pub fn new() -> Self {
         use BlockTier::*;
-        Self {
-            blocked: vec![
-                // ── Always-block (surgery/prescription/diagnosis/delay-care) ──
-                (Regex::new(r"手术|切开|缝合|处方|开具|开刀").unwrap(), Always),
-                (Regex::new(r"(停止|停用|停服|不要|切勿).{0,6}(药|药物|用药|服药)").unwrap(), Always),
-                (Regex::new(r"(诊断为|确诊为|判断为).{0,10}(心梗|心衰|脑梗|脑出血|肺栓塞)").unwrap(), Always),
-                (Regex::new(r"(不需要|无需|不必)(就医|转诊|住院|急诊|手术)").unwrap(), Always),
-                (Regex::new(r"(?i)(recommend|suggest|advise|prescribe).{0,15}(surgery|operation)").unwrap(), Always),
-                (Regex::new(r"(?i)(stop|discontinue).{0,10}(medication|drug|medicine)").unwrap(), Always),
-                // ── Moderate (drugs + injections — block for Delayed and below) ──
-                (Regex::new(r"建议.{0,6}(使用|服用|给药|用药|开药|配药).{0,10}药").unwrap(), Moderate),
-                (Regex::new(r"推荐.{0,6}(使用|服用|给药|用药|开药|配药)").unwrap(), Moderate),
-                (Regex::new(r"(建议|推荐).{0,6}(注射|推注|肌注|静注|静脉注射|皮下注射)").unwrap(), Moderate),
-                (Regex::new(r"(剂量|用量|给药量).{0,5}\d+\s*(mg|ml|g|mcg|μg|IU|U)").unwrap(), Moderate),
-                (Regex::new(r"(?i)(recommend|suggest|advise|prescribe).{0,15}(medication|drug|medicine|pill|injection)").unwrap(), Moderate),
-                (Regex::new(r"(?i)dosage.{0,5}\d+\s*(mg|ml|g|mcg)").unwrap(), Moderate),
-                // ── Strict (reserved for future use) ──
-            ],
-        }
+        // L9: compile regexes defensively. These patterns are static literals
+        // and should always compile, but `unwrap()` would panic the process
+        // if a future edit introduces an invalid pattern. Filter out failures
+        // and log them so the validator degrades gracefully (no blocking for
+        // the failed pattern) rather than crashing.
+        let patterns: &[(&str, BlockTier)] = &[
+            // ── Always-block (surgery/prescription/diagnosis/delay-care) ──
+            (r"手术|切开|缝合|处方|开具|开刀", Always),
+            (r"(停止|停用|停服|不要|切勿).{0,6}(药|药物|用药|服药)", Always),
+            (r"(诊断为|确诊为|判断为).{0,10}(心梗|心衰|脑梗|脑出血|肺栓塞)", Always),
+            (r"(不需要|无需|不必)(就医|转诊|住院|急诊|手术)", Always),
+            (r"(?i)(recommend|suggest|advise|prescribe).{0,15}(surgery|operation)", Always),
+            (r"(?i)(stop|discontinue).{0,10}(medication|drug|medicine)", Always),
+            // ── Moderate (drugs + injections — block for Delayed and below) ──
+            (r"建议.{0,6}(使用|服用|给药|用药|开药|配药).{0,10}药", Moderate),
+            (r"推荐.{0,6}(使用|服用|给药|用药|开药|配药)", Moderate),
+            (r"(建议|推荐).{0,6}(注射|推注|肌注|静注|静脉注射|皮下注射)", Moderate),
+            (r"(剂量|用量|给药量).{0,5}\d+\s*(mg|ml|g|mcg|μg|IU|U)", Moderate),
+            (r"(?i)(recommend|suggest|advise|prescribe).{0,15}(medication|drug|medicine|pill|injection)", Moderate),
+            (r"(?i)dosage.{0,5}\d+\s*(mg|ml|g|mcg)", Moderate),
+            // ── Strict (reserved for future use) ──
+        ];
+        let blocked: Vec<(Regex, BlockTier)> = patterns
+            .iter()
+            .filter_map(|(pat, tier)| match Regex::new(pat) {
+                Ok(re) => Some((re, *tier)),
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to compile validator regex {:?}: {} — this pattern will be skipped",
+                        pat,
+                        e
+                    );
+                    None
+                }
+            })
+            .collect();
+        Self { blocked }
     }
 
     /// Derive a numeric tier from the triage label.

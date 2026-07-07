@@ -113,6 +113,10 @@ pub struct PerimeterBreachDetector {
     /// Approach/departure debounce counters per zone.
     approach_run: [u8; MAX_ZONES],
     departure_run: [u8; MAX_ZONES],
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl PerimeterBreachDetector {
@@ -133,6 +137,8 @@ impl PerimeterBreachDetector {
             frame_count: 0,
             approach_run: [0; MAX_ZONES],
             departure_run: [0; MAX_ZONES],
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -155,8 +161,7 @@ impl PerimeterBreachDetector {
         self.cd_departure = self.cd_departure.saturating_sub(1);
         self.cd_transition = self.cd_transition.saturating_sub(1);
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut ne = 0usize;
+        self.events_len = 0;
 
         let subs_per_zone = n_sc / MAX_ZONES;
         if subs_per_zone < 1 {
@@ -196,7 +201,7 @@ impl PerimeterBreachDetector {
         }
         if !self.phase_init {
             self.phase_init = true;
-            return unsafe { &EVENTS[..0] };
+            return &self.events_buf[..self.events_len];
         }
 
         // Calibration phase.
@@ -214,7 +219,7 @@ impl PerimeterBreachDetector {
                 }
                 self.calibrated = true;
             }
-            return unsafe { &EVENTS[..0] };
+            return &self.events_buf[..self.events_len];
         }
 
         // Detect breaches and direction per zone.
@@ -260,29 +265,29 @@ impl PerimeterBreachDetector {
 
             // Emit approach event.
             if self.approach_run[z] >= DIRECTION_DEBOUNCE && is_breach
-                && self.cd_approach == 0 && ne < 4
+                && self.cd_approach == 0 && self.events_len < 4
             {
-                unsafe { EVENTS[ne] = (EVENT_APPROACH_DETECTED, z as f32); }
-                ne += 1;
+                self.events_buf[self.events_len] = (EVENT_APPROACH_DETECTED, z as f32);
+                self.events_len += 1;
                 self.cd_approach = COOLDOWN;
                 self.approach_run[z] = 0;
             }
 
             // Emit departure event.
             if self.departure_run[z] >= DIRECTION_DEBOUNCE
-                && self.cd_departure == 0 && ne < 4
+                && self.cd_departure == 0 && self.events_len < 4
             {
-                unsafe { EVENTS[ne] = (EVENT_DEPARTURE_DETECTED, z as f32); }
-                ne += 1;
+                self.events_buf[self.events_len] = (EVENT_DEPARTURE_DETECTED, z as f32);
+                self.events_len += 1;
                 self.cd_departure = COOLDOWN;
                 self.departure_run[z] = 0;
             }
         }
 
         // Perimeter breach event.
-        if most_disturbed_zone >= 0 && self.cd_breach == 0 && ne < 4 {
-            unsafe { EVENTS[ne] = (EVENT_PERIMETER_BREACH, max_energy); }
-            ne += 1;
+        if most_disturbed_zone >= 0 && self.cd_breach == 0 && self.events_len < 4 {
+            self.events_buf[self.events_len] = (EVENT_PERIMETER_BREACH, max_energy);
+            self.events_len += 1;
             self.cd_breach = COOLDOWN;
         }
 
@@ -291,13 +296,13 @@ impl PerimeterBreachDetector {
             && self.last_active_zone >= 0
             && most_disturbed_zone != self.last_active_zone
             && self.cd_transition == 0
-            && ne < 4
+            && self.events_len < 4
         {
             // Encode as from*10 + to.
             let transition_code = self.last_active_zone as f32 * 10.0
                 + most_disturbed_zone as f32;
-            unsafe { EVENTS[ne] = (EVENT_ZONE_TRANSITION, transition_code); }
-            ne += 1;
+            self.events_buf[self.events_len] = (EVENT_ZONE_TRANSITION, transition_code);
+            self.events_len += 1;
             self.cd_transition = COOLDOWN;
         }
 
@@ -305,7 +310,7 @@ impl PerimeterBreachDetector {
             self.last_active_zone = most_disturbed_zone;
         }
 
-        unsafe { &EVENTS[..ne] }
+        &self.events_buf[..self.events_len]
     }
 
     pub fn is_calibrated(&self) -> bool { self.calibrated }

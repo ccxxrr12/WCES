@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::{self, SyncSender, Receiver};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::csi_frame::CsiFrame;
 use crate::esp32_parser::Esp32CsiParser;
@@ -55,17 +58,20 @@ impl NodeState {
     }
 
     /// Update state with a new sequence number. Returns the gap size (0 if contiguous).
+    ///
+    /// Uses wraparound-aware comparison so that a u32 sequence rolling over
+    /// from `0xFFFFFFFF` to `0` is not miscounted as a massive gap.
     fn update(&mut self, sequence: u32) -> u32 {
         self.frames_received += 1;
         let expected = self.last_sequence.wrapping_add(1);
-        let gap = if sequence > expected {
-            sequence - expected
-        } else {
-            0
-        };
-        self.frames_dropped += gap as u64;
+        let gap = sequence.wrapping_sub(expected);
+        // Treat `gap` as a real gap only if it is small relative to the u32
+        // range; otherwise the sequence is behind `expected` (out-of-order or
+        // post-wraparound duplicate) and should not count as dropped frames.
+        let real_gap = if gap < u32::MAX / 2 { gap } else { 0 };
+        self.frames_dropped += real_gap as u64;
         self.last_sequence = sequence;
-        gap
+        real_gap
     }
 }
 
@@ -74,6 +80,10 @@ pub struct Esp32Aggregator {
     socket: UdpSocket,
     nodes: HashMap<u8, NodeState>,
     tx: SyncSender<CsiFrame>,
+    /// Frames dropped because the downstream channel was full.
+    frames_dropped_overflow: u64,
+    /// Malformed packets dropped by the parser.
+    bad_packet_count: u64,
 }
 
 impl Esp32Aggregator {
@@ -90,6 +100,8 @@ impl Esp32Aggregator {
                 socket,
                 nodes: HashMap::new(),
                 tx,
+                frames_dropped_overflow: 0,
+                bad_packet_count: 0,
             },
             rx,
         ))
@@ -101,15 +113,32 @@ impl Esp32Aggregator {
             socket,
             nodes: HashMap::new(),
             tx,
+            frames_dropped_overflow: 0,
+            bad_packet_count: 0,
         }
     }
 
     /// Run the blocking receive loop. Call from a dedicated thread.
-    pub fn run(&mut self) -> io::Result<()> {
+    ///
+    /// The loop polls a shared `shutdown` flag and uses a short read timeout
+    /// so the flag is checked promptly, enabling graceful shutdown.
+    pub fn run(&mut self, shutdown: Arc<AtomicBool>) -> io::Result<()> {
         let mut buf = [0u8; 2048];
+        self.socket.set_read_timeout(Some(Duration::from_millis(100)))?;
         loop {
-            let (n, _src) = self.socket.recv_from(&mut buf)?;
-            self.handle_packet(&buf[..n]);
+            if shutdown.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            match self.socket.recv_from(&mut buf) {
+                Ok((n, _)) => self.handle_packet(&buf[..n]),
+                Err(ref e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    continue
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -130,11 +159,17 @@ impl Esp32Aggregator {
                     }
                 }
 
-                // Send to channel (ignore send errors — receiver may have dropped)
-                let _ = self.tx.try_send(frame);
+                // Send to channel. If the channel is full, count and log the
+                // dropped frame instead of silently swallowing it.
+                if self.tx.try_send(frame).is_err() {
+                    self.frames_dropped_overflow += 1;
+                    tracing::warn!(node_id, "channel full, frame dropped");
+                }
             }
-            Err(_) => {
-                // Bad packet — silently drop (per ADR-018: aggregator is tolerant)
+            Err(e) => {
+                // Bad packet — count and log (per ADR-018: aggregator is tolerant).
+                self.bad_packet_count += 1;
+                tracing::debug!(error = %e, "malformed packet dropped");
             }
         }
     }
@@ -147,6 +182,16 @@ impl Esp32Aggregator {
     /// Get the number of tracked nodes.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Total frames dropped because the downstream channel was full.
+    pub fn frames_dropped_overflow(&self) -> u64 {
+        self.frames_dropped_overflow
+    }
+
+    /// Total malformed packets dropped by the parser.
+    pub fn bad_packet_count(&self) -> u64 {
+        self.bad_packet_count
     }
 }
 

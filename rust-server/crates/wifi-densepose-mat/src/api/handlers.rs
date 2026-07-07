@@ -953,7 +953,15 @@ pub async fn push_csi_data(
     let sample_count = request.amplitudes.len();
     pipeline.add_data(&request.amplitudes, &request.phases);
 
-    let approx_duration = sample_count as f64 / pipeline.config().sample_rate;
+    // M10: guard against sample_rate == 0 to avoid division by zero.
+    // The pipeline validates sample_rate > 0 at construction, but defend
+    // here in case a future code path allows zero.
+    let sample_rate = pipeline.config().sample_rate;
+    let approx_duration = if sample_rate > 0.0 {
+        sample_count as f64 / sample_rate
+    } else {
+        0.0
+    };
 
     tracing::debug!(samples = sample_count, "Ingested CSI data");
 

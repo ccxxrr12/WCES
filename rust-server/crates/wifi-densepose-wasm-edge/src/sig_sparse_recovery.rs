@@ -82,6 +82,10 @@ pub struct SparseRecovery {
     last_residual: f32,
     /// Last count of recovered subcarriers.
     last_recovered: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl SparseRecovery {
@@ -95,6 +99,8 @@ impl SparseRecovery {
             last_dropout_rate: 0.0,
             last_residual: 0.0,
             last_recovered: 0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -107,6 +113,13 @@ impl SparseRecovery {
         let n_sc = amplitudes.len().min(MAX_SC);
         if n_sc < 4 {
             return &[];
+        }
+
+        // NaN guard: bail out if any input is non-finite.
+        for i in 0..n_sc {
+            if !amplitudes[i].is_finite() {
+                return &[];
+            }
         }
 
         self.frame_count += 1;
@@ -135,20 +148,17 @@ impl SparseRecovery {
         }
 
         // -- Build event output -----------------------------------------------
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         // Always emit dropout rate periodically (every 20 frames).
         if self.frame_count % 20 == 0 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_DROPOUT_RATE, dropout_rate);
-            }
-            n_events += 1;
+            self.events_buf[self.events_len] = (EVENT_DROPOUT_RATE, dropout_rate);
+            self.events_len += 1;
         }
 
         // -- Skip recovery if dropout too low or model not ready ---------------
         if dropout_rate < MIN_DROPOUT_RATE || !self.initialized {
-            unsafe { return &EVENTS[..n_events]; }
+            return &self.events_buf[..self.events_len];
         }
 
         // -- ISTA recovery ----------------------------------------------------
@@ -157,20 +167,16 @@ impl SparseRecovery {
         self.last_residual = residual;
 
         // Emit recovery results.
-        if n_events < 3 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_RECOVERY_COMPLETE, recovered as f32);
-            }
-            n_events += 1;
+        if self.events_len < 3 {
+            self.events_buf[self.events_len] = (EVENT_RECOVERY_COMPLETE, recovered as f32);
+            self.events_len += 1;
         }
-        if n_events < 3 {
-            unsafe {
-                EVENTS[n_events] = (EVENT_RECOVERY_ERROR, residual);
-            }
-            n_events += 1;
+        if self.events_len < 3 {
+            self.events_buf[self.events_len] = (EVENT_RECOVERY_ERROR, residual);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Update the compact correlation model from a fully valid frame.

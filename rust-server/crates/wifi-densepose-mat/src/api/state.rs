@@ -239,8 +239,12 @@ impl AppState {
 
     /// Broadcast a message to all subscribers.
     pub fn broadcast(&self, message: WebSocketMessage) {
-        // Ignore send errors (no subscribers)
-        let _ = self.inner.broadcast_tx.send(message);
+        // M9: send errors occur when there are no active subscribers (or
+        // the channel is closed); log at debug level rather than silently
+        // dropping so the absence of subscribers is observable.
+        if let Err(e) = self.inner.broadcast_tx.send(message) {
+            tracing::debug!("broadcast send failed: {}", e);
+        }
     }
 
     /// Get the number of active subscribers.

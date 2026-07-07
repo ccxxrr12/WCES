@@ -148,20 +148,20 @@ impl ReplayWindow {
 
     /// Check if a nonce is acceptable (not replayed).
     ///
-    /// Returns `true` if the nonce should be accepted.
+    /// Returns `true` if the nonce should be accepted. Uses wraparound-aware
+    /// comparison so that a nonce rolling over from `0xFFFFFFFF` to `0` is
+    /// not incorrectly rejected as "too old".
     pub fn check(&self, nonce: u32) -> bool {
-        if nonce == 0 && self.last_accepted == 0 && self.seen.is_empty() {
-            // First nonce ever
-            return true;
+        let last = self.last_accepted;
+        let diff = last.wrapping_sub(nonce);
+        // Within the window behind last: accept iff not a duplicate.
+        if diff < self.window_size {
+            return !self.seen.contains(&nonce);
         }
-        if self.last_accepted >= self.window_size
-            && nonce < self.last_accepted.saturating_sub(self.window_size)
-        {
-            // Too old
-            return false;
-        }
-        // Check for exact duplicate within window
-        !self.seen.contains(&nonce)
+        // Ahead of last (newer, wrapping-aware): accept. Otherwise (too old):
+        // reject. `nonce.wrapping_sub(last) < u32::MAX / 2` is true exactly
+        // when nonce is "newer" than last in serial-number arithmetic.
+        nonce.wrapping_sub(last) < u32::MAX / 2
     }
 
     /// Accept a nonce, updating the window state.
@@ -178,7 +178,9 @@ impl ReplayWindow {
             self.seen.pop_front();
         }
 
-        if nonce > self.last_accepted {
+        // Update last_accepted using wraparound-aware comparison so that
+        // rollover from 0xFFFFFFFF -> 0 advances the window correctly.
+        if nonce.wrapping_sub(self.last_accepted) < u32::MAX / 2 {
             self.last_accepted = nonce;
         }
 

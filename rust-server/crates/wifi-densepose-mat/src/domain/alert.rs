@@ -55,7 +55,10 @@ impl Priority {
             TriageStatus::Immediate => Priority::Critical,
             TriageStatus::Delayed => Priority::High,
             TriageStatus::Minor => Priority::Medium,
-            TriageStatus::Deceased => Priority::Low,
+            // M6: Deceased maps to Medium (not Low) so a rescue team must
+            // confirm the death on-site rather than silently dropping the
+            // alert — mapping to Low risks the deceased being ignored.
+            TriageStatus::Deceased => Priority::Medium,
             TriageStatus::Unknown => Priority::Medium,
         }
     }
@@ -327,14 +330,16 @@ impl Alert {
     /// Escalate the alert (increase priority)
     pub fn escalate(&mut self) {
         self.escalation_count += 1;
-        if self.priority != Priority::Critical {
-            self.priority = match self.priority {
-                Priority::Low => Priority::Medium,
-                Priority::Medium => Priority::High,
-                Priority::High => Priority::Critical,
-                Priority::Critical => Priority::Critical,
-            };
-        }
+        // P3: previously this match was wrapped in
+        // `if self.priority != Priority::Critical`, making the
+        // `Priority::Critical => Priority::Critical` arm dead code. The
+        // arm is now reachable and acts as a no-op ceiling.
+        self.priority = match self.priority {
+            Priority::Critical => Priority::Critical,
+            Priority::High => Priority::Critical,
+            Priority::Medium => Priority::High,
+            Priority::Low => Priority::Medium,
+        };
     }
 
     /// Check if alert is pending

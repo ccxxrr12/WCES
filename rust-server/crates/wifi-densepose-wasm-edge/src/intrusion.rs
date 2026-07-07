@@ -81,6 +81,10 @@ pub struct IntrusionDetector {
     alert_count: u32,
     /// Frame counter.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 4],
+    events_len: usize,
 }
 
 impl IntrusionDetector {
@@ -99,6 +103,8 @@ impl IntrusionDetector {
             phase_init: false,
             alert_count: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 4],
+            events_len: 0,
         }
     }
 
@@ -119,13 +125,15 @@ impl IntrusionDetector {
             self.cooldown -= 1;
         }
 
-        static mut EVENTS: [(i32, f32); 4] = [(0, 0.0); 4];
-        let mut n_events = 0usize;
+        self.events_len = 0;
 
         match self.state {
             DetectorState::Calibrating => {
                 // Accumulate baseline statistics.
                 for i in 0..n_sc {
+                    if !amplitudes[i].is_finite() {
+                        continue;
+                    }
                     self.calib_amp_sum[i] += amplitudes[i];
                     self.calib_amp_sq_sum[i] += amplitudes[i] * amplitudes[i];
                 }
@@ -164,11 +172,9 @@ impl IntrusionDetector {
 
                 if self.quiet_frames >= ARM_FRAMES {
                     self.state = DetectorState::Armed;
-                    if n_events < 4 {
-                        unsafe {
-                            EVENTS[n_events] = (EVENT_INTRUSION_ARMED, 1.0);
-                        }
-                        n_events += 1;
+                    if self.events_len < 4 {
+                        self.events_buf[self.events_len] = (EVENT_INTRUSION_ARMED, 1.0);
+                        self.events_len += 1;
                     }
                 }
 
@@ -189,20 +195,16 @@ impl IntrusionDetector {
                         self.alert_count += 1;
                         self.cooldown = ALERT_COOLDOWN;
 
-                        if n_events < 4 {
-                            unsafe {
-                                EVENTS[n_events] = (EVENT_INTRUSION_ALERT, disturbance);
-                            }
-                            n_events += 1;
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_INTRUSION_ALERT, disturbance);
+                            self.events_len += 1;
                         }
 
                         // Find the most disturbed zone.
                         let zone = self.find_disturbed_zone(amplitudes, n_sc);
-                        if n_events < 4 {
-                            unsafe {
-                                EVENTS[n_events] = (EVENT_INTRUSION_ZONE, zone as f32);
-                            }
-                            n_events += 1;
+                        if self.events_len < 4 {
+                            self.events_buf[self.events_len] = (EVENT_INTRUSION_ZONE, zone as f32);
+                            self.events_len += 1;
                         }
                     }
                 } else {
@@ -235,7 +237,7 @@ impl IntrusionDetector {
             }
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute overall disturbance score.

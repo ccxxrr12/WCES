@@ -117,6 +117,10 @@ pub struct RainDetector {
     empty_frames: u32,
     /// Total frames processed.
     frame_count: u32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 3],
+    events_len: usize,
 }
 
 impl RainDetector {
@@ -141,6 +145,8 @@ impl RainDetector {
             quiet_frames: 0,
             empty_frames: 0,
             frame_count: 0,
+            events_buf: [(0, 0.0); 3],
+            events_len: 0,
         }
     }
 
@@ -159,21 +165,20 @@ impl RainDetector {
         amplitudes: &[f32],
         presence: i32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 3] = [(0, 0.0); 3];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
 
         // Only detect when room is empty.
         if presence != 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let n_sc = core::cmp::min(phases.len(), MAX_SC);
         let n_sc = core::cmp::min(n_sc, variance.len());
         let n_sc = core::cmp::min(n_sc, amplitudes.len());
         if n_sc < N_GROUPS {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.empty_frames += 1;
@@ -181,7 +186,7 @@ impl RainDetector {
         // Compute per-group variance.
         let subs_per = n_sc / N_GROUPS;
         if subs_per == 0 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         let mut group_var = [0.0f32; N_GROUPS];
@@ -229,7 +234,7 @@ impl RainDetector {
 
         // Need minimum data before detection.
         if self.empty_frames < MIN_EMPTY_FRAMES {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Check broadband criterion: most groups must be elevated.
@@ -250,20 +255,16 @@ impl RainDetector {
         // Onset: was not raining, now have enough consecutive rain frames.
         if !self.raining && self.rain_frames >= ONSET_FRAMES {
             self.raining = true;
-            unsafe {
-                EVENTS[n_ev] = (EVENT_RAIN_ONSET, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_RAIN_ONSET, 1.0);
+            self.events_len += 1;
         }
 
         // Cessation: was raining, now have enough quiet frames.
         if was_raining && self.quiet_frames >= CESSATION_FRAMES {
             self.raining = false;
             self.intensity = RainIntensity::None;
-            unsafe {
-                EVENTS[n_ev] = (EVENT_RAIN_CESSATION, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_RAIN_CESSATION, 1.0);
+            self.events_len += 1;
         }
 
         // Classify intensity while raining.
@@ -277,13 +278,11 @@ impl RainDetector {
                 RainIntensity::Heavy
             };
 
-            unsafe {
-                EVENTS[n_ev] = (EVENT_RAIN_INTENSITY, self.intensity as u8 as f32);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_RAIN_INTENSITY, self.intensity as u8 as f32);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Whether rain is currently detected.

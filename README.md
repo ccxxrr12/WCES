@@ -2,7 +2,7 @@
 
 > 第九届全国大学生嵌入式芯片与系统设计竞赛 · 瑞萨赛道
 > 硬件：瑞萨 RZ/G2L + 3× ESP32-C5-DevKitC-1-N8R8
-> 状态：58 bugs 已修复 | WhōFi+FieldBridge 混合定位 | Rust ~100K行 | C固件 8,322行 | ESP-IDF v6.0.1 | 2026-07-04
+> 状态：103 bugs 已修复（7 轮审计 + wasm-edge 反模式修复 + Agent 端到端验证）| WhōFi+FieldBridge 混合定位 | Rust ~100K行 | C固件 8,322行 | ESP-IDF v6.0.1 | 2026-07-07
 
 ---
 
@@ -138,7 +138,7 @@ ESP32-C5 ×3              RZ/G2L                    7" 触屏 / Web
 | 3D 骨架重建 | Three.js 胶囊几何体蒙皮骨架 + ONNX DensePose (可选按钮) | ✅ |
 | 19 个边缘模块 | 步态/心律失常/呼吸窘迫/癫痫/徘徊/振动/LTL守卫/元学习/稀疏恢复等，原生 Rust 编译 | ✅ |
 | 模拟运行模式 | 正弦波合成 CSI，完整数据流通，无需硬件 | ✅ |
-| **Medical Agent** | 云端 LLM 深度分析 + 本地模板降级 (Coordinator 模式) | ✅ |
+| **Medical Agent** | 云端 LLM 深度分析 + 本地模板降级 (Coordinator 模式)，端到端验证通过 | ✅ |
 | **统一入口页** | 暗色/亮色主题门户，6 张应用卡片 + 实时系统状态检测 | ✅ |
 
 ---
@@ -340,16 +340,19 @@ CSI 采集          UDP:5005 →
 │   └── tests/                         ← 自动化测试
 ├── scripts/
 │   └── provision.py                   ← C5 烧录脚本 (固件内也有副本)
-└── docs/                              ← 竞赛设计文档 (21 个 .md 文件)
+└── docs/                              ← 竞赛设计文档 (24 个 .md 文件)
     ├── README_COMPETITION.md          ← 竞赛版 README
     ├── 项目全览.md                     ← 全项目技术全览
     ├── PROGRESS.md                    ← 构建进度 (实时更新)
+    ├── 代码审计与修复报告.md           ← 第七轮全项目审计 (144 issues, 43 fixes, 2026-07-07)
+    ├── 性能优化与验证报告.md           ← ESP32-C5 CSI + 定位 + 呼吸/心跳优化报告
+    ├── 数据流审计报告.md               ← 12 条端到端数据流审计 (2026-07-07)
     ├── 竞赛改造方案.md                 ← 完整改造计划 (A/B/C/D/E类)
     ├── 竞赛差距分析.md                 ← 需求 vs 能力对比
     ├── 竞赛准备清单.md                 ← PPT/视频/展板等材料清单
     ├── ML架构详解.md                   ← CSI→姿态 ML 架构
     ├── 端侧Agent开发计划.md             ← Medical Agent 开发计划
-    ├── 端侧Agent技术文档.md             ← Agent 架构/接口/技术文档
+    ├── 端侧Agent技术文档.md             ← Agent 架构/接口/技术文档 (Coordinator 模式 + 端到端验证)
     ├── 端侧LLM方案设计.md              ← (历史) LLM 伤病报告方案
     ├── 端侧LLM技术文档.md              ← (历史) LLM 接口/技术文档
     ├── 项目完整分析报告.md             ← 项目完整分析
@@ -360,6 +363,7 @@ CSI 采集          UDP:5005 →
     ├── 目录审计报告.md                 ← 目录完整性审计
     ├── API_REFERENCE.md               ← WebSocket 数据接口文档
     ├── 硬件部署与使用指南.md           ← 硬件部署完整指南
+    ├── 解决问题.md                     ← 极端场景伤病员连续监测痛点分析
     └── triage-ui/
         ├── triage.html                ← 分诊仪表盘 (暗色/亮色主题, 热力图, 3D骨架, EHR面板)
         └── triage-v1.html             ← 旧版分诊仪表盘 (备份)
@@ -370,7 +374,7 @@ CSI 采集          UDP:5005 →
 ## 技术亮点
 
 - **WiFi 6 CSI**: ESP32-C5 HE40 484 子载波，4× 传统 S3 方案精度
-- **Medical Agent**（已集成）: 云端 LLM 深度分析 + 本地模板降级 + 熔断保护，支持流式输出
+- **Medical Agent**（已集成 + 端到端验证通过）: Coordinator 模式 — 云端 LLM 深度分析 + 本地模板降级 + 锁-free 熔断器 (CLOSED/OPEN/HALF_OPEN)，支持 SSE 流式输出，所有入口（WS/REST/UDP 触发）均验证可用
 - **Rust 高性能**: 全异步 Tokio 运行时，零拷贝解析，比 Python 方案快数十倍
 - **START 分诊**: 标准战场分诊协议，自动伤员优先级评估
 - **端到端打通**: CSI 采集→信号处理→生命体征→分诊→追踪→可视化，完整管道
@@ -394,12 +398,16 @@ CSI 采集          UDP:5005 →
 | `docs/固件官方文档审计报告.md` | 固件 vs 官方 API 对照审计 |
 | `docs/瑞萨 RZ_G2L 移植计划.md` | RZ/G2L 主控移植计划 |
 | `docs/端侧Agent开发计划.md` | Medical Agent 开发计划 |
-| `docs/端侧Agent技术文档.md` | Agent 架构/接口/技术文档 |
+| `docs/端侧Agent技术文档.md` | Agent 架构/接口/技术文档（含端到端验证结论）|
 | `docs/项目全览.md` | 全项目技术全览 |
 | `docs/API_REFERENCE.md` | WebSocket 数据接口完整文档 |
 | `docs/目录审计报告.md` | 目录完整性审计 |
 | `docs/硬件部署与使用指南.md` | 硬件部署完整指南 |
-| `docs/PROGRESS.md` | 构建进度追踪（实时更新） |
+| `docs/代码审计与修复报告.md` | 第七轮全项目审计：144 issues 发现、43 fixes 修复（2026-07-07）|
+| `docs/性能优化与验证报告.md` | ESP32-C5 CSI 性能 + 人员定位 + 呼吸/心跳检测优化报告 |
+| `docs/数据流审计报告.md` | 12 条端到端数据流审计 + 完整性检查（2026-07-07）|
+| `docs/解决问题.md` | 极端场景伤病员连续监测痛点分析 |
+| `docs/PROGRESS.md` | 构建进度追踪（实时更新）|
 
 ---
 

@@ -486,8 +486,15 @@ fn fft_magnitude(signal: &[f64]) -> Vec<f64> {
     // BUG 17 fix: guard against size overflow for pathological input sizes.
     // In practice n ≤ 16384 (next_power_of_two of the ~5000 sample buffer),
     // but a defensive check prevents panic if that assumption changes.
+    // Returning the raw signal on overflow would corrupt downstream spectral
+    // analysis (the caller expects N/2+1 magnitude bins). Instead return a
+    // zero vector of the expected length and log a warning.
     if n > 65536 {
-        return signal.to_vec(); // too large for safe radix-2 FFT
+        warn!(
+            n,
+            "fft_magnitude input too large for safe radix-2 FFT; returning zero spectrum"
+        );
+        return vec![0.0f64; n / 2 + 1];
     }
 
     // Convert to complex (imaginary = 0)

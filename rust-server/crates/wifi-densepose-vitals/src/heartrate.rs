@@ -265,7 +265,10 @@ fn autocorrelation_peak(
     }
 
     // Lag range corresponding to the cardiac band
-    let min_lag = (sample_rate / freq_high).floor() as usize; // highest freq = shortest period
+    // max(1) guard: if freq_high > sample_rate, the floor() yields 0, and
+    // lag=0 in the autocorrelation loop would self-correlate the signal
+    // (acf at lag 0 == variance), masking the true cardiac peak.
+    let min_lag = ((sample_rate / freq_high).floor() as usize).max(1); // highest freq = shortest period
     let max_lag = (sample_rate / freq_low).ceil() as usize; // lowest freq = longest period
     let max_lag = max_lag.min(n / 2);
 

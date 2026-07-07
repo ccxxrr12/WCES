@@ -127,6 +127,10 @@ pub struct MusicConductorDetector {
     buf_mean: f32,
     /// Buffer variance (cached).
     buf_var: f32,
+
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 5],
+    events_len: usize,
 }
 
 impl MusicConductorDetector {
@@ -146,6 +150,8 @@ impl MusicConductorDetector {
             frame_count: 0,
             buf_mean: 0.0,
             buf_var: 0.0,
+            events_buf: [(0, 0.0); 5],
+            events_len: 0,
         }
     }
 
@@ -165,8 +171,7 @@ impl MusicConductorDetector {
         motion_energy: f32,
         _variance: f32,
     ) -> &[(i32, f32)] {
-        static mut EVENTS: [(i32, f32); 5] = [(0, 0.0); 5];
-        let mut n_ev = 0usize;
+        self.events_len = 0;
 
         self.frame_count += 1;
         self.motion_buf.push(motion_energy);
@@ -206,7 +211,7 @@ impl MusicConductorDetector {
 
         // Not enough data for autocorrelation yet.
         if fill < MIN_FILL {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Compute buffer statistics ──
@@ -214,7 +219,7 @@ impl MusicConductorDetector {
 
         if self.buf_var < 1e-8 {
             // No motion variation -> no conducting.
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // ── Compute autocorrelation ──
@@ -277,37 +282,27 @@ impl MusicConductorDetector {
 
         // ── Emit events ──
         if self.tempo_ema.is_initialized() {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_CONDUCTOR_BPM, self.tempo_ema.value);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_CONDUCTOR_BPM, self.tempo_ema.value);
+            self.events_len += 1;
 
-            unsafe {
-                EVENTS[n_ev] = (EVENT_BEAT_POSITION, beat_position as f32);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_BEAT_POSITION, beat_position as f32);
+            self.events_len += 1;
         }
 
-        unsafe {
-            EVENTS[n_ev] = (EVENT_DYNAMIC_LEVEL, dynamic_level);
-        }
-        n_ev += 1;
+        self.events_buf[self.events_len] = (EVENT_DYNAMIC_LEVEL, dynamic_level);
+        self.events_len += 1;
 
         if self.cutoff_detected {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_GESTURE_CUTOFF, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_GESTURE_CUTOFF, 1.0);
+            self.events_len += 1;
         }
 
         if self.fermata_active {
-            unsafe {
-                EVENTS[n_ev] = (EVENT_GESTURE_FERMATA, 1.0);
-            }
-            n_ev += 1;
+            self.events_buf[self.events_len] = (EVENT_GESTURE_FERMATA, 1.0);
+            self.events_len += 1;
         }
 
-        unsafe { &EVENTS[..n_ev] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Compute buffer mean and variance (single-pass).

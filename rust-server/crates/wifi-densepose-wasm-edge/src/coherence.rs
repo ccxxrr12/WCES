@@ -88,6 +88,9 @@ impl CoherenceMonitor {
         let mut sum_im = 0.0f32;
 
         for i in 0..n_sc {
+            if !phases[i].is_finite() {
+                continue;
+            }
             let delta = phases[i] - self.prev_phases[i];
             // Phasor: e^{j*delta} = cos(delta) + j*sin(delta)
             sum_re += cosf(delta);

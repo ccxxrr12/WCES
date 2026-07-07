@@ -86,7 +86,10 @@ impl TriageService {
         // Each immediate needs ~4 rescuers
         // Each delayed needs ~2 rescuers
         // Each minor needs ~0.5 rescuers
-        let rescuers_needed = immediate * 4 + delayed * 2 + minor / 2;
+        // M12: use ceiling division so 1 minor rounds up to 1 rescuer
+        // instead of truncating to 0 (the previous `minor / 2` integer
+        // division dropped any odd minor count entirely).
+        let rescuers_needed = immediate * 4 + delayed * 2 + minor.div_ceil(2);
 
         if rescuers_needed >= 100 {
             ResourceLevel::MutualAid

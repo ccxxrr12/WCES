@@ -528,6 +528,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                                         "degrade_level": result.degrade_level,
                                         "risk_adjustment": result.risk_adjustment,
                                         "generated_at_ms": result.generated_at_ms,
+                                        "trigger": "triage_escalation",
                                     });
                                     if let Ok(json_str) = serde_json::to_string(&json) {
                                         let _ = tx.send(json_str);

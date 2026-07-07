@@ -38,7 +38,24 @@ impl KalmanState {
     ///
     /// Initial velocity is set to zero and the initial covariance
     /// P₀ = 10·I₆ reflects high uncertainty in all state components.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `process_noise_var` or `obs_noise_var` is not strictly
+    /// positive. Zero / negative noise variances are physically invalid and
+    /// would produce a singular or non-positive-definite filter (M8).
     pub fn new(initial_position: Vec3, process_noise_var: f64, obs_noise_var: f64) -> Self {
+        assert!(
+            process_noise_var > 0.0,
+            "KalmanState::new: process_noise_var must be > 0.0 (got {})",
+            process_noise_var
+        );
+        assert!(
+            obs_noise_var > 0.0,
+            "KalmanState::new: obs_noise_var must be > 0.0 (got {})",
+            obs_noise_var
+        );
+
         let x: Vec6 = [
             initial_position[0],
             initial_position[1],

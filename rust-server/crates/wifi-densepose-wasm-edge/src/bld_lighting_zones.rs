@@ -84,6 +84,9 @@ pub struct LightingZoneController {
     calibrated: bool,
     /// Frame counter.
     frame_count: u32,
+    /// Event output buffer (instance-local to avoid shared mutable state).
+    events_buf: [(i32, f32); 8],
+    events_len: usize,
 }
 
 impl LightingZoneController {
@@ -105,6 +108,8 @@ impl LightingZoneController {
             calib_count: 0,
             calibrated: false,
             frame_count: 0,
+            events_buf: [(0, 0.0); 8],
+            events_len: 0,
         }
     }
 
@@ -121,8 +126,9 @@ impl LightingZoneController {
         motion_energy: f32,
     ) -> &[(i32, f32)] {
         let n_sc = amplitudes.len().min(MAX_SC);
+        self.events_len = 0;
         if n_sc < 4 {
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         self.frame_count += 1;
@@ -168,7 +174,7 @@ impl LightingZoneController {
                 }
                 self.calibrated = true;
             }
-            return &[];
+            return &self.events_buf[..self.events_len];
         }
 
         // Per-zone occupancy + activity update.
@@ -230,28 +236,24 @@ impl LightingZoneController {
         }
 
         // Build output events.
-        static mut EVENTS: [(i32, f32); 8] = [(0, 0.0); 8];
-        let mut n_events = 0usize;
 
         // Emit transitions immediately.
         for z in 0..zone_count {
-            if self.zones[z].state != self.zones[z].prev_state && n_events < 8 {
+            if self.zones[z].state != self.zones[z].prev_state && self.events_len < 8 {
                 let event_id = match self.zones[z].state {
                     LightState::On => EVENT_LIGHT_ON,
                     LightState::Dim => EVENT_LIGHT_DIM,
                     LightState::Off => EVENT_LIGHT_OFF,
                 };
-                unsafe {
-                    EVENTS[n_events] = (event_id, z as f32);
-                }
-                n_events += 1;
+                self.events_buf[self.events_len] = (event_id, z as f32);
+                self.events_len += 1;
             }
         }
 
         // Periodic summary of all zone states.
         if self.frame_count % EMIT_INTERVAL == 0 {
             for z in 0..zone_count {
-                if n_events < 8 {
+                if self.events_len < 8 {
                     let event_id = match self.zones[z].state {
                         LightState::On => EVENT_LIGHT_ON,
                         LightState::Dim => EVENT_LIGHT_DIM,
@@ -259,15 +261,13 @@ impl LightingZoneController {
                     };
                     // Encode zone_id + confidence in value.
                     let val = z as f32 + self.zones[z].score.min(0.99);
-                    unsafe {
-                        EVENTS[n_events] = (event_id, val);
-                    }
-                    n_events += 1;
+                    self.events_buf[self.events_len] = (event_id, val);
+                    self.events_len += 1;
                 }
             }
         }
 
-        unsafe { &EVENTS[..n_events] }
+        &self.events_buf[..self.events_len]
     }
 
     /// Get the lighting state of a specific zone.

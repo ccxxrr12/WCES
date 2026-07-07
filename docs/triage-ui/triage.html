@@ -538,9 +538,12 @@
 </div>
 
 <script>
-// M-7: DEBUG flag — set to true to enable verbose console.log output in dev
+// M-7: DEBUG flag — set to true to enable verbose console.log output in dev.
+// W-2 fix: previously overwrote the native console.log with a no-op when DEBUG
+// was false. That destroyed the native implementation (and any framework relying
+// on it), so the override is removed. Use `if (DEBUG) console.log(...)` at
+// verbose call sites instead of blanket-suppressing global output.
 const DEBUG=false;
-if(!DEBUG&&console.log){console.log=function(){};}
 // TODO(M-8): This inline script is too large — extract into separate modules
 // (e.g. triage-map.js, triage-skeleton.js, triage-ws.js, triage-agent.js) to improve maintainability.
 // ═══════════════════════════════════════════════════════════
@@ -1040,7 +1043,7 @@ function renderFromServer(){
             newSurvivorHtml='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
         }else{
             newSurvivorHtml=sortedSurvivors.map((s,idx)=>`
-                <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" onclick="selectSurvivor('${escapeHtml(s.id)}');openEhr(latestTriage.survivors.find(x=>x.id===\`${escapeHtml(s.id)}\`))">
+                <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" data-survivor-id="${escapeHtml(s.id)}">
                     <div class="survivor-header">
                         <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(String(s.id||'').substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${(s.tracked_seconds!=null?s.tracked_seconds.toFixed(0):'--')}s · 节点${escapeHtml(s.node_id)} · ${escapeHtml(s.estimated_age)}</p></div></div>
                         <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}${s.reidentified?'<span class="reid-badge">🔄 重识别</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
@@ -1054,7 +1057,19 @@ function renderFromServer(){
         }
         if(_lastSurvivorHtml!==newSurvivorHtml){
             _lastSurvivorHtml=newSurvivorHtml;
-            document.getElementById('survivorsList').innerHTML=newSurvivorHtml;
+            /* W-1 fix: bind survivor-card click handlers externally instead of
+             * via inline onclick (which was vulnerable to the same HTML-attribute
+             * JS-string context confusion as the patient list). The survivor id
+             * is read from dataset, never interpolated into a JS string literal. */
+            const survivorsList=document.getElementById('survivorsList');
+            survivorsList.innerHTML=newSurvivorHtml;
+            survivorsList.querySelectorAll('.survivor-card[data-survivor-id]').forEach(el=>{
+                el.addEventListener('click',()=>{
+                    const sid=el.dataset.survivorId;
+                    selectSurvivor(sid);
+                    openEhr(latestTriage.survivors.find(x=>x.id===sid));
+                });
+            });
         }
 
         // Alerts list — only redraw if content changed

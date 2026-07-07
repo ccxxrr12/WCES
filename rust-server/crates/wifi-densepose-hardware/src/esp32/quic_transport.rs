@@ -510,11 +510,18 @@ impl QuicTransportHandle {
     }
 
     /// Gracefully close the connection.
+    ///
+    /// From `Connected` the connection transitions to `Draining` (graceful
+    /// close in progress). It is NOT immediately overwritten to `Closed`,
+    /// so callers/observers can observe the draining state and flush
+    /// in-flight frames. Calling `close()` again from any non-`Connected`
+    /// state (including `Draining`) transitions to `Closed`.
     pub fn close(&mut self) {
         if self.state == ConnectionState::Connected {
             self.state = ConnectionState::Draining;
+        } else {
+            self.state = ConnectionState::Closed;
         }
-        self.state = ConnectionState::Closed;
     }
 
     /// Whether the connection is in a usable state.
@@ -822,9 +829,14 @@ mod tests {
         let mut handle = QuicTransportHandle::new(QuicTransportConfig::default()).unwrap();
         handle.connect("192.168.1.1:4433").unwrap();
         assert!(handle.is_connected());
+        // First close from Connected transitions to Draining (graceful close),
+        // NOT immediately to Closed.
+        handle.close();
+        assert_eq!(handle.state(), ConnectionState::Draining);
+        assert!(!handle.is_connected());
+        // A subsequent close from a non-Draining state transitions to Closed.
         handle.close();
         assert_eq!(handle.state(), ConnectionState::Closed);
-        assert!(!handle.is_connected());
     }
 
     #[test]
