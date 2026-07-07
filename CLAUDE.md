@@ -100,7 +100,7 @@ CSI采集 → UDP:5005
   │  ├─ match_or_create           ← cosine similarity matching (threshold 0.65)
   │  ├─ position: node centroid   ← EMA-smoothed weighted centroid (BUG 48)
   │  └─ calculate_triage          ← START protocol
-  ├─ WhōFi+FieldBridge hybrid     ← Top-12 subcarrier variance (70%) + SVD perturbation (30%)
+  ├─ WhōFi + frame-phase-diff hybrid     ← Top-12 subcarrier variance (70%) + SVD perturbation (30%)
   │  ├─ adaptive baseline per node← auto-learns peak proximity
   │  └─ multi-node weighted centroid ← Σ(proximity[i] × pos[i]) / Σ(proximity[i])
   ├─ derive_pose_from_sensing()   ← survivor-driven person count (BUG 47)
@@ -151,7 +151,7 @@ CSI采集 → UDP:5005
 
 **Positioning:**
 - `field_bridge.rs` — SVD empty-room calibration (~30s), extracts perturbation energy
-- `field_localize.rs` — signal_field peak extraction and world-coordinate mapping (not currently used in ESP32 path; WhōFi hybrid used instead)
+- `field_localize.rs` — signal_field peak extraction and world-coordinate mapping (not currently used in ESP32 path; WhōFi+phase hybrid used instead)
 - `localization_bridge.rs` — Multi-node RSSI+CIR triangulation
 - `tracking_bridge.rs` — Kalman filter + fingerprint re-ID
 - `cir_bridge.rs` — ISTA sparse CIR estimation → ToF ranging
@@ -201,7 +201,7 @@ Broadcast uses `tokio::sync::broadcast::channel(2048)` for WebSocket push.
 Per-frame:
 1. Top-12 subcarrier temporal variance mean → raw proximity (WhōFi)
 2. FieldBridge SVD perturbation energy → secondary proximity (FieldBridge)
-3. Blend: 70% WhōFi + 30% FieldBridge → EMA-smoothed per-node proximity [0,1]
+3. Blend: 60% WhōFi + 40% phase-diff → EMA-smoothed per-node proximity [0,1]
 4. Multi-node weighted centroid: `Σ(proximity[i] × node_pos[i]) / Σ(proximity[i])`
 5. Adaptive baseline auto-calibrates per node (no hardcoded thresholds)
 

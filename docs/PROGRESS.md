@@ -725,7 +725,7 @@ ESP-IDF v6.0.1 安装 + 固件 v5.x→v6.0 迁移 + C5 单核适配 + 内存优�
 | 组件 | 状态 |
 |------|:--:|
 | WiFi STA 连接 (SC, 5GHz ch44) | ✅ |
-| CSI 采集 (promiscuous sniffer, HE40) | ✅ |
+| CSI 采集 (normal STA RX, HE40) | ✅ |
 | Edge DSP (tier=2, FFT/BPM/存在/跌倒) | ✅ |
 | UDP 流式发送 (async queue → RZ/G2L:5005) | ✅ (ENOMEM 修复中) |
 | OTA HTTP 服务器 | ✅ (保留) |
