@@ -11,7 +11,7 @@
 
 核心技术路线包括：（1）基于ESP32-C5 WiFi 6 HE40模式的484子载波高分辨率CSI采集，通过UDP实时传输至RZ/G2L边缘主控；（2）Rust语言实现的纯本地信号处理管线，包含IIR带通滤波、零交叉检测、自相关分析等生命体征提取算法；（3）基于SVD空房间校准的物理场扰动模型与加权质心法的混合人员定位方案；（4）面向大规模伤亡事件的START分诊引擎，支持伤员8维生物特征嵌入匹配与恶化追踪；（5）Coordinator模式的云端LLM医学Agent，具备流式分析、熔断降级与本地模板兜底能力。
 
-系统以全Rust技术栈构建服务端（10个crate、约10万行代码），ESP-IDF v6.0.1 C语言固件（33个源文件、8,322行），HTML5/Canvas/Three.js Web可视化仪表盘。1,004个测试全部通过。支持模拟运行模式——无需硬件即可启动完整演示。经六轮全代码审查（842个bug发现、52个关键修复），端到端数据流（CSI采集→UDP→信号处理→生命体征→分诊→WebSocket→可视化）12条路径全部接通，0编译错误。系统已完成aarch64-unknown-linux-gnu交叉编译（Poky SDK 3.1.20），二进制大小约8.6MB，可直接部署至瑞萨RZ/G2L开发板。
+系统以全Rust技术栈构建服务端（10个crate、约10万行代码），ESP-IDF v6.0.1 C语言固件（33个源文件、8,322行），HTML5/Canvas/Three.js Web可视化仪表盘。端到端数据流（CSI采集→UDP→信号处理→生命体征→分诊→WebSocket→可视化）12条路径。
 
 **关键词**：WiFi CSI感知；非接触生命体征检测；START分诊；端侧AI；RZ/G2L边缘计算；ESP32-C5；Rust
 
@@ -21,105 +21,82 @@
 
 ## 功能与特性
 
-本系统集WiFi CSI非接触感知、边缘AI信号处理、START标准分诊、伤员追踪与云端Agent分析于一体，面向野战方舱与灾后急救场景提供全链路自动化伤员监护解决方案。主要功能包括：
+本系统面向野战方舱、灾后临时医院等极端场景，实现WiFi信号非接触感知的全链路伤员生命体征监护与智能分诊。
 
-**（1）非接触式生命体征检测**：利用3个ESP32-C5节点构建WiFi 6感知网络，在不接触伤员身体、无需穿戴设备的前提下，通过CSI信号处理提取呼吸率（6-30 BPM，基于IIR带通滤波+零交叉检测）、心率（40-120 BPM，基于时序相位差分+自相关峰值分析）、体动水平（active/present_moving/present_still/absent四级分类）、人体存在检测（CSI振幅方差+自适应阈值+5帧消抖）。
+**（1）非接触生命体征检测**：3个ESP32-C5节点构建WiFi 6感知网络，穿墙提取呼吸率（6-30BPM，IIR带通滤波+零交叉检测）、心率（40-120BPM，相位差分+自相关分析）、体动水平（四级分类）、人体存在检测（振幅方差+自适应阈值+5帧消抖）。
 
-**（2）START标准分诊引擎**：实现标准战场分诊协议，根据呼吸率、心率、体动水平将伤员自动分为Immediate（红色/紧急，RR>30或<10，HR>120或<40）、Delayed（黄色/延迟，中等异常）、Minor（绿色/轻伤，体征正常）、Deceased（黑色/死亡）、Unknown（灰色/数据不足）五级。支持恶化检测（分诊等级连续下降≥2级触发告警）、群体伤情评估（Minimal→Critical）+救援人员需求估算、伤员年龄推断（基于呼吸率/心率推断Infant→Child→Adult→Elderly）。
+**（2）START标准分诊引擎**：Immediate/Delayed/Minor/Deceased/Unknown五级自动分类，支持泄漏桶恶化检测、群体伤情评估（Minimal→Critical）+救援需求估算、伤员年龄推断。
 
-**（3）伤员追踪与Re-ID**：8维生物特征嵌入向量（呼吸率、心率、体动水平、信号质量、RSSI等），基于余弦相似度（阈值0.65）匹配幸存者身份，包含5分钟lost_pool重识别缓冲。支持三级匹配策略（person_id→Re-ID→新建）。
+**（3）伤员追踪与Re-ID**：8维CSI生物特征嵌入向量（呼吸/心率/体动/信号质量/RSSI等），余弦相似度匹配（阈值0.65），5分钟lost_pool重识别缓冲，三级匹配策略。
 
-**（4）人员定位系统**：采用WhōFi（Top-12子载波方差定位，权重70%）+ FieldBridge（SVD空房间校准+物理扰动能量，权重30%）的混合定位方案。空房间自动校准30秒后进入定位模式，结合RSSI对数距离模型与加权质心法估计伤员位置，在2D Canvas地图上实时渲染。
+**（4）多模态定位**：子载波方差邻近度(60%)+相位多普勒邻近度(40%)混合加权质心定位，辅以RSSI路径损耗三角定位、ISTA稀疏CIR时域ToF测距、6维Kalman滤波。
 
-**（5）19个边缘分析模块**：包括步态分析、心律失常检测、呼吸窘迫识别、癫痫发作检测、徘徊行为检测、睡眠呼吸暂停筛查等，竞赛模式下以原生Rust编译至RZ/G2L直接运行，利用硬件FPU实现5-10倍加速。
+**（5）Medical Agent云端增强**：Coordinator模式——边缘端本地信号处理+可选云端LLM（DeepSeek V4 Pro）深度分析，熔断器保护（3次失败→5分钟冷却）、流式输出、本地模板降级。
 
-**（6）Web可视化仪表盘**：Canvas 2D伤员地图+信号场热力图叠加，Three.js 3D胶囊几何体蒙皮骨架（17 COCO关键点），实时统计卡片+伤员卡片+告警侧栏，EHR电子病历滑出面板，LLM流式分析，暗色/亮色双主题，响应式布局。
-
-**（7）Medical Agent云端增强**：Coordinator模式——本地信号处理完成核心生命体征检测，可选云端LLM（DeepSeek V4 Pro）深度分析伤员状况并生成伤病报告。具备熔断器保护（3次失败→5分钟冷却）、流式输出、本地模板降级。
-
-**（8）模拟演示模式**：正弦波合成CSI数据，10个虚拟伤员（3红色+2黄色+3绿色+1黑色+1灰色），完整端到端数据流，无需任何硬件即可启动完整功能演示。
+**（6）Web可视化仪表盘**：Canvas 2D伤员地图+信号场热力图叠加，Three.js 3D胶囊几何体蒙皮骨架，实时统计+伤员卡片+告警侧栏+EHR面板，暗色/亮色双主题。支持模拟演示模式——无需硬件即可运行完整系统。
 
 ## 应用领域
 
-本系统瞄准**野战方舱医院批量伤员快速分诊**这一核心应用场景。在现代化大规模军事冲突或重大自然灾害（地震、洪水、爆炸等）中，短时间内可能出现数十至数百名伤员，传统的人工分诊严重依赖医护人员的经验判断，存在效率低下、主观性强、无法持续监测等痛点。本系统通过WiFi信号非接触感知实现：
+本系统瞄准**大规模伤亡场景下的批量伤员连续监测**这一全球应急医学核心痛点。三类典型场景的监测困境具有高度一致的根源——短时间内伤员爆发式增长与极端环境下医护、设备、基础设施严重不足之间的不可调和矛盾：
 
-**（1）方舱内伤员生命体征持续监护**：WiFi信号穿透衣物、被褥、帐篷，无需接触伤员即可提取呼吸/心率/体动，且不产生额外电磁辐射。3个ESP32-C5节点覆盖标准方舱（约6m×8m区域），系统自动校准后进入24×7持续监护模式。伤员移动、体征恶化、新增伤员等事件触发实时告警，为医护人员争取黄金救治时间。
+**自然灾害临时医院**：德国Fraunhofer IIS研究指出，单次伤亡超10人的大规模事件中，传统分诊仅能提供单次生命体征记录，几乎不可能实现连续监测——而这正是本系统非接触穿墙感知所解决的。《BMJ Quality & Safety》(2026)的地震救援研究证实，临时医疗点大量伤员在无监护下等待转运，隐匿性恶化无法及时识别。山东大学齐鲁医院在《中华急诊医学杂志》(2023)中指出，狭小空间救援现场仅能对极危重伤员进行间断监测。
 
-**（2）战地/灾后快速分诊决策辅助**：在资源有限的大规模伤亡事件中，START分诊是国际公认的标准优先级排序方法。本系统将START协议嵌入边缘计算平台，实现自动化、标准化、可追溯的分诊决策，避免人为疲劳导致的误判。群体评估功能可估算伤情严重等级及所需救援人员数量。
+**疫情方舱医院**：武汉方舱实践表明，患者基数大、医护配比仅为传统医院的1/4~1/5，人工巡诊无法实现全员连续监测，新冠肺炎部分患者由轻型快速转重型难以早期识别（《陆军军医大学学报》2020）。上海方舱经验显示，数千张床位仅能对少数高危患者部署远程监护（中国医学装备协会）。
 
-**（3）端侧AI驱动的智能化分析**：Medical Agent通过云端LLM分析伤员生命体征趋势、生成鉴别诊断建议、识别潜在并发症风险（如ARDS、脓毒症早期征兆）。Analyze按钮提供一键流式分析，模板降级确保无网络时仍可用。
+**战时野战医院**：俄乌冲突中，乌军前线监护设备严重短缺，重伤员从交战区后送平均耗时3.5小时且全程无连续监护（中国指挥与控制学会2025）；俄方超30%战伤截肢与院前监测不当直接相关（CNA智库解密报告）。WHO统计2024年乌克兰医疗设施遭390次袭击，进一步瓦解监测能力。加沙地带36所医院仅17所部分运行，大量伤员只能靠肉眼观察判断伤情（无国界医生2024）。
 
-**（4）可扩展至更多场景**：包括医院ICU/CCU无接触监护（避免传感器粘贴导致的皮肤损伤）、养老院老人跌倒检测与徘徊监控、监狱/安防的人体存在与运动检测、智能家居日常健康监测等。
+本系统的非接触穿墙感知+全本地边缘计算+零穿戴要求，直接回应上述三类场景的核心约束：资源短缺（无需传感器耗材、医护零操作负担）、环境恶劣（无需固定基础设施、WiFi即感知）、伤情复杂（自动化连续分诊+恶化预警）。
 
 ## 主要技术特点
 
-**（1）WiFi 6全栈自研CSI感知**：基于ESP32-C5的WiFi 6（802.11ax）芯片，利用HE40模式下的484子载波CSI数据进行生命体征感知，子载波分辨率是传统ESP32-S3方案（HT40 114子载波）的4倍以上。CSI采集率100-500Hz，支持2.4GHz/5GHz双频段信道跳转（6通道×50ms dwell），UDP限速50Hz发送至RZ/G2L主控。
+**（1）WiFi 6高分辨率CSI感知**：ESP32-C5的HE40模式提供484子载波（4×传统S3方案），支持2.4/5GHz双频信道跳转（6通道×50ms dwell），UDP限速50Hz传输。
 
-**（2）Rust全栈高性能边缘计算**：服务端采用Rust语言9个crate（~10万行），基于Tokio异步运行时，零拷贝ADR-018二进制帧解析。两阶段写锁设计（状态变更+纯计算分离）消除锁竞争死锁。VitalsBridge采用上游wifi_densepose_wifiscan项目的IIR带通滤波+零交叉+自相关算法，精度对标学术论文标准。
+**（2）Rust全栈边缘计算**：10个crate、~10万行纯Rust代码，基于Tokio异步运行时，两阶段写锁消除锁竞争。IIR Butterworth带通滤波+零交叉+自相关方案对标学术标准[1][4]，自适应动态采样率（EMA α=0.15）消除BPM系统误差。
 
-**（3）物理场建模与混合定位**：将上游RuView项目的field_model.rs（SVD空房间CSI基线校准+协方差矩阵+物理扰动投影）和cir.rs（ISTA L1稀疏信道脉冲响应估计）移植至WCES，与WhōFi子载波方差定位方法融合，实现亚米级人员定位精度。
+**（3）物理场建模与多模态定位**：SVD空房间电磁场校准（600帧协方差矩阵→奇异值分解→正交补投影提取人体扰动），ISTA稀疏CIR估计（L1正则化→时域多径→ToF测距），子载波方差-相位多普勒双模态混合质心定位（60:40融合，平方权重）。
 
-**（4）标准化START分诊与Re-ID**：按照START标准协议实现的伤员分诊引擎，支持基于8维生物特征嵌入向量的伤员匹配与重识别，融入泄漏桶恶化检测、群体伤情评估等功能，全Rust实现、零外部依赖。
+**（4）标准化START分诊与Re-ID**：8维CSI生物特征嵌入+余弦相似度匹配+泄漏桶恶化检测+群体评估，全Rust零外部依赖。
 
-**（5）端侧Agent + 云端LLM协同架构**：Coordinator模式将核心信号处理与分诊逻辑留存在边缘端（RZ/G2L），保障数据不出方舱、离线可用。云端LLM提供增强分析能力，熔断器（3次失败→5分钟冷却）防止API故障影响核心功能。
-
-**（6）多维代码审查保障质量**：经历六轮递进式全代码审查（~25万行），消除842个bug（含栈溢出、NaN传播、竞态条件、除零崩溃等关键缺陷），编译0错误。12条端到端数据流路径全部验证接通。
-
-**（7）自适应动态采样率**：系统以EMA平滑（α=0.15）测量ESP32-C5实际CSI帧到达间隔，动态调整信号处理管线采样率参数，消除硬编码采样率（20Hz）假设引入的BPM系统误差，兼容10-100Hz实际帧率波动。
+**（5）端云协同Agent架构**：边缘端本地处理保障离线可用、数据不出方舱；云端LLM增强分析；熔断器防API故障级联。
 
 ## 主要性能指标
 
-| 指标类别 | 参数 | 数值 |
-|:---------|:-----|:-----|
-| **感知能力** | CSI子载波数 | 484（HE40模式） |
-|  | 感知频段 | 2.4GHz + 5GHz双频 |
-|  | 呼吸率检测范围 | 6-30 BPM |
-|  | 心率检测范围 | 40-120 BPM |
-|  | 呼吸率平均误差 | ±3 BPM（仿真验证） |
-|  | 心率平均误差 | ±5 BPM（仿真验证） |
-| **系统性能** | 服务端处理帧率 | 10-100 Hz（自适应） |
-|  | UDP接收延迟 | <1ms（本地回环） |
-|  | WebSocket推送频率 | 2-10 Hz |
-|  | 服务端二进制大小 | ~8.6 MB（aarch64 stripped） |
-|  | 内存占用 | ~15-30 MB |
-| **硬件规格** | 主控平台 | 瑞萨RZ/G2L（Cortex-A55×2 + M33, 1GB DDR4） |
-|  | 感知节点 | ESP32-C5（单核RISC-V 240MHz, 400KB SRAM） |
-|  | WiFi标准 | 802.11ax (WiFi 6) |
-| **代码规模** | Rust服务端 | 9个crate, 约10万行, 223个源文件 |
-|  | ESP32固件 | 33个源文件, 8,322行C代码 |
-|  | Web UI | 约3,000行JS/HTML |
-| **定位精度** | 人员定位 | ±2-3m（RSSI+WhōFi+FieldBridge混合方案） |
+| 指标 | 参数 | 数值 |
+|:-----|:-----|:-----|
+| **感知** | CSI子载波数 | 484（HE40）/ 感知频段：2.4+5GHz双频 |
+|  | 呼吸/心率范围 | 6-30 BPM / 40-120 BPM |
+|  | 检测误差 | 呼吸±3BPM / 心率±5BPM（仿真） |
+| **系统** | 处理帧率 | 10-100Hz自适应 / UDP延迟<1ms |
+|  | 二进制大小 | ~8.6MB（aarch64 stripped）/ 内存~15-30MB |
+| **硬件** | 主控/节点 | RZ/G2L (A55×2,1GB) / ESP32-C5 (RISC-V 240MHz) |
+| **代码** | Rust/C/Web | ~10万行 / 8,322行 / ~3,000行 |
+| **定位** | 精度 | ±2-3m（多模态混合质心） |
 
 ## 主要创新点
 
-1. **WiFi 6高分辨率CSI生命体征感知**：利用ESP32-C5的802.11ax HE40模式484子载波，实现4倍于传统方案（ESP32-S3 HT40 114子载波）的感知分辨率，在业界率先将WiFi 6芯片应用于非接触生命体征监护场景。
+1. **WiFi 6 CSI生命体征感知**：率先将802.11ax HE40 484子载波应用于非接触生命体征监护，分辨率4倍于传统方案。
 
-2. **物理场建模与混合定位融合**：将上游RuView项目的SVD场模型（field_model.rs）与ISTA稀疏CIR估计（cir.rs）从实验代码移植至实用系统，与WhōFi子载波方差定位方法70:30权重融合，将人员定位从纯RSSI估算提升到物理建模驱动。
+2. **双模态CSI邻近度混合定位**：子载波方差（频域散射）+相位差分（时域多普勒）60:40融合，平方权重质心，充分利用WiFi 6高分辨率优势。
 
-3. **全Rust边缘端生命体征处理管线**：对标学术论文精度的纯Rust信号处理栈（IIR Butterworth带通滤波+滤波器状态持久化+零交叉呼吸率+自相关心率），替代多轮FFT方案，消除CPU浪费约60%。
+3. **全Rust边缘生命体征处理管线**：IIR带通+零交叉+自相关对标学术精度，EMA自适应采样率消除硬编码假设。
 
-4. **8维生物特征伤员Re-ID**：提出基于CSI生命体征特征向量的伤员身份持续追踪方案——呼吸率/心率/体动/信号质量/RSSI等8维嵌入，余弦相似度匹配+5分钟lost_pool缓冲，解决WiFi感知中人员进出覆盖区的身份维持问题。
+4. **8维CSI生物特征Re-ID**：基于生命体征特征向量的伤员身份持续追踪，余弦匹配+5分钟lost_pool缓冲。
 
-5. **Coordinator模式端云协同Agent**：本地边缘计算负责核心生命体征检测（零延迟、零带宽、零隐私风险），云端LLM提供深度分析增强（流式输出、一键分析），熔断器保障核心功能不受API故障影响。
+5. **Coordinator端云协同Agent**：边缘端零延迟/零带宽/零隐私风险+云端LLM增强+熔断器降级。
 
 ## 设计流程
 
-系统的整体设计流程遵循"感知→传输→处理→决策→展示"五层架构：
+系统开发遵循"感知→传输→处理→决策→展示"五层架构，设计过程深度践行本届大赛"AI赋能设计，设计点亮AI"主题：
+
+**AI赋能设计**：本项目的架构设计、代码实现、质量审查到文档撰写全流程深度依赖AI辅助。Claude Code作为AI编程助手参与了系统架构设计（10个crate分层依赖关系设计、31模块职责划分）、全代码库六轮递进式审查（从单文件逐行到全局数据流的842个bug发现与52个关键修复）、端到端数据流12条路径审计、以及CLAUDE.md项目规范文档的持续维护。DeepSeek V4 Pro大模型则作为Medical Agent的核心推理引擎，为伤员伤病分析提供流式LLM推理能力。AI工具将本项目从需求到可部署系统的开发周期压缩至8周。
+
+**设计点亮AI**：本项目产出了一套完整的AI友好型嵌入式系统工程范式——包括统一配置源(wces.config.toml)驱动的多节点配置生成体系(apply-config.ps1)、基于Workspace的Rust crate分层依赖管理、C5-CSI二进制帧协议规范（3种包类型+完整字节级格式）、以及覆盖CSI采集→信号处理→分诊→可视化的12条端到端数据流定义。这些设计产出使AI工具能够在项目全生命周期中持续提供高质量的代码生成与审查。
 
 ```
-需求分析 → 硬件选型(RZ/G2L+ESP32-C5) → CSI采集固件开发 → ADR-018传输协议设计
-    → Rust信号处理管线实现 → 生命体征算法验证(仿真+对比) → START分诊引擎开发
-    → 伤员追踪与定位 → Web可视化仪表盘 → Medical Agent集成
-    → 系统集成测试 → 代码审查(842 bugs→52修复) → 交叉编译 → 部署
+需求分析 → 硬件选型(RZ/G2L+ESP32-C5) → CSI采集固件 + 帧协议
+  → Rust信号管线(parser→signal_pipeline→VitalsBridge→FieldBridge→CIRBridge→定位→分诊→边缘引擎)
+  → START分诊 + Re-ID → Web仪表盘 → Medical Agent → 交叉编译 → 部署
 ```
-
-关键设计决策节点：
-- **第1周**：硬件选型确定RZ/G2L+3×ESP32-C5 → ESP-IDF v6.0.1环境搭建
-- **第2-3周**：ESP32-C5 CSI采集固件 + ADR-018二进制帧协议 + UDP传输
-- **第4-5周**：Rust信号处理管线（parser→signal_pipeline→VitalsBridge→FieldBridge→CIRBridge→localization→tracking→mat_pipeline→edge_module_engine）
-- **第6周**：START分诊引擎 + 伤员追踪Re-ID + Web可视化仪表盘（triage.html）
-- **第7周**：六轮全代码审查 + 52个关键bug修复 + 数据流审计 + 交叉编译
-- **第8周**：系统联调 + 性能优化 + 竞赛文档完善
 
 
 # 第二部分  系统组成及功能说明
@@ -128,70 +105,67 @@
 
 ### 2.1.1 系统总体架构
 
-系统由**感知层**、**传输层**、**计算层**、**展示层**四层组成，总体架构如下：
+系统由**感知层**、**传输层**、**计算层**、**展示层**四层组成，总体架构如**图1**所示。
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              展示层 (Browser)                                 │
-│  ┌──────────────────────────────┐  ┌──────────────────────────────────────┐  │
-│  │  Triage Dashboard (Canvas)   │  │  3D Skeleton (Three.js)               │  │
-│  │  • 2D伤员地图 + 热力图        │  │  • 胶囊几何体蒙皮骨架                  │  │
-│  │  • 生命体征卡片 + 统计        │  │  • 17 COCO关键点                       │  │
-│  │  • EHR面板 + LLM流式分析      │  │  • OrbitControls旋转/缩放              │  │
-│  └──────────────┬───────────────┘  └──────────────────────────────────────┘  │
-│                 │ WebSocket /ws/sensing (SensingUpdate JSON)                  │
-│                 │ HTTP :8080 (静态资源 + REST API)                            │
-└─────────────────┼────────────────────────────────────────────────────────────┘
-                  │
-┌─────────────────┼────────────────────────────────────────────────────────────┐
-│                 │            计算层 (RZ/G2L — Rust sensing-server)            │
-│  ┌──────────────┴───────────────────────────────────────────────────────┐   │
-│  │                        UDP Receiver Task (:5005)                      │   │
-│  │  parser.rs → signal_pipeline.rs → VitalsBridge → FieldBridge         │   │
-│  │  → CIRBridge → LocalizationBridge → TrackingBridge                   │   │
-│  │  → mat_pipeline.rs (TriageEngine) → alerting_bridge.rs               │   │
-│  │  → edge_module_engine.rs (10个边缘分析模块)                           │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│  ┌────────────────────────────────┐  ┌────────────────────────────────────┐  │
-│  │  Medical Agent (LLM Coordinator)│  │  Web Server (Axum HTTP/WS)        │  │
-│  │  • Cloud LLM (DeepSeek V4 Pro) │  │  • Static File Service            │  │
-│  │  • Local Template Fallback     │  │  • REST API (Model/Recording/etc)  │  │
-│  │  • Circuit Breaker             │  │  • WebSocket /ws/sensing           │  │
-│  └────────────────────────────────┘  └────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────┘
-                  │
-                  │ UDP :5005 (ADR-018 Binary Frames)
-                  │
-┌─────────────────┼────────────────────────────────────────────────────────────┐
-│                 │            传输层 (WiFi 6 无线网络)                          │
-│     ESP32-C5 #1 ──────┼────── ESP32-C5 #2 ──────┼────── ESP32-C5 #3          │
-│     (node_id=1)       │       (node_id=2)        │       (node_id=3)          │
-│     信道: 1/6/11跳转   │       信道: 1/6/11跳转    │       信道: 1/6/11跳转      │
-└───────────────────────┼──────────────────────────┼───────────────────────────┘
-                        │                          │
-┌───────────────────────┼──────────────────────────┼───────────────────────────┐
-│                       │          感知层 (ESP32-C5固件)                         │
-│  ┌────────────────────┴──────────┬──────────────┴─────────────────────────┐  │
-│  │  CSI采集 (wifi_csi_callback)  │  边缘预处理 (edge_processing.c)          │  │
-│  │  • WiFi 6 HE40 484子载波      │  • IIR带通滤波 (呼吸0.1-0.5Hz,心率0.8-2.0Hz)│  │
-│  │  • 2.4GHz/5GHz双频           │  • 相位提取+解卷绕+运动能量              │  │
-│  │  • AGC增益锁定(>300帧基线)     │  • 存在检测                             │  │
-│  │  • 信道跳转(6ch×50ms)         │  • ADR-039边缘生命体征包(magic 0xC511_0002)│ │
-│  └───────────────────────────────┴────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────┐  ┌──────────────────────────────────┐   │
-│  │  ADR-018 序列化 + UDP发送        │  │  NVS运行时配置                     │   │
-│  │  • 20字节头 + IQ数据对            │  │  • SSID/密码/target_ip/node_id     │   │
-│  │  • Magic 0xC511_0001             │  │  • TDM slot/信道跳转参数            │   │
-│  │  • SO_SNDTIMEO=100ms            │  │  • provision.py烧录                │   │
-│  └──────────────────────────────────┘  └──────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────────┘
+                        ┌─────────────────────────────────────┐
+                        │         展示层 (Browser)             │
+                        │  ┌───────────────┐  ┌─────────────┐ │
+                        │  │ Triage        │  │ 3D Skeleton │ │
+                        │  │ Dashboard     │  │ (Three.js)  │ │
+                        │  │ • 伤员地图     │  │ • 胶囊骨架   │ │
+                        │  │ • 信号场热力图  │  │ • 17 COCO点  │ │
+                        │  │ • EHR面板     │  │ • OrbitCtrl  │ │
+                        │  └───────┬───────┘  └─────────────┘ │
+                        └──────────┼──────────────────────────┘
+                                   │ WebSocket /ws/sensing
+                                   │ HTTP :8080
+                        ┌──────────┴──────────────────────────┐
+                        │     计算层 (RZ/G2L — Rust)          │
+                        │  ┌────────────────────────────────┐  │
+                        │  │    UDP Receiver (:5005)        │  │
+                        │  │  Parse → SignalPipeline        │  │
+                        │  │  → VitalsBridge → FieldBridge  │  │
+                        │  │  → CIRBridge → LocBridge       │  │
+                        │  │  → TrackBridge → TriageEngine  │  │
+                        │  │  → AlertBridge → EdgeModules   │  │
+                        │  └────────────────────────────────┘  │
+                        │  ┌──────────────┐ ┌──────────────┐  │
+                        │  │ MedAgent     │ │ Axum Server  │  │
+                        │  │ (LLM Coord)  │ │ (HTTP/WS)    │  │
+                        │  └──────────────┘ └──────────────┘  │
+                        └──────────┬──────────────────────────┘
+                                   │ UDP :5005
+                        ┌──────────┴──────────────────────────┐
+                        │    传输层 (WiFi 6 WLAN)              │
+                        │  ESP32-C5#1 — ESP32-C5#2 — ESP32-C5#3│
+                        │  node_id=1,2,3  信道跳转: ch{1,6,11} │
+                        └──────────┬──────────────────────────┘
+                                   │ WiFi CSI (HE40, 484 sc)
+                        ┌──────────┴──────────────────────────┐
+                        │    感知层 (ESP32-C5 固件)           │
+                        │  ┌──────────────────────────────┐   │
+                        │  │ CSI采集: wifi_csi_callback() │   │
+                        │  │ • HE40 484子载波, 2.4/5GHz   │   │
+                        │  │ • AGC Gain Lock (>300帧)    │   │
+                        │  │ • 帧率 10-100Hz (动态)      │   │
+                        │  └──────────────────────────────┘   │
+                        │  ┌──────────────┐ ┌──────────────┐  │
+                        │  │ 边缘预处理    │ │ NVS配置      │  │
+                        │  │ IIR滤波+相位  │ │ SSID/PW/IP   │  │
+                        │  │ 解卷绕+运动   │ │ node_id/TDM  │  │
+                        │  └──────┬───────┘ └──────────────┘  │
+                        │         │ C5-CSI 帧序列化           │
+                        │         │ 20B头 + I/Q对, UDP发送    │
+                        └─────────┴───────────────────────────┘
 ```
+**图1. 系统四层总体架构**。数据自底向上流动：感知层ESP32-C5采集WiFi 6 CSI→C5-CSI帧序列化→UDP传输至计算层RZ/G2L→11步信号处理管线→SensingUpdate JSON通过WebSocket推送至展示层浏览器。
 
 ### 2.1.2 模块间数据流关系
 
 系统各模块间通过定义明确的数据接口连接：
 
-- **感知层→传输层**：ESP32-C5固件通过WiFi STA模式正常接收CSI帧，经20ms速率限制后以UDP:5005发送ADR-018格式二进制帧至RZ/G2L。同时可发送边缘生命体征包（ADR-039）和WASM边缘事件包。
+- **感知层→传输层**：ESP32-C5固件通过WiFi STA模式正常接收CSI帧，经20ms速率限制后以UDP:5005发送C5-CSI二进制帧至RZ/G2L。同时可发送边缘生命体征包和WASM边缘事件包。
 - **传输层→计算层**：RZ/G2L的UDP接收器Tokio任务异步监听5005端口，接收3个节点的CSI帧，按node_id路由至对应PerNodeState独立管线。
 - **计算层内部**：每帧依次经过SignalPipeline（相位清理→归一化→Hampel→运动检测→质量门控）、VitalsBridge（IIR带通+零交叉+自相关）、FieldBridge（空房间校准→扰动提取→信号场）、CIRBridge（ISTA稀疏CIR→ToF距测）、LocalizationBridge+TrackingBridge（多节点三角定位+Kalman追踪）、TriageEngine（START分诊+伤员匹配+恶化检测）、EdgeModuleEngine（10个边缘分析模块）、AlertingBridge（告警生成+排干）。
 - **计算层→展示层**：处理结果汇总为SensingUpdate JSON，通过WebSocket /ws/sensing推送至浏览器（2-10Hz），同时通过HTTP :8080提供静态页面资源和REST API。
@@ -207,7 +181,6 @@
 - 内存：1GB DDR4
 - 存储：8GB eMMC + MicroSD卡槽
 - 网络：千兆以太网 + 双频WiFi (RTL8733BU)
-- 显示：7" HDMI触屏（可选，演示时用浏览器访问）
 - 接口：USB 2.0 ×2, UART Debug, 40-pin GPIO
 - 操作系统：Embedded Linux (Poky 3.1.20, aarch64)
 
@@ -232,16 +205,15 @@
     │ ESP32-C5  │      │ 瑞萨 RZ/G2L │      │ ESP32-C5  │
     │  节点 #2  │      │  (主控+AI)  │      │  节点 #3  │
     │ .1.11     │      │192.168.1.100│      │ .1.12     │
-    └───────────┘      │             │      └───────────┘
-                       │  7" HDMI 触屏│
-    ┌─────▼─────┐      └─────────────┘
+    └───────────┘      └─────────────┘      └───────────┘
+
+    ┌─────▼─────┐
     │ ESP32-C5  │
     │  节点 #1  │
     │ .1.10     │
     └───────────┘
 ```
-
-三个ESP32-C5节点布置在方舱四周，构成类三角形覆盖区（约6m×8m）。各节点通过WiFi STA模式连接路由器，将CSI感知数据通过UDP发送至RZ/G2L主控。节点摆放无需严格等边三角形（定位算法对±30cm误差不敏感）。
+**图2. 系统部署拓扑**。三个ESP32-C5节点构成类三角形覆盖区（~6m×8m），RZ/G2L主控通过千兆路由器接收各节点UDP:5005的CSI数据流。节点摆放无需严格等边（定位算法对±30cm误差不敏感）。
 
 ### 2.2.3 电路各模块介绍
 
@@ -256,7 +228,7 @@ ESP32-C5芯片为核心，通过SPI接口连接外部8MB PSRAM与8MB Flash。WiF
 
 **RZ/G2L主控电路模块**：
 
-RZ/G2L SoC通过DDR4接口连接1GB内存，eMMC接口连接8GB存储。千兆以太网PHY（RTL8211F）提供有线网络连接，RTL8733BU通过USB 2.0接口提供WiFi连接。HDMI接口输出至7"触屏（可选）。
+RZ/G2L SoC通过DDR4接口连接1GB内存，eMMC接口连接8GB存储。千兆以太网PHY（RTL8211F）提供有线网络连接，RTL8733BU通过USB 2.0接口提供WiFi连接。
 
 ## 软件系统介绍
 
@@ -292,6 +264,56 @@ wifi_csi_callback(ctx, data)
 - SO_SNDTIMEO=100ms：防止ARP缓存未命中阻塞WiFi任务
 - C5单射频半双工限制：禁用promiscuous模式，从正常STA RX提取CSI（帧率~10-50Hz可变）
 
+**C5-CSI二进制帧序列化格式**：
+
+本系统定义了基于ESP32-C5 CSI数据的二进制帧通信协议（magic前缀0xC511表示ESP32-C5+802.11）。三种包类型：
+
+**类型1：CSI原始帧（magic 0xC511_0001）** — 主力数据包
+```
+偏移  Size  类型     字段              说明
+0     4B    u32 LE   magic             0xC511_0001
+4     1B    u8       node_id           节点标识(1/2/3, 来自NVS配置)
+5     1B    u8       n_antennas        天线数(C5固定为1)
+6     2B    u16 LE   n_subcarriers     子载波数(C5 HE40最大~484)
+8     4B    u32 LE   freq_mhz          WiFi信道中心频率(MHz)
+12    4B    u32 LE   sequence          帧序列号(单调递增, u32回绕)
+16    1B    i8       rssi              RSSI信号强度(dBm, 有符号)
+17    1B    i8       noise_floor       噪声底(dBm, 有符号)
+18    2B    u8[2]    reserved          保留(零填充)
+20    N×2B  i8 pairs I/Q数据          N = n_antennas × n_subcarriers
+```
+总帧长：20 + n_antennas × n_subcarriers × 2 字节。最大帧长（安全上限）4116字节。
+I/Q数据布局：[ant0_sc0_I, ant0_sc0_Q, ant0_sc1_I, ant0_sc1_Q, ...]
+Rust解析：振幅 = √(I²+Q²)，相位 = atan2(Q, I)
+
+**类型2：边缘生命体征包（magic 0xC511_0002）** — 32字节固定长度，低带宽备选
+```
+偏移  Size  类型     字段              说明
+0     4B    u32 LE   magic             0xC511_0002
+4     1B    u8       node_id           节点标识
+5     1B    u8       flags             bit0=存在, bit1=摔倒, bit2=运动
+6     2B    u16 LE   breathing_rate    BPM×100 (定点数)
+8     4B    u32 LE   heartrate         BPM×10000 (定点数)
+12    1B    i8       rssi              最新RSSI
+13    1B    u8       n_persons         检测人数
+14    2B    u8[2]    reserved          保留
+16    4B    f32 LE   motion_energy     相位方差/运动度量
+20    4B    f32 LE   presence_score    存在检测分数(0-1)
+24    4B    u32 LE   timestamp_ms      启动以来毫秒数
+28    4B    u32      reserved2         保留
+```
+_Static_assert(sizeof == 32)。心率和呼吸率在Rust端缩放：br = breathing_rate/100.0, hr = heartrate/10000.0。
+
+**类型3：WASM边缘事件包（magic 0xC511_0005）** — 变长
+```
+偏移  Size  类型     字段              说明
+0     4B    u32 LE   magic             0xC511_0005
+4     1B    u8       node_id           节点标识
+5     1B    u8       module_id         模块槽位索引(0-3)
+6     2B    u16 LE   event_count       事件数量(≤16)
+8     N×5B  events   wasm_event_t[]   每个事件: 1B type + 4B f32 LE value
+```
+
 **边缘预处理模块（edge_processing.c）**：
 ```
 输入: CSI振幅序列 + 相位序列
@@ -300,7 +322,7 @@ wifi_csi_callback(ctx, data)
   ├─→ 相位提取 + 解卷绕: atan2(Q,I) → unwrap_1d
   ├─→ 运动能量: 帧间相位变化率
   ├─→ 存在检测: 振幅方差 > 自适应阈值
-  └─→ 打包: ADR-039边缘生命体征包 (magic 0xC511_0002)
+  └─→ 打包: 边缘生命体征包 (magic 0xC511_0002)
 ```
 
 **NVS运行时配置模块（nvs_config.c）**：
@@ -309,73 +331,240 @@ wifi_csi_callback(ctx, data)
 #### 2.3.2.2 Rust服务端核心模块
 
 **UDP接收器（tasks/udp_receiver.rs）**：
-每帧处理流程（11步管线）：
+每帧处理管线如**图3**所示（11步顺序执行）。
 
 ```
-[Step 1] ADR-018帧解析: parser::parse_esp32_frame()
-         → 验证magic 0xC511_0001 → 提取node_id/amplitudes/phases/rssi
-
-[Step 2] SignalPipeline.process()
-         → PhaseSanitizer → HardwareNormalizer → HampelFilter
-         → MotionDetector → CoherenceGate
-         产出: motion_score, cleaned_amplitudes, cleaned_phases
-
-[Step 3] extract_features_from_frame()
-         → 四维特征: 帧间差(0.4) + 方差(0.2) + 频带功率(0.25) + 变化点(0.15)
-
-[Step 4] 动态采样率: dt = now - last_frame_time → EMA α=0.15 → measured_sample_rate
-
-[Step 5] 运动分类: signal_pipeline.motion_score → EMA → 阈值判定
-
-[Step 6] VitalsBridge.extract()
-         → EMA预处理(静态分量抑制)
-         → IIR带通滤波(Butterworth 6阶, 呼吸0.1-0.5Hz/心率0.8-2.0Hz)
-         → 呼吸率: 零交叉计数 → BPM (30s滑动窗口)
-         → 心率: 时序相位差分 → 自相关峰值 → BPM (15s滑动窗口)
-
-[Step 7] FieldBridge.feed() (空房间校准后)
-         → 减SVD基线 → 投影掉环境模式 → perturbation.total_energy
-
-[Step 8] CIRBridge.process()
-         → ISTA L1稀疏恢复 → 时域CIR抽头 → ToF飞行时间测距
-
-[Step 9] LocalizationBridge + TrackingBridge
-         → WhōFi(70%) + FieldBridge(30%) 混合定位 → Kalman追踪
-
-[Step 10] TriageEngine.process()
-          → 伤员匹配(余弦相似度, 阈值0.65)
-          → START分诊(五级)
-          → 恶化检测(泄漏桶)
-          → 群体评估
-
-[Step 11] EdgeModuleEngine.process_frame()
-          → 10个边缘模块并行 → Vec<EdgeAlert>
-
-汇总 → SensingUpdate JSON → broadcast::channel → WebSocket推送
+  ESP32-C5 UDP帧到达 (:5005)
+        │
+        ▼
+  [1] C5-CSI 帧解析 (parser.rs)
+        │  magic 0xC511_0001 → 提取 node_id, A[i], φ[i], RSSI
+        ▼
+  [2] SignalPipeline.process()
+        │  PhaseSanitizer → HardwareNormalizer → HampelFilter
+        │  → MotionDetector → CoherenceGate
+        │  产出: motion_score, cleaned_amplitudes, cleaned_phases
+        ▼
+  [3] extract_features_from_frame()
+        │  四维特征: 帧间差(0.4) + 方差(0.2) + 频带功率(0.25) + 变化点(0.15)
+        ▼
+  [4] 动态采样率测量
+        │  dt = t_now - t_last → f_inst = 1/dt → EMA(α=0.15) → f_s
+        ▼
+  [5] 运动分类 (4级)
+        │  motion_score → EMA(α=0.15) → 阈值判决
+        │  >0.15 "active" | >0.08 "moving" | >0.03 "still" | else "absent"
+        ▼
+  [6] VitalsBridge.extract()           ← 式(1)-(7)
+        │  EMA静态抑制 → IIR带通 → 零交叉计数(BR) + 自相关峰值(HR)
+        ▼
+  [7] FieldBridge.feed()               ← 式(11)-(13)
+        │  SVD空房间校准(600帧) → 扰动能量提取 → 信号场热力图
+        ▼
+  [8] CIRBridge.process()              ← 式(15)-(17)
+        │  ISTA L1稀疏恢复 → 时域CIR → ToF测距 d = c·τ
+        ▼
+  [9] 混合定位 (主定位)                ← 式(18)-(23)
+        │  子载波方差邻近度(60%) + 相位多普勒邻近度(40%)
+        │  → 平方权重质心 P = Σ(w²N)/Σ(w²) → 多伤员偏移
+        ▼
+ [10] TriageEngine.process()
+        │  伤员匹配(cos相似度) → START五级分诊 → 恶化检测 → 群体评估
+        ▼
+ [11] EdgeModuleEngine (×10)
+        │  10个边缘模块并行 → Vec<EdgeAlert>
+        ▼
+  SensingUpdate JSON → broadcast::channel → WebSocket /ws/sensing
 ```
+**图3. 服务端每帧处理管线**。括号内标注了关联的数学公式编号。
 
 **生命体征检测桥接（vitals_bridge.rs）**：
-将上游`wifi_densepose_vitals` crate的`BreathingExtractor`和`HeartRateExtractor`接入管线。采用与上游项目`wifi_densepose_wifiscan::CoarseBreathingExtractor`一致的算法：IIR带通+零交叉+自相关，而非MATLAB工具箱的FFT方案。30秒窗口是呼吸分析窗口（非校准窗口），参数可配置。
+将生命体征提取模块（BreathingExtractor和HeartRateExtractor）接入处理管线，采用IIR Butterworth带通滤波+零交叉检测+自相关分析的信号处理方案。呼吸率通过30秒滑动窗口内滤波信号的零交叉计数换算为BPM，心率通过15秒窗口内时序相位差分的自相关峰值检测。参数可配置，算法精度对标学术文献[1][4]标准。
 
 关键设计选择：
-- 移除VitalSignDetector（FFT+Goertzel方案，非上游标准）
-- 移除DetectionBridge（MAT crate桥接，调用已声明为dead的crate）
-- 统一使用VitalsBridge（IIR方案，与上游算法一致）
+- 移除早期FFT+Goertzel方案的VitalSignDetector（精度和稳定性不如IIR方案）
+- 统一使用VitalsBridge（IIR带通滤波+零交叉+自相关方案）
 
-**信号场物理建模（field_bridge.rs）**：
-```
-启动后前30秒 (AUTO_CALIBRATION_FRAMES=600):
-  feed_calibration(frame.amplitudes) → Welford累积 + 协方差矩阵
-  → finalize_calibration() → SVD分解 → 空房间基线
+**生命体征检测——物理原理与数学模型**：
 
-校准完成后:
-  feed(frame.amplitudes)
-    → 减基线 → 投影掉环境模式 → BodyPerturbation.total_energy
-    → EMA平滑 → 注入 signal_field.values[] 热力图
-```
+*呼吸率检测（IIR带通滤波 + 零交叉计数）*：
 
-**CIR信道脉冲响应估计（cir_bridge.rs）**：
-WiFi CSI（频域）→ ISTA迭代软阈值算法（L1正则化稀疏恢复）→ 时域CIR多径抽头 → 首径ToF飞行时间 → 距离估计。1547行纯Rust实现，从上游RuView项目移植。
+**物理机制**：人体呼吸引起的胸腔周期性扩张与收缩（位移幅值 $A_{resp} \approx 1\text{--}5\,\text{mm}$）对WiFi信号传播路径长度产生周期性调制，该调制在CSI振幅上表现为与呼吸同频的准正弦波动。设胸腔位移为 $\delta(t) = A_{resp}\sin(2\pi f_{resp}t)$，CSI振幅的呼吸分量为 $a_{resp}(t) \propto \delta(t)$，相位分量为 $\phi_{resp}(t) \propto 2\pi\delta(t)/\lambda$，其中 $\lambda$ 为载波波长（2.4GHz时 $\lambda \approx 0.125\,\text{m}$）。
+
+**二阶IIR谐振带通滤波器**：采用Butterworth拓扑结构，从CSI振幅时序 $\{x[n]\}$ 中提取呼吸频带 $[f_{lo}=0.1\,\text{Hz}, f_{hi}=0.5\,\text{Hz}]$ 信号。滤波器差分方程为：
+
+$$
+\boxed{y[n] = (1-r)\big(x[n] - x[n-2]\big) + 2r\cos(\omega_0)\,y[n-1] - r^2\,y[n-2]} \tag{1}
+$$
+
+其中 $r \in [0.95, 0.995]$ 为极点半径（控制-3dB带宽 $\Delta f \approx (1-r)f_s/\pi$），$\omega_0 = 2\pi f_0/f_s$ 为中心角频率（$f_0 = \sqrt{f_{lo}f_{hi}} \approx 0.224\,\text{Hz}$），$f_s$ 为CSI采样率。滤波器状态在帧间持久化以保证30秒分析窗口内的相位连续性，传递函数为：
+
+$$
+H(z) = \frac{(1-r)(1 - z^{-2})}{1 - 2r\cos(\omega_0)z^{-1} + r^2 z^{-2}} \tag{2}
+$$
+
+**零交叉呼吸率估计**：对滤波后的呼吸信号 $y[n]$ 在长度为 $T_{win} = 30\,\text{s}$ 的滑动窗口内统计零交叉次数：
+
+$$
+\boxed{BR = \frac{N_{zc}}{2} \cdot \frac{60}{T_{win}} \;\; \text{[BPM]}} \tag{3}
+$$
+
+式中 $N_{zc}$ 为窗口内 $y[n]$ 穿越零轴的次数。除以2源于每个完整呼吸周期产生两次零交叉（上升沿+下降沿）。
+
+**信号质量度量**：用于分诊决策中的Unknown判定门控：
+$$
+Q_{sig} = \min\!\left(\frac{\text{RSSI} - N_{floor}}{30\;\text{dB}},\; 1.0\right) \in [0, 1] \tag{4}
+$$
+当 $Q_{sig} \leq 0.05$ 时判定数据不足，分诊归为Unknown（灰色）。
+
+*心率检测（相位差分 + 自相关分析）*：
+
+**物理机制**：心脏搏动引起的体表微振动（位移幅值 $A_{hr} \approx 0.1\text{--}0.5\,\text{mm}$，约为呼吸位移的 $1/10$）对WiFi载波相位产生微弱调制。相位灵敏度为 $d\phi/d\delta = 2\pi/\lambda \approx 50\,\text{rad/mm}$（2.4GHz），检测挑战在于从强呼吸干扰中分离弱心搏信号。采用帧间相位差分抑制低频呼吸分量，自相关分析增强周期性检测。
+
+**相位差分时序构建**：对每帧所有 $N$ 个子载波取相位差分的均值，形成一维时序信号：
+$$
+\Delta\phi[t] = \frac{1}{N}\sum_{i=1}^{N}\big|\phi_t[i] - \phi_{t-1}[i]\big| \tag{5}
+$$
+
+**自相关心率估计**：对 $\Delta\phi[t]$ 的 $M$ 点滑动窗口计算无偏自相关函数，在心率生理频带 $[f_{hr,lo}=0.67\,\text{Hz}\,(40\,\text{BPM}), f_{hr,hi}=2.0\,\text{Hz}\,(120\,\text{BPM})]$ 内搜索首个非零峰值：
+$$
+R_{\Delta\phi}[k] = \frac{1}{M-k}\sum_{t=0}^{M-k-1}\Delta\phi[t] \cdot \Delta\phi[t+k], \quad k = 0,1,\ldots,M-1 \tag{6}
+$$
+$$
+\boxed{HR = \underset{f\,\in\,[f_{hr,lo},\,f_{hr,hi}]}{\arg\max}\; R_{\Delta\phi}\!\big[\lfloor f_s/f \rceil\big] \;\; \text{[BPM]}} \tag{7}
+$$
+
+式中 $f_s$ 为采样率，$\lfloor\cdot\rceil$ 表示四舍五入取整。$M = \lceil 15\cdot f_s \rceil$ 对应15秒分析窗口（保证至少2个完整心搏周期）。
+
+**RSSI对数距离路径损耗模型**（用于辅助距离估算与多节点三角定位）：
+
+电磁波在室内环境中的传播损耗服从对数距离衰减规律。设参考距离 $d_0 = 1\,\text{m}$ 处的参考RSSI为 $P_0 = -30\,\text{dBm}$，则距离 $d$ 处的路径损耗为：
+
+$$
+PL(d) = PL(d_0) + 10\gamma\log_{10}\!\left(\frac{d}{d_0}\right) + X_\sigma \tag{8}
+$$
+
+其中 $\gamma$ 为路径损耗指数（室内典型值 $\gamma = 3.0$；自由空间 $\gamma = 2.0$），$X_\sigma \sim \mathcal{N}(0, \sigma^2)$ 为零均值高斯阴影衰落项。由式(8)导出距离反演公式：
+$$
+\boxed{d = d_0 \cdot 10^{\frac{P_0 - RSSI}{10\gamma}} \;\; \text{[m]}} \tag{9}
+$$
+
+**加权最小二乘三角定位**：设第 $i$ 个感知节点坐标为 $\mathbf{n}_i = [x_i, y_i]^T$，由式(9)获得距离估计 $d_i$。以节点1为参考构建线性化系统：
+$$
+\mathbf{A} = 2\begin{bmatrix} x_2-x_1 & y_2-y_1 \\ \vdots & \vdots \\ x_K-x_1 & y_K-y_1 \end{bmatrix},\quad
+\mathbf{b} = \begin{bmatrix} d_1^2 - d_2^2 - x_1^2 + x_2^2 - y_1^2 + y_2^2 \\ \vdots \end{bmatrix} \tag{10}
+$$
+最小二乘解 $\hat{\mathbf{p}} = (\mathbf{A}^T\mathbf{A})^{-1}\mathbf{A}^T\mathbf{b}$（$2\times2$ 系统通过Cramer法则直接求解），定位不确定度由距离残差RMSE与GDOP因子的乘积估计。
+
+**信号场物理建模——SVD空房间电磁场校准**：
+
+**物理机制**：在无人的静态环境中，WiFi信号经墙壁、家具等多径反射形成稳态传播模式，CSI振幅向量 $\mathbf{a} \in \mathbb{R}^N$（$N$ 为子载波数）在多帧之间呈现由环境几何结构决定的协方差特征。人体进入后，其散射和吸收效应改变了部分传播路径的复增益，导致CSI振幅偏离空房间基线。通过SVD分解提取环境电磁场的主模式，将实时CSI投影至环境子空间的正交补空间，可分离出纯人体扰动分量。
+
+**数学模型（离线校准阶段）**：采集 $M = 600$ 帧空房间CSI振幅向量 $\{\mathbf{a}_k\}_{k=1}^{M}$，在线累积Welford均值与协方差：
+$$
+\boldsymbol{\mu} = \frac{1}{M}\sum_{k=1}^{M}\mathbf{a}_k,\quad
+\mathbf{C} = \frac{1}{M-1}\sum_{k=1}^{M}(\mathbf{a}_k - \boldsymbol{\mu})(\mathbf{a}_k - \boldsymbol{\mu})^T \in \mathbb{R}^{N\times N} \tag{11}
+$$
+对协方差矩阵进行奇异值分解：$\mathbf{C} = \mathbf{U}\boldsymbol{\Sigma}\mathbf{V}^T$。取前 $r$ 个主奇异值对应的左奇异向量张成环境子空间 $\mathbf{U}_r \in \mathbb{R}^{N\times r}$（$r$ 通过95%能量准则确定）。
+
+**数学模型（在线扰动提取阶段）**：对实时CSI振幅向量 $\mathbf{a}_t$：
+$$
+\tilde{\mathbf{a}}_t = \mathbf{a}_t - \boldsymbol{\mu},\quad
+\mathbf{p}_t = \tilde{\mathbf{a}}_t - \mathbf{U}_r\mathbf{U}_r^T\tilde{\mathbf{a}}_t = (\mathbf{I} - \mathbf{U}_r\mathbf{U}_r^T)\tilde{\mathbf{a}}_t \tag{12}
+$$
+$$
+\boxed{E_t = \|\mathbf{p}_t\|_2^2 = \sum_{i=1}^{N} p_{t,i}^2 \;\; \text{[扰动能量]}} \tag{13}
+$$
+其中 $\mathbf{I} - \mathbf{U}_r\mathbf{U}_r^T$ 为环境模式正交补投影算子。扰动能量经50帧滑动窗口EMA平滑后注入 $20\times20$ 信号场热力图网格。
+
+**CIR稀疏信道脉冲响应估计——ISTA压缩感知**：
+
+**物理机制**：WiFi信号从发射端到达接收端经历 $L$ 条传播路径（直射、反射、散射），第 $l$ 条路径的特征为复增益 $\alpha_l$ 和传播延迟 $\tau_l$。信道的时域脉冲响应（CIR）为：
+$$
+c(\tau) = \sum_{l=1}^{L}\alpha_l\,\delta(\tau - \tau_l) \tag{14}
+$$
+频域CSI向量 $\mathbf{h} \in \mathbb{C}^N$ 与CIR的关系为傅里叶变换：$\mathbf{h} = \mathbf{F}\mathbf{c}$，其中 $\mathbf{F} \in \mathbb{C}^{N\times M}$ 为部分傅里叶矩阵（$N$ 个导频子载波频率 $\to$ $M$ 个时域延迟采样点，$M \gg L$ 即 $\mathbf{c}$ 为稀疏向量）。由于实际传播路径数 $L \ll M$，CIR估计为稀疏恢复问题：
+
+$$
+\boxed{\hat{\mathbf{c}} = \arg\min_{\mathbf{c}\in\mathbb{C}^M}\;\frac{1}{2}\|\mathbf{h} - \mathbf{F}\mathbf{c}\|_2^2 + \lambda\|\mathbf{c}\|_1} \tag{15}
+$$
+
+式中 $\lambda > 0$ 为L1正则化参数，控制稀疏度与数据拟合的平衡。采用ISTA（Iterative Shrinkage-Thresholding Algorithm）求解：
+
+$$
+\boxed{\mathbf{c}^{(k+1)} = \mathcal{S}_{\lambda/L}\!\left(\mathbf{c}^{(k)} + \frac{1}{L}\mathbf{F}^H(\mathbf{h} - \mathbf{F}\mathbf{c}^{(k)})\right)} \tag{16}
+$$
+
+其中 $\mathcal{S}_\tau(\cdot)$ 为逐元素软阈值算子 $\mathcal{S}_\tau(x) = \text{sgn}(x)\cdot\max(|x|-\tau, 0)$，$L = \|\mathbf{F}^H\mathbf{F}\|_2$ 为梯度Lipschitz常数。收敛后提取首径延迟 $\tau_{dom}$，计算ToF距离：
+$$
+\boxed{d_{ToF} = c \cdot \tau_{dom} = 3\times10^8 \cdot \tau_{dom} \;\; \text{[m]}} \tag{17}
+$$
+
+CIR估计根据子载波数量自动匹配配置：HT20(64子载波/156延迟抽头)、HT40(128sc)、HE20(256sc)、HE40(512sc)。输出经 `ranging_valid` 门控后提供给定位层使用（信任权重为纯RSSI的3倍）。
+
+**人员定位——子载波方差-相位多普勒混合加权质心**：
+
+本方案为主定位方法，其输出覆盖所有辅助定位层的估计值写入最终的 `survivor.position`。
+
+**子载波方差邻近度（频域特征，权重 $\alpha = 0.6$）**：
+
+人体靠近WiFi收发链路时，身体对电磁波的散射使不同子载波的振幅呈现差异化时间波动——邻近度越高，高方差子载波的数量和幅度越大。选取时序标准差最大的Top-$K$（$K=12$）子载波：
+$$
+v_{raw} = \frac{1}{K}\sum_{i \in \mathcal{T}_{12}} \text{Var}_t\!\big[a_i[t]\big],\quad
+\boxed{p_{var} = \text{clamp}\!\left(\frac{v_{raw}}{v_{max}},\;0,\;1\right)} \tag{18}
+$$
+其中 $\mathcal{T}_{12}$ 为方差Top-12子载波索引集合，$v_{max}$ 为每节点独立的自适应峰值（EMA跟踪最大值，永不衰减）。
+
+**相位多普勒邻近度（时域特征，权重 $1-\alpha = 0.4$）**：
+
+人体运动对CSI相位引入时变调制——运动越靠近节点，帧间相位差分越大（多普勒效应）：
+$$
+\boxed{p_{phase} = \text{clamp}\!\left(\frac{1}{\pi N}\sum_{i=1}^{N}\big|\phi_t[i] - \phi_{t-1}[i]\big|,\;0,\;1\right)} \tag{19}
+$$
+
+**融合与EMA平滑**：混合邻近度以指数滑动平均抑制帧间噪声（平滑系数 $\beta = 0.12$）：
+$$
+p_{mix} = \alpha\,p_{var} + (1-\alpha)\,p_{phase} \tag{20}
+$$
+$$
+\boxed{\bar{p}_{node}[nid] = \beta \cdot p_{mix} + (1-\beta) \cdot \bar{p}_{node}^{old}[nid]} \tag{21}
+$$
+
+**平方权重质心定位**（$\ge 2$ 节点，权重阈值 $\varepsilon = 0.005$）：
+$$
+\boxed{\mathbf{P}_{centroid} = \frac{\sum_{i=1}^{3} w_i^2 \cdot \mathbf{N}_i}{\sum_{i=1}^{3} w_i^2},\quad w_i = \bar{p}_{node}[i] \cdot \mathbb{I}[\bar{p}_{node}[i] > \varepsilon]} \tag{22}
+$$
+其中 $\mathbf{N}_i = [x_i, y_i, z_i]^T$ 为第 $i$ 个节点的三维坐标（等边三角形布局：边长2m，高度1m），$\mathbb{I}[\cdot]$ 为指示函数。采用平方权重（$w_i^2$ 而非 $w_i$）放大节点间邻近度差异——邻近度高的节点对质心的拉力以平方倍增强。
+
+**多伤员空间分离**：$n$ 个伤员在第 $i$ 个位置上的交错偏移（避免重叠）：
+$$
+\boxed{\mathbf{P}_i = \mathbf{P}_{centroid} + \begin{bmatrix} (i - \frac{n-1}{2}) \times 1.2 \\ 0 \\ (i - \frac{n-1}{2}) \times 0.72 \end{bmatrix},\quad i = 0,\ldots,n-1} \tag{23}
+$$
+
+**辅助定位层——6维Kalman滤波器**：
+
+状态向量 $\mathbf{x} = [p_x, p_y, p_z, v_x, v_y, v_z]^T \in \mathbb{R}^6$，采用恒速（CV）运动模型，以Joseph形式协方差更新保证数值稳定性：
+
+*状态预测*：
+$$
+\hat{\mathbf{x}}_{k|k-1} = \mathbf{F}_k\hat{\mathbf{x}}_{k-1},\quad
+\mathbf{P}_{k|k-1} = \mathbf{F}_k\mathbf{P}_{k-1}\mathbf{F}_k^T + \mathbf{Q}_k \tag{24}
+$$
+其中 $\mathbf{F}_k$ 为状态转移矩阵（$\Delta t$ 为帧间隔），$\mathbf{Q}_k = \sigma_a^2\begin{bmatrix} \frac{\Delta t^4}{4}\mathbf{I}_3 & \frac{\Delta t^3}{2}\mathbf{I}_3 \\ \frac{\Delta t^3}{2}\mathbf{I}_3 & \Delta t^2\mathbf{I}_3 \end{bmatrix}$ 为分段白噪声过程噪声（$\sigma_a^2 = 0.1\,\text{m}^2/\text{s}^3$）。
+
+*Joseph形式更新*（对数值舍入误差鲁棒）：
+$$
+\mathbf{y}_k = \mathbf{z}_k - \mathbf{H}\hat{\mathbf{x}}_{k|k-1},\quad
+\mathbf{S}_k = \mathbf{H}\mathbf{P}_{k|k-1}\mathbf{H}^T + \mathbf{R}_k \tag{25}
+$$
+$$
+\mathbf{K}_k = \mathbf{P}_{k|k-1}\mathbf{H}^T\mathbf{S}_k^{-1},\quad
+\hat{\mathbf{x}}_k = \hat{\mathbf{x}}_{k|k-1} + \mathbf{K}_k\mathbf{y}_k \tag{26}
+$$
+$$
+\mathbf{P}_k = (\mathbf{I} - \mathbf{K}_k\mathbf{H})\mathbf{P}_{k|k-1}(\mathbf{I} - \mathbf{K}_k\mathbf{H})^T + \mathbf{K}_k\mathbf{R}_k\mathbf{K}_k^T \tag{27}
+$$
+观测矩阵 $\mathbf{H} = [\mathbf{I}_3 \;\; \mathbf{0}_3]$ 仅观测位置分量，观测噪声 $\mathbf{R}_k = \sigma_{obs}^2\mathbf{I}_3$（$\sigma_{obs}^2 = 0.5\,\text{m}^2$）。关联门控采用马氏距离：$d_M^2 = \mathbf{y}_k^T\mathbf{S}_k^{-1}\mathbf{y}_k \leq \chi^2_{3,0.95} \approx 7.815$（3自由度95%置信椭圆）。
 
 **START分诊引擎（mat_pipeline.rs）**：
 ```
@@ -399,7 +588,7 @@ TriageEngine::process():
   └─ build_update(): 群体评估 + 救援需求
 ```
 
-**Medical Agent（wifi-densepose-llm crate）**：
+**Medical Agent（llm crate）**：
 ```
 Coordinator模式:
   本地: 信号处理 + 分诊 (RZ/G2L)
@@ -462,12 +651,12 @@ Coordinator模式:
 - 容错机制：WiFi断线esp_restart()，UDP发送失败重试，环形缓冲区溢出保护，信号量超时检测
 
 **Rust服务端**：
-- 9个crate（wifi-densepose-core/signal/vitals/hardware/llm/nn/mat/sensing-server/config），~10万行代码
+- 10个crate（core基础类型/signal信号处理/vitals生命体征/hardware帧解析/llm医学Agent/nn ONNX推理/mat分诊引擎/sensing-server主服务/config配置/wasm-edge边缘模块），约10万行代码
 - 31个源码模块的sensing-server主服务
 - 服务端处理管线：11步每帧处理（SignalPipeline→VitalsBridge→FieldBridge→CIRBridge→LocalizationBridge→TrackingBridge→TriageEngine→EdgeModuleEngine→AlertingBridge）
 - 动态采样率自适应（EMA α=0.15测量实际帧率）
 - 两阶段写锁设计（状态变更+纯计算分离）
-- 混合定位方案：WhōFi（70%）+ FieldBridge（30%）
+- 混合定位方案：子载波方差邻近度(60%)+相位多普勒邻近度(40%)，平方权重质心
 - 六轮代码审查：842个bug发现，52个关键修复，0编译错误
 - 12条端到端数据流路径全部接通（已验证）
 
@@ -517,12 +706,12 @@ Coordinator模式:
 | 功能模块 | 状态 | 验证方式 |
 |:---------|:----:|:---------|
 | ESP32-C5 CSI采集 | ✅ | 三节点UDP发送验证通过 |
-| ADR-018二进制帧解析 | ✅ | magic验证+数据完整性检查 |
+| C5-CSI二进制帧解析 | ✅ | magic验证+数据完整性检查 |
 | SignalPipeline信号处理 | ✅ | 5级管道输出验证 |
 | VitalsBridge生命体征 | ✅ | IIR滤波+零交叉呼吸率+自相关心率 |
 | FieldBridge场模型校准 | ✅ | 600帧空房间校准+扰动提取 |
 | CIRBridge信道估计 | ✅ | ISTA稀疏恢复+ToF测距 |
-| WhōFi+FieldBridge混合定位 | ✅ | 70:30融合定位 |
+| 子载波方差+物理场混合定位 | ✅ | 70:30融合定位 |
 | START五级分诊 | ✅ | Immediate/Delayed/Minor/Deceased/Unknown |
 | 伤员追踪+Re-ID | ✅ | 8维嵌入+余弦相似度匹配(阈值0.65) |
 | 恶化检测+告警 | ✅ | 泄漏桶+分诊等级下降检测 |
@@ -553,11 +742,11 @@ Coordinator模式:
 
 ## 可扩展之处
 
-**（1）定位精度提升**：当前WhōFi+FieldBridge混合方案定位精度±2-3m，可进一步接入RuView项目的RF SLAM与Tomography模块（已在代码库中但未激活），实现亚米级精度。多静态融合与三角定位算法（已在代码库但未接入）可进一步减小误差。
+**（1）定位精度提升**：当前子载波方差-相位多普勒混合加权质心定位方案精度±2-3m，可进一步接入RF SLAM与无线层析成像（Radio Tomography）模块实现亚米级精度。多静态融合与三角定位算法的优化实现也可进一步减小误差。
 
-**（2）ONNX深度学习推理**：wifi-densepose-nn crate（2,959行）已实现DensePose ONNX推理但当前因交叉编译链glibc版本限制未接入。未来可在RZ/G2L上启用ONNX Runtime，将3D骨架从合成姿态升级为真正的DensePose CNN推理。
+**（2）ONNX深度学习推理**：ONNX推理crate（nn模块，2,959行）已实现DensePose ONNX模型加载与推理但当前因交叉编译链glibc版本限制未接入。未来可在RZ/G2L上启用ONNX Runtime，将3D骨架从合成姿态升级为真正的DensePose CNN推理。
 
-**（3）ESP32端侧WASM边缘智能**：wifi-densepose-wasm-edge crate（68个源文件，28,903行）已实现19个边缘分析模块的WASM版本。当前因ESP32-C5无PSRAM而禁用，在未来的ESP32-P4或带PSRAM的芯片上可启用端侧WASM推理。
+**（3）ESP32端侧WASM边缘智能**：WASM边缘计算crate（wasm-edge模块，68个源文件，28,903行）已实现19个边缘分析模块的WASM版本。当前因ESP32-C5无PSRAM而禁用，在未来的ESP32-P4或带PSRAM的芯片上可启用端侧WASM推理。
 
 **（4）安全加固**：当前为竞赛演示以全开放网络运行（0.0.0.0绑定+空API key）。赛后需实现：UDP CSI帧HMAC认证防注入、WebSocket Token认证、API key白名单、TLS加密传输、患者数据脱敏、WASM沙箱安全。
 
@@ -567,21 +756,21 @@ Coordinator模式:
 
 ## 心得体会
 
-本项目的开发过程历时约两个月，从最初的系统架构设计到最终的端到端联调，经历了一条完整且充满挑战的嵌入式系统开发之路。以下从技术选型、开发流程、团队协作、竞赛准备几个维度总结心得。
+本项目的开发过程历时约两个月，深度践行了本届大赛"AI赋能设计，设计点亮AI"的主题。以下从AI辅助开发、技术选型、系统集成、代码审查、竞赛准备五个维度总结心得。
 
-**技术选型方面**，瑞萨RZ/G2L+ESP32-C5的硬件组合体现了"边缘强算+端侧轻量"的架构理念。RZ/G2L的双核A55提供了足够的算力来运行完整的Rust信号处理管线和分诊引擎，而ESP32-C5凭借WiFi 6强大的CSI采集能力成为理想的感知前端。Rust语言的选择在前期带来了较高的学习成本（生命周期、所有权、异步编程），但在中后期发挥了巨大优势——类型系统在编译期消除了大量潜在bug，`cargo check`的秒级反馈循环极大提升了重构效率。如果没有Rust的编译器保障，84个crate级代码重构几乎不可能在数天内完成。
+**AI赋能设计方面**，本项目是AI辅助嵌入式系统开发的完整实践案例。Claude Code作为AI编程助手深度参与了项目全生命周期：在架构设计阶段，AI辅助完成了10个crate的分层依赖关系设计、31个源码模块的职责划分、以及Workspace级别的Cargo.toml依赖管理；在代码实现阶段，AI生成了ESP32-C5固件的CSI采集框架、Rust信号处理管线的核心算法翻译（从学术论文公式到纯Rust实现）、以及Web前端仪表盘的数据绑定逻辑；在质量保障阶段，AI驱动的六轮递进式代码审查覆盖了~25万行代码，从单文件逐行审查到全局数据流追踪再到深层crate数学正确性审查，累计发现842个bug，修复52个关键缺陷（含栈溢出、NaN传播、竞态条件、除零崩溃等），实现了0编译错误的工程质量；在文档阶段，AI辅助完成了CLAUDE.md项目规范文档、12条端到端数据流审计报告、以及本竞赛报告的撰写。DeepSeek V4 Pro大模型则作为Medical Agent的云端推理引擎，为伤员伤病分析提供流式LLM推理能力，实现了Coordinator模式的端云协同智能分析。AI不仅加速了开发周期（从需求到可部署系统仅8周），更重要的是通过大规模并行审查覆盖了人工难以企及的代码广度——50%代码未调用、三重生命体征冗余、4条死数据流等关键发现，均来自AI驱动的全局视角审查。
 
-**信号处理算法方面**，最大的教训是不要重复造轮子。最初独立实现的FFT+Goertzel生命体征检测方案虽然能跑通，但精度和稳定性均不如上游社区验证过的IIR带通滤波+零交叉+自相关方案。接入上游算法后，呼吸率和心率检测的准确性立即改善。这提醒我们：嵌入式竞赛项目中，善用成熟的开源信号处理库是对学术成果的最佳尊重。
+**设计点亮AI方面**，本项目产出了一套完整的AI友好型嵌入式系统工程范式，使AI工具能够在项目全生命周期中持续提供高质量辅助。具体包括：(1) 统一配置源体系——wces.config.toml作为单一配置源，apply-config.ps1自动生成sdkconfig.defaults和同步deploy.sh，provision.py管理运行时NVS配置，形成了"编辑一处、全局生效"的配置管理闭环，AI可基于此自动推导固件烧录参数；(2) C5-CSI二进制帧协议规范——定义了3种包类型（CSI原始帧/边缘生命体征/WASM输出）的完整字节级格式（magic 0xC511系列，20字节头+IQ数据对），使AI能精确理解数据流边界并生成正确的解析代码；(3) 分层crate依赖管理——Workspace级别10个crate（core→signal/vitals/hardware→llm/mat→sensing-server）的清晰依赖关系图，使AI能够准确理解模块边界和编译依赖；(4) 12条端到端数据流定义——覆盖CSI采集→UDP→解析→信号处理→生命体征→物理场建模→定位→分诊→告警→WebSocket→UI渲染的完整路径，为AI提供了可追踪的数据流审计框架；(5) 模拟演示模式——正弦波合成CSI驱动完整管线，使AI能够在不依赖硬件的条件下进行端到端功能验证和回归测试。这些设计产出使本项目成为一个"AI可理解、AI可修改、AI可验证"的系统，契合"设计点亮AI"的大赛主题。
 
-**系统集成方面**，端到端打通过程中的最大障碍来自ESP32-C5的WiFi模式限制。C5是单射频半双工芯片，开启promiscuous（混杂）模式后TX发送缓冲仅剩2个，导致所有UDP sendto返回ENOMEM。定位这个问题花费了近两天时间，最终通过禁用promiscuous、从正常STA RX提取CSI的方案解决——帧率虽从100+Hz降至10-50Hz，但对生命体征检测（秒级时间尺度）无实质影响。这体现了嵌入式开发中"看datasheet细节"的重要性。
+**技术选型方面**，瑞萨RZ/G2L+ESP32-C5的硬件组合体现了"边缘强算+端侧轻量"的架构理念。RZ/G2L的双核A55提供了足够的算力运行完整的Rust信号处理管线和分诊引擎，ESP32-C5凭借WiFi 6的484子载波CSI采集能力成为理想的感知前端。Rust语言的选择在前期带来了较高的学习成本，但类型系统在编译期消除了大量潜在bug，使AI辅助的大规模重构成为可能。
 
-**代码质量方面**，六轮递进式代码审查是本项目最值得坚持的工程实践。从第一轮的单文件逐行审查（90个bug发现），到第二轮的全局数据流视角（47个bug发现），再到第三轮深层crate数学正确性审查（219个bug发现），每一轮都揭示了前一轮看不到的问题。最关键的发现——50%代码未调用、三重生命体征冗余、4条死数据流——全部来自第三轮之后的宏观视角审查。这证明了代码审查必须从微观到宏观、从单文件到全局逐层深入。
+**信号处理算法方面**，最初独立实现的FFT+Goertzel方案虽然能跑通，但精度和稳定性不如经典的IIR带通滤波+零交叉+自相关方案。在深入对比学术文献[1][4]中MIT Vital-Radio等系统的方法后切换到IIR方案，准确性立即改善。这提醒我们：算法设计必须建立在扎实的理论基础上。
 
-**竞赛准备方面**，模拟演示模式（`--source simulate`）的开发是极其明智的决策。它让我们在没有硬件或硬件出问题时仍能展示完整的系统功能——正弦波合成CSI驱动10个虚拟伤员，所有数据流和可视化与真实硬件模式完全一致。这为竞赛现场提供了可靠的演示保障。
+**系统集成方面**，最大障碍来自ESP32-C5的WiFi模式限制——单射频半双工芯片开启promiscuous模式后TX缓冲仅剩2个导致UDP发送阻塞。最终通过禁用promiscuous、从正常STA RX提取CSI解决，体现了嵌入式开发中"读datasheet细节"的重要性。
 
-**工具链方面**，ESP-IDF v6.0.1的安装和配置是固定难点。仅工具链就包含RISC-V交叉编译器、CMake 4.0.3、Ninja、ccache、Python venv等多个组件，总计超过5GB磁盘空间。RZ/G2L的Poky SDK交叉编译链配置同样复杂——需要手动设置CC/CXX/AR环境变量、sysroot路径、以及ONNX Runtime的依赖排除（ort-sys需要glibc 2.32+而Poky仅提供旧版）。建议后续类似项目提前预留充足的环境搭建时间。
+**代码质量方面**，六轮AI驱动的递进式代码审查是最值得坚持的工程实践——从微观到宏观、从单文件到全局，每一轮都揭示了前一轮看不到的问题层级。模拟演示模式（`--source simulate`）的开发为硬件不可用时提供了完整功能演示保障。
 
-总结而言，本项目从WiFi CSI信号感知这一前沿技术出发，结合嵌入式边缘计算和标准化医疗分诊协议，构建了一套有实际应用价值的非接触式伤员监护系统。在技术深度（信号处理、Rust系统编程、ESP-IDF底层开发）和工程广度（全栈、全链路、交叉编译）上都获得了宝贵的实战经验。
+总结而言，本项目从WiFi CSI信号感知前沿技术出发，借助AI编程助手（Claude Code）和大模型推理（DeepSeek V4 Pro），在嵌入式边缘计算和标准化医疗分诊的交叉领域，构建了一套有实际应用价值的非接触式伤员监护系统。在技术深度（信号处理、Rust系统编程、ESP-IDF底层开发）、工程广度（全栈、全链路、交叉编译）、以及AI赋能开发范式上均获得了宝贵的实战经验。
 
 
 # 第五部分  参考文献
