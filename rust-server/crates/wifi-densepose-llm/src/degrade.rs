@@ -29,6 +29,22 @@ impl Default for DegradationConfig {
     }
 }
 
+/// Manages the degradation ladder state.
+///
+/// TODO(M-12): State Persistence. All mutable state below
+/// (`network_reachable`, `circuit_breaker_open`, `consecutive_failures`,
+/// `cooldowns`, `analysis_cache`) lives only in process memory. On restart
+/// the manager resets to defaults — `network_reachable = true`, no failures,
+/// empty cache — which can cause a thundering herd of L0FullLLM requests
+/// immediately after a restart even if the network was previously down.
+///
+/// To fix: periodically snapshot this state (e.g. via `serde` + sled DB or
+/// a small TOML/JSON sidecar) and restore it in `new()` / `with_config()`.
+/// The `cooldowns` HashMap uses `Instant` (monotonic, non-serializable), so
+/// persistence requires converting to `SystemTime` or a relative
+/// `Duration::sincesnapshot`. The `analysis_cache` is already serde-derivable
+/// if `AnalysisResult` is. At minimum, persist `network_reachable` and
+/// `circuit_breaker_open` to avoid post-restart request storms.
 pub struct DegradationManager {
     config: DegradationConfig,
     pub(crate) network_reachable: bool,

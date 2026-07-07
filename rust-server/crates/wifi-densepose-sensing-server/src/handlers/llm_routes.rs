@@ -6,6 +6,7 @@ use axum::response::Json;
 use crate::SharedState;
 
 use std::sync::Arc;
+use std::time::Duration;
 use wifi_densepose_llm::{
     LlmAnalysisEngine, PatientRecord,
     AgentVitalSnapshot, StructuredContext, TriggerSource, TrendSummary,
@@ -195,9 +196,37 @@ pub(crate) async fn agent_analyze(
             .as_millis() as u64,
     };
 
-    let mut agent_guard = agent.lock().await;
-    let result = agent_guard.analyze(ctx).await;
-    drop(agent_guard);
+    // M-12: spawn the analysis into its own task so the tokio::sync::Mutex
+    // is held in a separate task rather than across an await in the HTTP
+    // handler. A 30s timeout prevents a hung LLM from blocking the handler
+    // indefinitely (same pattern as udp_receiver.rs lines 488-512).
+    //
+    // Trade-off: if the timeout fires the spawned task continues in the
+    // background until analyze() completes, so the Mutex may remain held
+    // past the handler's response. This is acceptable — the LLM call will
+    // eventually finish and release the lock.
+    let join_handle = tokio::spawn(async move {
+        let mut agent_guard = agent.lock().await;
+        agent_guard.analyze(ctx).await
+    });
+    let result = match tokio::time::timeout(
+        Duration::from_secs(30),
+        join_handle,
+    ).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(_join_err)) => {
+            return Json(serde_json::json!({
+                "status": "error",
+                "error": "agent task panicked"
+            }));
+        }
+        Err(_elapsed) => {
+            return Json(serde_json::json!({
+                "status": "error",
+                "error": "agent analysis timed out (30s)"
+            }));
+        }
+    };
 
     Json(serde_json::json!({
         "status": "ok",

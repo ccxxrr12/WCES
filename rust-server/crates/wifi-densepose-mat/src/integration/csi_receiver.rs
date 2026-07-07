@@ -874,12 +874,34 @@ impl CsiParser {
             .parse()
             .map_err(|_| AdapterError::DataFormat("Invalid length value".into()))?;
 
-        // Parse MAC address
+        // Parse MAC address (M-7): previously, malformed MACs were silently
+        // accepted as all-zeros, which could cause incorrect device
+        // identification downstream. Log a warning so operators can detect
+        // bad data; the all-zeros fallback is retained for compatibility.
         let mut tx_mac = [0u8; 6];
         let mac_parts: Vec<&str> = mac_str.split(':').collect();
-        if mac_parts.len() == 6 {
+        if mac_parts.len() != 6 {
+            tracing::warn!(
+                mac = %mac_str,
+                expected_parts = 6,
+                actual_parts = mac_parts.len(),
+                "Malformed MAC address (M-7): expected 6 hex octets separated by ':'. \
+                 Falling back to all-zeros — device identification may be unreliable."
+            );
+        } else {
             for (i, part) in mac_parts.iter().enumerate() {
-                tx_mac[i] = u8::from_str_radix(part, 16).unwrap_or(0);
+                match u8::from_str_radix(part, 16) {
+                    Ok(v) => tx_mac[i] = v,
+                    Err(_) => {
+                        tracing::warn!(
+                            mac = %mac_str,
+                            octet = %part,
+                            index = i,
+                            "Malformed MAC octet (M-7): not valid hex. \
+                             Using 0x00 for this octet."
+                        );
+                    }
+                }
             }
         }
 

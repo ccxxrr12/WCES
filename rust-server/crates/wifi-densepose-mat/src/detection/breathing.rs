@@ -44,8 +44,23 @@ impl CompressedBreathingBuffer {
     }
 
     /// Push one frame of CSI amplitudes (one time step, all subcarriers).
+    ///
+    /// # Errors (H-6)
+    ///
+    /// In production this must not panic on a dimension mismatch — a single
+    /// malformed frame from the CSI pipeline should not bring down the whole
+    /// breathing monitor. Instead we log an error and drop the frame. Callers
+    /// that need hard validation can check `amplitudes.len()` beforehand.
     pub fn push_frame(&mut self, amplitudes: &[f32]) {
-        assert_eq!(amplitudes.len(), self.n_subcarriers);
+        if amplitudes.len() != self.n_subcarriers {
+            tracing::error!(
+                "breathing frame dropped: expected {} subcarriers, got {} (H-6). \
+                 This indicates a CSI pipeline dimension mismatch.",
+                self.n_subcarriers,
+                amplitudes.len()
+            );
+            return;
+        }
         let ts = self.frame_count as u32;
         // Synchronize last_access_ts with current timestamp so that the tier
         // policy's age computation (now_ts - last_access_ts + 1) never wraps to

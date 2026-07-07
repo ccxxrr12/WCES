@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WCES - 方舱生命体征监测系统</title>
-    <!-- Three.js Library -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- Three.js Library (local) -->
+    <script src="lib/three.min.js"></script>
+    <script src="lib/OrbitControls.js"></script>
     <style>
         * {
             margin: 0;
@@ -1063,6 +1063,7 @@
         let autoRotate = true;
         let isWireframe = false;
         let animationTime = 0;
+        let animFrameId = null;
         
         // Skeleton connections (26 points)
         const SKELETON_CONNECTIONS = [
@@ -1385,7 +1386,14 @@
         
         function updateSkeletonPose(pose) {
             if (!skeletonGroup) return;
-            
+
+            // H-5: Guard against incompatible pose point counts.
+            // This skeleton uses a 26-point layout; server poses may use 17-point COCO.
+            // If the supplied pose has fewer than 17 points, fall back to the default pose.
+            if (!pose || pose.length < 17) {
+                pose = getDefaultPose();
+            }
+
             const joints = skeletonGroup.userData.joints;
             const bones = skeletonGroup.userData.bones;
             
@@ -1442,22 +1450,22 @@
         }
         
         function animate() {
-            requestAnimationFrame(animate);
-            
-            if (currentView === 'skeleton') {
+            animFrameId = requestAnimationFrame(animate);
+
+            if (currentView === 'skeleton' && renderer && scene) {
                 animationTime += 0.016;
-                
+
                 // Animate the skeleton
                 animatePose(animationTime);
-                
+
                 // Update controls
                 controls.update();
-                
+
                 // Render
                 renderer.render(scene, camera);
             }
         }
-        
+
         function onWindowResize() {
             const container = document.getElementById('skeletonContainer');
             if (container && camera && renderer) {
@@ -1465,6 +1473,27 @@
                 camera.updateProjectionMatrix();
                 renderer.setSize(container.clientWidth, container.clientHeight);
             }
+        }
+
+        // H-6: Release WebGL resources to avoid leaks on page unload / re-init
+        function dispose3D() {
+            window.removeEventListener('resize', onWindowResize);
+            if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+            if (skeletonGroup) {
+                const ud = skeletonGroup.userData || {};
+                const joints = ud.joints, bones = ud.bones;
+                if (joints) joints.forEach(j => { if (j.geometry) j.geometry.dispose(); if (j.material) j.material.dispose(); });
+                if (bones) bones.forEach(b => { if (b.geometry) b.geometry.dispose(); if (b.material) b.material.dispose(); });
+                if (scene) scene.remove(skeletonGroup);
+                skeletonGroup = null;
+            }
+            if (renderer) { renderer.dispose(); renderer = null; }
+            scene = null; camera = null; controls = null;
+        }
+
+        function cleanup() {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+            dispose3D();
         }
         
         // ==================== View Switching ====================
@@ -1558,12 +1587,12 @@
                                 <div class="survivor-avatar">${escapeHtml(s.id.substring(5, 7))}</div>
                                 <div class="survivor-info">
                                     <h3>${escapeHtml(s.id)}</h3>
-                                    <p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p>
+                                    <p>追踪 ${(s.tracked_seconds!=null ? s.tracked_seconds.toFixed(0) : '--')}s · 节点${escapeHtml(s.node_id)} · ${escapeHtml(s.estimated_age)}</p>
                                 </div>
                             </div>
                             <div style="display: flex; gap: 8px; align-items: center;">
                                 ${s.is_deteriorating ? '<span class="deteriorating-badge">⚠ 恶化</span>' : ''}
-                                <span class="triage-badge ${s.triage_color}">${s.triage}</span>
+                                <span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span>
                             </div>
                         </div>
                         <div class="vitals-row">
@@ -1600,8 +1629,8 @@
                     <div class="alert-item prio${alert.priority} animate-in" style="animation-delay: ${idx * 50}ms">
                         <div class="alert-icon">${alert.priority === 1 ? '🚨' : '⚠️'}</div>
                         <div class="alert-content">
-                            <div class="alert-title">${alert.survivor_id.substring(0, 8)}: ${alert.message}</div>
-                            <div class="alert-time">${alert.time}</div>
+                            <div class="alert-title">${escapeHtml(alert.survivor_id).substring(0, 8)}: ${escapeHtml(alert.message)}</div>
+                            <div class="alert-time">${escapeHtml(alert.time)}</div>
                         </div>
                     </div>
                 `).join('');
@@ -1611,10 +1640,10 @@
             const wasmAlertsList = document.getElementById('wasmAlertsList');
             if (latestData && latestData.wasm_alerts && latestData.wasm_alerts.length > 0) {
                 wasmAlertsList.innerHTML = latestData.wasm_alerts.slice(0, 8).map((alert, idx) => `
-                    <div class="wasm-alert ${alert.severity} animate-in" style="animation-delay: ${idx * 30}ms">
-                        <span class="wasm-module">[${alert.module}]</span>
-                        <span>${alert.event_name}</span>
-                        <span class="wasm-value">${alert.value.toFixed(1)}</span>
+                    <div class="wasm-alert ${escapeHtml(alert.severity)} animate-in" style="animation-delay: ${idx * 30}ms">
+                        <span class="wasm-module">[${escapeHtml(alert.module)}]</span>
+                        <span>${escapeHtml(alert.event_name)}</span>
+                        <span class="wasm-value">${typeof alert.value === 'number' ? alert.value.toFixed(1) : '--'}</span>
                     </div>
                 `).join('');
             } else {
@@ -1647,15 +1676,20 @@
             }
         }
 
+        let wsRetryCount = 0;
+        const WS_MAX_RETRY = 10;
         function connectWebSocket() {
-            ws = new WebSocket(`ws://${location.hostname}:8765/ws/sensing`);
-            
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const port = location.port || '8080';
+            ws = new WebSocket(`${proto}//${location.hostname}:${port}/ws/sensing`);
+
             ws.onopen = () => {
+                wsRetryCount = 0;
                 document.getElementById('statusDot').className = 'status-dot online';
                 document.getElementById('statusText').textContent = '已连接';
                 latestTriage = null;
             };
-            
+
             ws.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
@@ -1666,13 +1700,19 @@
                     console.error('Parse error:', err);
                 }
             };
-            
+
             ws.onclose = () => {
                 document.getElementById('statusDot').className = 'status-dot';
-                document.getElementById('statusText').textContent = '断开 · 5s重连';
-                setTimeout(connectWebSocket, 5000);
+                if (wsRetryCount < WS_MAX_RETRY) {
+                    const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000);
+                    wsRetryCount++;
+                    document.getElementById('statusText').textContent = `断开 · ${delay/1000}s 后重连 (${wsRetryCount}/${WS_MAX_RETRY})`;
+                    setTimeout(connectWebSocket, delay);
+                } else {
+                    document.getElementById('statusText').textContent = '连接失败 · 已达最大重试次数';
+                }
             };
-            
+
             ws.onerror = () => {
                 ws.close();
             };
@@ -1719,6 +1759,7 @@
         setInterval(updateTime, 1000);
         drawMap();
         connectWebSocket();
+        window.addEventListener('beforeunload', cleanup);
     </script>
 </body>
 </html>

@@ -324,6 +324,11 @@ void csi_collector_init(void)
     /* Create mutex to serialize esp_wifi_set_channel() access from timer callback. */
     if (s_wifi_sem == NULL) {
         s_wifi_sem = xSemaphoreCreateMutex();
+        /* M-3 fix: Log if mutex creation failed — channel hopping will be
+         * disabled (gracefully degraded via the s_wifi_sem && checks). */
+        if (s_wifi_sem == NULL) {
+            ESP_LOGE(TAG, "Failed to create WiFi semaphore — channel hopping disabled");
+        }
     }
 
     /* ADR-060: Determine the CSI channel.

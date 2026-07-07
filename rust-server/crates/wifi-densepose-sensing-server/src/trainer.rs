@@ -267,7 +267,10 @@ pub fn estimate_gradient(f: impl Fn(&[f32]) -> f32, params: &[f32], eps: f32) ->
 /// Clip gradients by global L2 norm.
 pub fn clip_gradients(gradients: &mut [f32], max_norm: f32) {
     let norm = gradients.iter().map(|g| g * g).sum::<f32>().sqrt();
-    if norm > max_norm && norm > 0.0 {
+    // Only clip when the norm is finite and exceeds the threshold.
+    // A NaN/Inf norm would otherwise propagate `max_norm / norm = NaN/Inf`
+    // and poison every gradient entry.
+    if norm.is_finite() && norm > max_norm && norm > 0.0 {
         let s = max_norm / norm;
         gradients.iter_mut().for_each(|g| *g *= s);
     }
@@ -427,6 +430,14 @@ pub struct Trainer {
 
 impl Trainer {
     pub fn new(config: TrainerConfig) -> Self {
+        // WARNING: this constructs a Trainer without a graph transformer, so it
+        // falls back to the toy `predict_keypoints` linear probe (for testing
+        // only). Production deployments should use `Trainer::with_transformer`
+        // to get the full CsiToPoseTransformer forward pass.
+        eprintln!(
+            "warn: Trainer::new created without transformer — predict_keypoints \
+             uses a testing-only placeholder; use Trainer::with_transformer for production"
+        );
         let optimizer = SgdOptimizer::new(config.lr, config.momentum, config.weight_decay);
         let scheduler = WarmupCosineScheduler::new(
             config.warmup_epochs, config.lr, config.min_lr, config.epochs,
@@ -676,13 +687,26 @@ impl Trainer {
             let mut grad = estimate_gradient(&loss_fn, &combined, 1e-4);
             clip_gradients(&mut grad, 1.0);
 
+            // Guard against integer underflow: if `grad.len() < t_param_count`
+            // (e.g. gradient estimation returned a truncated vector), the slice
+            // `grad[..t_param_count]` would panic and `grad.len() - t_param_count`
+            // would underflow to usize::MAX. Skip this batch instead.
+            if grad.len() < t_param_count {
+                eprintln!(
+                    "warn: gradient len {} < t_param_count {}; skipping batch update",
+                    grad.len(), t_param_count
+                );
+                continue;
+            }
+
             // Update transformer params
             self.optimizer.step(&mut self.params, &grad[..t_param_count]);
 
             // Update projection head params
+            let proj_grad_len = grad.len() - t_param_count;
             let mut proj_params = proj_flat.clone();
             // Simple SGD for projection head
-            for i in 0..proj_params.len().min(grad.len() - t_param_count) {
+            for i in 0..proj_params.len().min(proj_grad_len) {
                 proj_params[i] -= lr * grad[t_param_count + i];
             }
             let (new_proj, _) = ProjectionHead::unflatten_from(&proj_params, &projection.config);
@@ -757,6 +781,10 @@ impl Trainer {
     }
 
     fn predict_keypoints(params: &[f32], sample: &TrainingSample) -> Vec<(f32, f32, f32)> {
+        // NOTE: For testing only — this is a toy linear probe used by the
+        // non-transformer code path. Production code should use
+        // `Trainer::with_transformer` + `predict_keypoints_transformer`
+        // instead, which runs the full graph transformer forward pass.
         let n_kp = sample.target_keypoints.len().max(17);
         let feats: Vec<f32> = sample.csi_features.iter().flat_map(|v| v.iter().copied()).collect();
         (0..n_kp).map(|k| {

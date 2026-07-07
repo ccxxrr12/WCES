@@ -283,6 +283,16 @@ impl ModelLayer {
         self.weights.iter().enumerate().map(|(r, row)| dot_bias(row, input, self.bias[r])).collect()
     }
     /// Forward using dequantized weights: val = q_val * scale (symmetric).
+    ///
+    /// # Note on bias precision
+    /// The bias term is intentionally kept in f32 (not quantized). Quantizing
+    /// bias to int8 would introduce a constant offset error that, unlike
+    /// weight errors, does NOT average out across the dot-product accumulation
+    /// — it shifts every output by the same amount. For small bias values
+    /// (typical in trained networks) this can dominate the quantization noise.
+    /// A proper int32 accumulator pipeline would dequantize bias as
+    /// `bias_f32 = (bias_int32 * weight_scale * input_scale)`; that is left as
+    /// a future optimization.
     fn forward_quantized(&self, input: &[f32], qrows: &[QuantizedWeights]) -> Vec<f32> {
         let n_out = qrows.len().min(self.bias.len());
         let mut out = vec![0.0f32; n_out];

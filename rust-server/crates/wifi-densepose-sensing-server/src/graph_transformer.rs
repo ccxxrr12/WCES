@@ -80,8 +80,15 @@ impl Linear {
     }
     /// Forward pass: y = Wx + b.
     pub fn forward(&self, input: &[f32]) -> Vec<f32> {
-        assert_eq!(input.len(), self.in_features,
-            "Linear input mismatch: expected {}, got {}", self.in_features, input.len());
+        if input.len() != self.in_features {
+            // Input shape mismatch — return zeros rather than panicking so a
+            // malformed upstream frame doesn't crash the whole server.
+            tracing::warn!(
+                "Linear::forward input mismatch: expected {}, got {}",
+                self.in_features, input.len()
+            );
+            return vec![0.0f32; self.out_features];
+        }
         let mut out = vec![0.0f32; self.out_features];
         for (i, row) in self.weights.iter().enumerate() {
             let mut s = self.bias[i];
@@ -112,7 +119,16 @@ impl Linear {
     /// Restore from a flat slice. Returns (Self, number of f32s consumed).
     pub fn unflatten_from(data: &[f32], in_f: usize, out_f: usize) -> (Self, usize) {
         let n = in_f * out_f + out_f;
-        assert!(data.len() >= n, "unflatten_from: need {n} floats, got {}", data.len());
+        if data.len() < n {
+            // Defensive: return a zero-initialized layer instead of panicking
+            // when the serialized parameter buffer is truncated (e.g. a
+            // corrupted or partial model file).
+            tracing::warn!(
+                "Linear::unflatten_from: need {n} floats, got {}; using zeros",
+                data.len()
+            );
+            return (Self::zeros(in_f, out_f), n);
+        }
         let mut weights = Vec::with_capacity(out_f);
         for r in 0..out_f {
             let start = r * in_f;
@@ -231,8 +247,14 @@ pub struct CrossAttention {
 
 impl CrossAttention {
     pub fn new(d_model: usize, n_heads: usize) -> Self {
-        assert!(d_model % n_heads == 0,
-            "d_model ({d_model}) must be divisible by n_heads ({n_heads})");
+        if n_heads == 0 || d_model % n_heads != 0 {
+            // Defensive: instead of panicking, clamp n_heads to a valid value.
+            // Prefer n_heads=1 (single-head attention) which is always valid.
+            tracing::warn!(
+                "CrossAttention::new: d_model ({d_model}) not divisible by n_heads ({n_heads}); clamping to 1 head"
+            );
+            return Self::new(d_model, 1);
+        }
         let d_k = d_model / n_heads;
         let s = 123u64;
         Self { d_model, n_heads, d_k,
@@ -330,7 +352,15 @@ impl GraphMessagePassing {
     }
     /// node_features [17, in_features] -> [17, out_features].
     pub fn forward(&self, node_features: &[Vec<f32>]) -> Vec<Vec<f32>> {
-        assert_eq!(node_features.len(), 17, "expected 17 nodes, got {}", node_features.len());
+        if node_features.len() != 17 {
+            // Shape mismatch — return empty rather than panicking so a
+            // malformed upstream frame doesn't crash the server.
+            tracing::warn!(
+                "GraphMessagePassing::forward expected 17 nodes, got {}",
+                node_features.len()
+            );
+            return Vec::new();
+        }
         let mut agg = vec![vec![0.0f32; self.in_features]; 17];
         for i in 0..17 { for j in 0..17 {
             let a = self.norm_adj[i][j];
@@ -365,7 +395,12 @@ pub struct GnnStack { pub(crate) layers: Vec<GraphMessagePassing> }
 
 impl GnnStack {
     pub fn new(in_f: usize, out_f: usize, n: usize, g: &BodyGraph) -> Self {
-        assert!(n >= 1);
+        if n == 0 {
+            // Defensive: n=0 would produce an empty stack and break forward
+            // passes. Clamp to at least 1 layer with a warning.
+            tracing::warn!("GnnStack::new: n=0 is invalid, clamping to 1 layer");
+            return Self::new(in_f, out_f, 1, g);
+        }
         let mut layers = vec![GraphMessagePassing::new(in_f, out_f, g)];
         for _ in 1..n { layers.push(GraphMessagePassing::new(out_f, out_f, g)); }
         Self { layers }

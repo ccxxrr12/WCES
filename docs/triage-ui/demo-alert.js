@@ -32,7 +32,7 @@ function tick(dt){
         wasm_alerts:det?[{module:'fall_detect',severity:'critical',event_name:'fall_detected',value:32.4}]:[],pose_keypoints:null,model_status:null,persons:null,estimated_persons:1,tracked_survivors:null,alerts:null
     });
 }
-function loop(t){tick(t?t*0.001:0.05);requestAnimationFrame(loop)}
+function loop(t){if(done)return;tick(t?t*0.001:0.05);requestAnimationFrame(loop)}
 document.getElementById('statusDot').className='status-dot online';
 document.getElementById('statusText').textContent='已连接';
 requestAnimationFrame(loop);

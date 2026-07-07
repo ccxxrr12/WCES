@@ -38,7 +38,11 @@ impl SimpleRng {
     }
     /// Gaussian approximation via Box-Muller (pair, returns first).
     fn next_gaussian(&mut self) -> f32 {
-        let u1 = self.next_f32_unit().max(1e-10);
+        // Clamp u1 away from 0 to avoid catastrophic cancellation in `ln()`.
+        // 1e-6 is large enough to keep `(-2*ln(u1)).sqrt()` finite and
+        // well-conditioned in f32, while being small enough to be
+        // statistically negligible for the Gaussian tail.
+        let u1 = self.next_f32_unit().max(1e-6);
         let u2 = self.next_f32_unit();
         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
     }

@@ -105,15 +105,18 @@ impl NpyReader {
         let raw = &buf[header_end..header_end + total * elem_sz];
         let mut data: Vec<f32> = if is_f64 {
             raw.chunks_exact(8).map(|c| {
-                let v = if is_big { f64::from_be_bytes(c.try_into().unwrap()) }
-                        else { f64::from_le_bytes(c.try_into().unwrap()) };
-                v as f32
-            }).collect()
+                let arr: [u8; 8] = c.try_into()
+                    .map_err(|_| DatasetError::Format("truncated f64 bytes".into()))?;
+                let v = if is_big { f64::from_be_bytes(arr) } else { f64::from_le_bytes(arr) };
+                Ok::<f32, DatasetError>(v as f32)
+            }).collect::<Result<Vec<f32>>>()?
         } else {
             raw.chunks_exact(4).map(|c| {
-                if is_big { f32::from_be_bytes(c.try_into().unwrap()) }
-                else { f32::from_le_bytes(c.try_into().unwrap()) }
-            }).collect()
+                let arr: [u8; 4] = c.try_into()
+                    .map_err(|_| DatasetError::Format("truncated f32 bytes".into()))?;
+                let v = if is_big { f32::from_be_bytes(arr) } else { f32::from_le_bytes(arr) };
+                Ok::<f32, DatasetError>(v)
+            }).collect::<Result<Vec<f32>>>()?
         };
         if fortran && shape.len() == 2 {
             let (r, c) = (shape[0], shape[1]);
@@ -254,7 +257,13 @@ impl MatReader {
         if s { i32::from_be_bytes(v) } else { i32::from_le_bytes(v) }
     }
     fn f64(b: &[u8], o: usize, s: bool) -> f64 {
-        let v: [u8; 8] = b[o..o+8].try_into().unwrap();
+        // Defensive bounds check: callers in `parse_matrix` already guard with
+        // `p + 8 <= buf.len()`, but we keep this fallback to avoid a panic on
+        // malformed input. Returns 0.0 if the slice is too short.
+        if o + 8 > b.len() {
+            return 0.0;
+        }
+        let v: [u8; 8] = b[o..o+8].try_into().unwrap_or([0u8; 8]);
         if s { f64::from_be_bytes(v) } else { f64::from_le_bytes(v) }
     }
     fn f32(b: &[u8], o: usize, s: bool) -> f32 {

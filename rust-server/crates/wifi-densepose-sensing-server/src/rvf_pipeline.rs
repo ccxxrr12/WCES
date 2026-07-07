@@ -16,7 +16,7 @@ pub const SEG_OVERLAY: u8 = 0x03;
 /// SONA LoRA deltas per environment.
 pub const SEG_AGGREGATE_WEIGHTS: u8 = 0x36;
 /// Integrity signatures.
-pub const SEG_CRYPTO: u8 = 0x0C;
+pub const SEG_CRYPTO: u8 = 0x0E;
 /// WASM inference engine bytes.
 pub const SEG_WASM: u8 = 0x10;
 /// Embedded UI dashboard assets.
@@ -973,6 +973,7 @@ mod tests {
 
     #[test]
     fn segment_type_constants_unique() {
+        use crate::rvf_container::{SEG_EMBED, SEG_LORA};
         let types = [
             SEG_INDEX,
             SEG_OVERLAY,
@@ -980,6 +981,8 @@ mod tests {
             SEG_CRYPTO,
             SEG_WASM,
             SEG_DASHBOARD,
+            SEG_EMBED,
+            SEG_LORA,
         ];
         // Also include the base types from rvf_container to ensure no collision.
         let base_types: [u8; 6] = [0x01, 0x05, 0x06, 0x07, 0x0A, 0x0B];

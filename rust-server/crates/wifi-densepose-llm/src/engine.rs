@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, RwLock};
 
 /// Inner state shared across tasks.
 struct EngineInner {
@@ -34,7 +34,7 @@ struct EngineInner {
 
 /// The main LLM analysis engine.
 pub struct LlmAnalysisEngine {
-    inner: Arc<Mutex<EngineInner>>,
+    inner: Arc<RwLock<EngineInner>>,
 }
 
 impl LlmAnalysisEngine {
@@ -56,7 +56,7 @@ impl LlmAnalysisEngine {
         );
 
         Ok(Self {
-            inner: Arc::new(Mutex::new(EngineInner {
+            inner: Arc::new(RwLock::new(EngineInner {
                 config,
                 patient_db,
                 knowledge_base,
@@ -82,7 +82,7 @@ impl LlmAnalysisEngine {
 
     /// Register a new patient (or update existing).
     pub async fn register_patient(&self, record: PatientRecord) -> Result<()> {
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.inner.write().await;
 
         if let Some(node_id) = record.node_id {
             inner
@@ -96,19 +96,19 @@ impl LlmAnalysisEngine {
 
     /// Get a patient record by ID.
     pub async fn get_patient(&self, patient_id: &str) -> Result<Option<PatientRecord>> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         inner.patient_db.get(patient_id)
     }
 
     /// List all registered patients.
     pub async fn list_patients(&self) -> Result<Vec<PatientRecord>> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         inner.patient_db.list_all()
     }
 
     /// Find patient by node ID.
     pub async fn get_patient_by_node(&self, node_id: u8) -> Result<Option<PatientRecord>> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         inner.patient_db.get_by_node_id(node_id)
     }
 
@@ -123,7 +123,7 @@ impl LlmAnalysisEngine {
         motion_score: f64,
         signal_quality: f64,
     ) {
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.inner.write().await;
 
         let patient_id = inner
             .node_patient_map
@@ -166,7 +166,7 @@ impl LlmAnalysisEngine {
 
         // Update cooldown
         {
-            let mut inner = self.inner.lock().await;
+            let mut inner = self.inner.write().await;
             inner
                 .last_analysis
                 .insert(patient_id.to_string(), Instant::now());
@@ -199,7 +199,7 @@ impl LlmAnalysisEngine {
 
         // Update cooldown immediately before spawning
         {
-            let mut inner = self.inner.lock().await;
+            let mut inner = self.inner.write().await;
             inner
                 .last_analysis
                 .insert(patient_id.to_string(), Instant::now());
@@ -251,7 +251,7 @@ impl LlmAnalysisEngine {
         current_triage: &str,
         active_edge_alerts: &[String],
     ) -> Option<(FallbackContext, Option<String>, Instant)> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         let now = Instant::now();
 
         // Cooldown check
@@ -364,7 +364,7 @@ impl LlmAnalysisEngine {
 
     /// Get engine status information.
     pub async fn status(&self) -> EngineStatus {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
 
         let llm_loaded = false; // LLM now via cloud API, not local Candle
 

@@ -1,6 +1,7 @@
 //! Survivor entity representing a detected human in a disaster zone.
 
 use chrono::{DateTime, Utc};
+use std::collections::VecDeque;
 use uuid::Uuid;
 
 use super::{
@@ -89,10 +90,13 @@ pub enum AgeCategory {
 }
 
 /// History of vital signs readings
+///
+/// Uses a `VecDeque` internally so that evicting the oldest reading when the
+/// history is full is O(1) rather than the O(n) `Vec::remove(0)` shift (M-8).
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VitalSignsHistory {
-    readings: Vec<VitalSignsReading>,
+    readings: VecDeque<VitalSignsReading>,
     max_history: usize,
 }
 
@@ -100,27 +104,32 @@ impl VitalSignsHistory {
     /// Create a new history with specified max size
     pub fn new(max_history: usize) -> Self {
         Self {
-            readings: Vec::with_capacity(max_history),
+            readings: VecDeque::with_capacity(max_history),
             max_history,
         }
     }
 
     /// Add a new reading
     pub fn add(&mut self, reading: VitalSignsReading) {
+        // M-8: VecDeque::pop_front is O(1), avoiding the O(n) memmove that
+        // Vec::remove(0) performs on every new reading once the history is full.
         if self.readings.len() >= self.max_history {
-            self.readings.remove(0);
+            self.readings.pop_front();
         }
-        self.readings.push(reading);
+        self.readings.push_back(reading);
     }
 
     /// Get the most recent reading
     pub fn latest(&self) -> Option<&VitalSignsReading> {
-        self.readings.last()
+        self.readings.back()
     }
 
-    /// Get all readings
-    pub fn all(&self) -> &[VitalSignsReading] {
-        &self.readings
+    /// Get all readings as a vector of references.
+    ///
+    /// Returns `Vec<&VitalSignsReading>` because `VecDeque` is a ring buffer
+    /// and its elements are not guaranteed to be contiguous in memory.
+    pub fn all(&self) -> Vec<&VitalSignsReading> {
+        self.readings.iter().collect()
     }
 
     /// Get the number of readings

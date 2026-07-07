@@ -153,9 +153,12 @@ mod tests {
 
         let built = PromptBuilder::build(&ctx);
         assert!(built.estimated_tokens > 100);
-        assert!(built.prompt.contains("PAT-001"));
+        // PII sanitization (C-7): raw patient_id is replaced by SHA-256 hash prefix PAT-
+        assert!(!built.prompt.contains("PAT-001"), "raw patient_id should be sanitized");
+        assert!(built.prompt.contains("PAT-"), "pseudonymized patient_id should be present");
         assert!(built.prompt.contains("COPD"));
-        assert!(built.prompt.contains("Minor"));
+        // Prompt-injection defense (C-8): triage is wrapped in <user_input> tags
+        assert!(built.prompt.contains("<user_input>Minor</user_input>"));
     }
 
     // ── Fallback Analyzer ──────────────────────────────────────────────────

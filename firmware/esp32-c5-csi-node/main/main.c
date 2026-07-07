@@ -83,15 +83,26 @@ static void event_handler(void *arg, esp_event_base_t event_base,
                              evt->reason == WIFI_REASON_ASSOC_NOT_AUTHED);
         if (s_retry_num < MAX_RETRY && !is_permanent) {
             s_retry_num++;
-            ESP_LOGI(TAG, "Retrying WiFi connection (%d/%d) reason=%d",
-                     s_retry_num, MAX_RETRY, evt->reason);
-            /* Backoff: increase delay with each retry to avoid AP rate-limiting. */
-            vTaskDelay(pdMS_TO_TICKS(500 * s_retry_num));
+            /* H-5 fix: Exponential backoff (1s, 2s, 4s, 8s, 16s, capped at 16s)
+             * to avoid AP rate-limiting. Previous linear backoff (500ms * n)
+             * was too aggressive under poor RF conditions. */
+            uint32_t delay_ms = 1000U << (s_retry_num - 1);
+            if (delay_ms > 16000) delay_ms = 16000;
+            ESP_LOGI(TAG, "Retrying WiFi connection (%d/%d) reason=%d, backoff=%lu ms",
+                     s_retry_num, MAX_RETRY, evt->reason, (unsigned long)delay_ms);
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
             esp_err_t ret = esp_wifi_connect();
             if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "esp_wifi_connect() failed: %s", esp_err_to_name(ret));
+                /* H-5 fix: If esp_wifi_connect() itself fails (not just a
+                 * disconnect), set FAIL_BIT so the caller doesn't hang
+                 * waiting for an event that may never come. */
+                ESP_LOGE(TAG, "esp_wifi_connect() failed: %s — setting FAIL_BIT",
+                         esp_err_to_name(ret));
+                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
             }
         } else {
+            ESP_LOGE(TAG, "WiFi connect failed after %d retries (reason=%d) — setting FAIL_BIT",
+                     s_retry_num, evt->reason);
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -107,6 +118,9 @@ static void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_netif_init());
 
     s_wifi_event_group = xEventGroupCreate();
+    /* M-3 fix: Check event group creation — if NULL (OOM), all subsequent
+     * xEventGroupWaitBits/SetBits calls would crash. */
+    ESP_ERROR_CHECK(s_wifi_event_group == NULL ? ESP_ERR_NO_MEM : ESP_OK);
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
 

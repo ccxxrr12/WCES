@@ -126,16 +126,24 @@ impl AppState {
         let id = *event.id().as_uuid();
         let mut events = self.inner.events.write();
 
-        // Check capacity
+        // Enforce capacity hard limit (M-3). Prefer evicting the oldest
+        // *closed* event; if none are closed, fall back to evicting the
+        // oldest event by start_time so the map never exceeds max_events.
         if events.len() >= self.inner.config.max_events {
-            // Remove oldest closed event
             let oldest_closed = events
                 .iter()
                 .filter(|(_, e)| matches!(e.status(), crate::EventStatus::Closed))
                 .min_by_key(|(_, e)| e.start_time())
                 .map(|(id, _)| *id);
 
-            if let Some(old_id) = oldest_closed {
+            let to_evict = oldest_closed.or_else(|| {
+                events
+                    .iter()
+                    .min_by_key(|(_, e)| e.start_time())
+                    .map(|(id, _)| *id)
+            });
+
+            if let Some(old_id) = to_evict {
                 events.remove(&old_id);
             }
         }
@@ -176,6 +184,21 @@ impl AppState {
     pub fn store_alert(&self, alert: Alert, event_id: Uuid) -> Uuid {
         let id = *alert.id().as_uuid();
         let mut alerts = self.inner.alerts.write();
+
+        // Enforce capacity hard limit (M-3). Alerts share the same overall
+        // ceiling as events to bound memory. Evict the alert with the oldest
+        // creation timestamp when at capacity.
+        let max_alerts = self.inner.config.max_events;
+        if alerts.len() >= max_alerts {
+            let oldest = alerts
+                .iter()
+                .min_by_key(|(_, a)| a.alert.created_at())
+                .map(|(id, _)| *id);
+            if let Some(old_id) = oldest {
+                alerts.remove(&old_id);
+            }
+        }
+
         alerts.insert(id, AlertWithEventId { alert, event_id });
         id
     }

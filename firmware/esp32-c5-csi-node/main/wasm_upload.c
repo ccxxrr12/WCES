@@ -293,16 +293,34 @@ static esp_err_t wasm_list_handler(httpd_req_t *req)
     /* Build JSON array (larger buffer for manifest fields). */
     char response[2048];
     int pos = 0;
-    pos += snprintf(response + pos, sizeof(response) - pos,
-                    "{\"modules\":[");
+
+    /* H-2 fix: snprintf returns the number of chars that WOULD have been
+     * written, which can exceed the remaining buffer space. Without
+     * clamping, pos grows past sizeof(response), and the subsequent
+     * sizeof(response) - pos wraps (unsigned arithmetic) to a huge value,
+     * causing a buffer overflow. We clamp each return value and stop
+     * writing once the buffer is full. */
+#define SNPRINTF_CLAMP(fmt, ...) \
+    do { \
+        if (pos >= 0 && (size_t)pos < sizeof(response)) { \
+            int _w = snprintf(response + pos, sizeof(response) - (size_t)pos, \
+                              fmt, ##__VA_ARGS__); \
+            if (_w > 0) { \
+                size_t _avail = sizeof(response) - (size_t)pos - 1; \
+                pos += (_w < (int)_avail) ? _w : (int)_avail; \
+            } \
+        } \
+    } while (0)
+
+    SNPRINTF_CLAMP("{\"modules\":[");
 
     for (uint8_t i = 0; i < WASM_MAX_MODULES; i++) {
-        if (i > 0) pos += snprintf(response + pos, sizeof(response) - pos, ",");
+        if ((size_t)pos >= sizeof(response) - 1) break;  /* buffer full */
+        if (i > 0) SNPRINTF_CLAMP(",");
         uint32_t mean_us = (info[i].frame_count > 0)
                            ? (info[i].total_us / info[i].frame_count) : 0;
         const char *name = info[i].module_name[0] ? info[i].module_name : "";
-        pos += snprintf(response + pos, sizeof(response) - pos,
-                        "{\"id\":%u,\"state\":\"%s\",\"name\":\"%s\","
+        SNPRINTF_CLAMP("{\"id\":%u,\"state\":\"%s\",\"name\":\"%s\","
                         "\"binary_size\":%lu,\"caps\":\"0x%04lx\","
                         "\"frame_count\":%lu,\"event_count\":%lu,\"error_count\":%lu,"
                         "\"mean_us\":%lu,\"max_us\":%lu,\"budget_us\":%lu,"
@@ -319,8 +337,8 @@ static esp_err_t wasm_list_handler(httpd_req_t *req)
                         (unsigned long)info[i].budget_faults);
     }
 
-    pos += snprintf(response + pos, sizeof(response) - pos,
-                    "],\"loaded\":%u,\"max\":%d}", count, WASM_MAX_MODULES);
+    SNPRINTF_CLAMP("],\"loaded\":%u,\"max\":%d}", count, WASM_MAX_MODULES);
+#undef SNPRINTF_CLAMP
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, pos);

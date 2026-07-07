@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WCES - 方舱生命体征监测系统</title>
-    <script src="/ui/lib/three.min.js"></script>
-    <script src="/ui/lib/OrbitControls.js"></script>
-    <script src="/ui/js/triage-common.js"></script>
+    <script defer src="/ui/lib/three.min.js"></script>
+    <script defer src="/ui/lib/OrbitControls.js"></script>
+    <script defer src="/ui/js/triage-common.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
 
@@ -30,6 +30,9 @@
             --heatmap-mid: rgba(255,200,0,0.25);
             --heatmap-high: rgba(255,50,0,0.4);
             --bg-secondary-85: rgba(28,28,30,0.85);
+            /* M-1: define previously-undefined CSS variables */
+            --accent-blue: #0A84FF;
+            --border-subtle: rgba(255,255,255,0.08);
         }
         :root.light {
             --bg-primary: #F2F2F7;
@@ -42,6 +45,8 @@
             --card-shadow: rgba(0,0,0,0.08);
             --overlay-bg: rgba(240,240,245,0.9);
             --bg-secondary-85: rgba(255,255,255,0.85);
+            --accent-blue: #007AFF;
+            --border-subtle: rgba(0,0,0,0.08);
         }
 
         body {
@@ -533,6 +538,11 @@
 </div>
 
 <script>
+// M-7: DEBUG flag — set to true to enable verbose console.log output in dev
+const DEBUG=false;
+if(!DEBUG&&console.log){console.log=function(){};}
+// TODO(M-8): This inline script is too large — extract into separate modules
+// (e.g. triage-map.js, triage-skeleton.js, triage-ws.js, triage-agent.js) to improve maintainability.
 // ═══════════════════════════════════════════════════════════
 // ERROR HANDLING — show visible feedback when JS fails
 // ═══════════════════════════════════════════════════════════
@@ -621,7 +631,7 @@ function drawMap(){
         const sf=latestData.signal_field;
         const gs=sf.grid_size||[20,20,1];
         const cellW=(mapW-2*margin)/gs[0],cellH=(mapH-2*margin)/gs[1];
-        const maxV=Math.max(...sf.values.filter(v=>v>0),1);
+        const maxV=sf.values.filter(v=>v>0).reduce((a,b)=>Math.max(a,b),1);
         for(let y=0;y<gs[1];y++)for(let x=0;x<gs[0];x++){
             const v=sf.values[y*gs[0]+x]/maxV;
             if(v<0.05)continue;
@@ -682,7 +692,7 @@ function drawMap(){
             ctx.fillStyle=dc;ctx.shadowColor=dc;ctx.shadowBlur=16;ctx.fill();
             ctx.shadowBlur=0;ctx.strokeStyle='rgba(255,255,255,0.8)';ctx.lineWidth=2;ctx.stroke();
             ctx.fillStyle='#FFFFFF';ctx.font='bold 10px -apple-system,sans-serif';ctx.textAlign='center';
-            ctx.fillText(s.id.substring(0,8),cx,cy-22);
+            ctx.fillText(String(s.id||'').substring(0,8),cx,cy-22);
             if(s.breathing_rate!=null){ctx.font='9px -apple-system,sans-serif';ctx.fillStyle='#98989D';ctx.fillText(s.breathing_rate.toFixed(0)+'/min',cx,cy+24)}
         });
     }
@@ -808,7 +818,7 @@ function updateFigureFromPose(group,pose17){
     if(!_vFrom){try{_vFrom=new THREE.Vector3();_vTo=new THREE.Vector3();_dir=new THREE.Vector3();_q=new THREE.Quaternion();_yAxis=new THREE.Vector3(0,1,0)}catch(e){return}}
     const{joints,bones,segments}=group.userData;
     pose17.forEach((kp,i)=>{if(joints[i])joints[i].position.set(kp[0],kp[1],kp[2])});
-    // BUG 5 fix: use setFromUnitVectors to avoid degenerate orientation for vertical bones
+    // BUG 5 (bone orientation NaN/gimbal-lock on vertical limbs): use setFromUnitVectors to avoid degenerate orientation for vertical bones
     bones.forEach(bone=>{
         const a=bone.userData.jointA,b=bone.userData.jointB;
         if(!joints[a]||!joints[b])return;
@@ -826,7 +836,7 @@ function updateFigureFromPose(group,pose17){
         }
         bone.setRotationFromQuaternion(_q);
     });
-    // BUG 5 fix: use setFromUnitVectors for body segments too (no lookAt+rotateX)
+    // BUG 5 (bone orientation NaN/gimbal-lock on vertical limbs): use setFromUnitVectors for body segments too (no lookAt+rotateX)
     segments.forEach(seg=>{
         const a=seg.userData.jointA,b=seg.userData.jointB,pa=joints[a]?.position,pb=joints[b]?.position;
         if(!pa||!pb)return;
@@ -920,7 +930,7 @@ function dispose3D(){
         const{joints,bones,segments}=g.userData;
         joints?.forEach(j=>{if(j.geometry)j.geometry.dispose();if(j.material)j.material.dispose()});
         bones?.forEach(b=>{if(b.geometry)b.geometry.dispose();if(b.material)b.material.dispose()});
-        // BUG 9 fix: dispose child meshes (capsule sphere caps) recursively
+        // BUG 9 (WebGL memory leak — capsule cap child meshes not disposed): dispose child meshes (capsule sphere caps) recursively
         segments?.forEach(s=>{
             s.traverse(child=>{
                 if(child.geometry)child.geometry.dispose();
@@ -964,7 +974,7 @@ function resetView(){currentView==='map'?drawMap():resetCamera()}
 function resetCamera(){if(camera&&controls){camera.position.set(0,1.2,4);controls.target.set(0,1,0);controls.update()}}
 function toggleAutoRotate(){autoRotate=!autoRotate;if(controls)controls.autoRotate=autoRotate}
 function toggleWireframe(){isWireframe=!isWireframe;figureGroups.forEach(g=>{const ud=g.userData;ud.joints?.forEach(j=>j.material.wireframe=isWireframe);ud.bones?.forEach(b=>b.material.wireframe=isWireframe);
-    // BUG 6 fix: recursively toggle child mesh materials (capsule sphere caps)
+    // BUG 6 (wireframe toggle missed capsule cap child meshes): recursively toggle child mesh materials (capsule sphere caps)
     ud.segments?.forEach(s=>{s.traverse(child=>{if(child.material){if(Array.isArray(child.material))child.material.forEach(m=>m.wireframe=isWireframe);else child.material.wireframe=isWireframe}})})})}
 function toggleHeatmap(){showHeatmap=!showHeatmap;document.getElementById('heatmapBtn').classList.toggle('active',showHeatmap);if(currentView==='map')drawMap()}
 
@@ -1018,21 +1028,21 @@ function renderFromServer(){
     if(now-lastRenderStamp>=MIN_RENDER_MS){
         lastRenderStamp=now;
 
-        // Sort survivors by severity before rendering
-        if(latestTriage.survivors){
+        // Sort survivors by severity before rendering (H-2: sort a copy, don't mutate server cache)
+        const sortedSurvivors = latestTriage.survivors ? [...latestTriage.survivors].sort((a,b)=>{
             const sev={red:0,yellow:1,green:2,black:3};
-            latestTriage.survivors.sort((a,b)=>(sev[a.triage_color]??9)-(sev[b.triage_color]??9));
-        }
+            return (sev[a.triage_color]??9)-(sev[b.triage_color]??9);
+        }) : [];
 
         // Survivors list — only redraw if content changed
         let newSurvivorHtml;
-        if(!latestTriage.survivors||latestTriage.survivors.length===0){
+        if(sortedSurvivors.length===0){
             newSurvivorHtml='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
         }else{
-            newSurvivorHtml=latestTriage.survivors.map((s,idx)=>`
-                <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" onclick="selectSurvivor('${escapeHtml(s.id)}');openEhr(latestTriage.survivors[${idx}])">
+            newSurvivorHtml=sortedSurvivors.map((s,idx)=>`
+                <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" onclick="selectSurvivor('${escapeHtml(s.id)}');openEhr(latestTriage.survivors.find(x=>x.id===\`${escapeHtml(s.id)}\`))">
                     <div class="survivor-header">
-                        <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(s.id.substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p></div></div>
+                        <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(String(s.id||'').substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${(s.tracked_seconds!=null?s.tracked_seconds.toFixed(0):'--')}s · 节点${escapeHtml(s.node_id)} · ${escapeHtml(s.estimated_age)}</p></div></div>
                         <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}${s.reidentified?'<span class="reid-badge">🔄 重识别</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
                     </div>
                     <div class="vitals-row">
@@ -1099,6 +1109,9 @@ function renderFromServer(){
             if(hrConf!=null)confHtml+=`<span style="font-size:10px;color:${hrConf>0.5?'#34C759':hrConf>0.25?'#FF9500':'#FF3B30'}">HR conf:${(hrConf*100).toFixed(0)}%</span> `;
             if(sq!=null)confHtml+=`<span style="font-size:10px;color:${sq>0.5?'#34C759':sq>0.25?'#FF9500':'#FF3B30'}">Sig:${(sq*100).toFixed(0)}%</span>`;
             document.getElementById('vitalsConfidence').innerHTML=confHtml;
+        } else {
+            // M-6: clear stale confidence display when no signal data available
+            document.getElementById('vitalsConfidence').innerHTML='';
         }
     }
     // Classification confidence
@@ -1253,7 +1266,11 @@ function connectWebSocket(){
 // ═══════════════════════════════════════════════════════════
 function enableAnalyzeButton(){
     const btn=document.getElementById('agentAnalyzeBtn');if(!btn)return;
-    if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成Agent分析报告'}
+    if(latestTriage&&latestTriage.survivors&&latestTriage.survivors.length>0){
+        // M-5: clear stale selection if the patient is no longer in survivors
+        if(selectedPatientId&&!(latestTriage.survivors||[]).some(s=>s.id===selectedPatientId))selectedPatientId=null;
+        if(!selectedPatientId)selectPatientForAnalysis(latestTriage.survivors[0].id);
+        btn.disabled=false;btn.textContent=selectedPatientId?`🤖 分析 ${selectedPatientId}`:'🤖 生成Agent分析报告'}
 }
 function selectPatientForAnalysis(patientId){selectedPatientId=patientId;renderFromServer();enableAnalyzeButton()}
 function selectSurvivor(survivorId){selectedPatientId=survivorId;if(latestTriage)renderFromServer()}
@@ -1262,7 +1279,7 @@ function requestAgentAnalysis(){
     const survivor=(latestTriage.survivors||[]).find(s=>s.id===selectedPatientId);if(!survivor)return;
     const btn=document.getElementById('agentAnalyzeBtn');btn.disabled=true;btn.innerHTML='<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
     agentStreamBuffer[selectedPatientId]={text:'',isStreaming:true};renderAgentStreamCard(selectedPatientId,'');
-    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'agent_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id}));
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'agent_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id,_token:localStorage.getItem('wces_token')||''}));
     else generateLocalAnalysis(selectedPatientId,survivor);
 }
 function handleAgentStream(data){
@@ -1337,8 +1354,12 @@ function registerPatient(){
         medications:document.getElementById('regMedications').value.split(',').map(s=>s.trim()).filter(Boolean),
         allergies:document.getElementById('regAllergies').value.split(',').map(s=>s.trim()).filter(Boolean),
         notes:document.getElementById('regNotes').value.trim()||null};
-    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'patient_register',...registeredPatients[patientId]}));
-    try{localStorage.setItem('wces_patients',JSON.stringify(registeredPatients))}catch(e){}
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'patient_register',...registeredPatients[patientId],_token:localStorage.getItem('wces_token')||''}));
+    try {
+        const data = JSON.stringify(registeredPatients);
+        try { localStorage.setItem('wces_patients', data); }
+        catch(e) { console.warn('localStorage 配额超限，无法保存伤员数据'); }
+    } catch(e) { console.error('无法序列化伤员数据', e); }
     selectedPatientId=patientId;refreshPatientList();closePatientModal();enableAnalyzeButton();
 }
 function refreshPatientList(){
@@ -1355,7 +1376,8 @@ function deletePatient(patientId){delete registeredPatients[patientId];try{local
 // ═══════════════════════════════════════════════════════════
 function updateTime(){document.getElementById('timeDisplay').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 
-// Init
+// Init (M-9: wrapped in DOMContentLoaded so defer-loaded scripts are ready)
+document.addEventListener('DOMContentLoaded', function(){
 console.log('[TRIAGE] Initializing...');
 try{const saved=localStorage.getItem('wces_patients');if(saved){registeredPatients=JSON.parse(saved);refreshPatientList()}}catch(e){console.warn('[TRIAGE] Failed to load patients:',e)}
 try{if(localStorage.getItem('wces-theme')==='light')document.documentElement.classList.add('light')}catch(e){}
@@ -1371,6 +1393,7 @@ connectWebSocket();
 if(window.ResizeObserver){mapResizeObserver=new ResizeObserver(()=>{if(currentView==='map')drawMap()});mapResizeObserver.observe(document.getElementById('mapContainer'))}
 window.addEventListener('beforeunload',cleanup);
 console.log('[TRIAGE] Init complete. WS state:',ws?ws.readyState:'not created');
+});
 </script>
 </body>
 </html>

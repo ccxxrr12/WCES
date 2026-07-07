@@ -1,4 +1,4 @@
-﻿//! WiFi-DensePose Sensing Server
+//! WiFi-DensePose Sensing Server
 //!
 //! Lightweight Axum server that:
 //! - Receives ESP32 CSI frames via UDP (port 5005)
@@ -1179,6 +1179,36 @@ async fn main() {
         node_states: HashMap::new(),
     }));
 
+    // ADR-050: If WCES_API_KEY env var is not set but the config file has
+    // server.api_key, set the env var so the auth middleware picks it up.
+    // This fixes the dead-end where operators configure api_key in the TOML
+    // but the middleware only reads the environment variable.
+    //
+    // NOTE: This must run BEFORE any `tokio::spawn` calls below so that, under
+    // Rust 2024 (where `std::env::set_var` is `unsafe`), we can guarantee no
+    // other thread is concurrently reading the environment. The edition today
+    // is 2021 (set_var is safe), but we wrap in `unsafe` + `#[allow(unused_unsafe)]`
+    // for forward-compatibility. The auth middleware that reads WCES_API_KEY is
+    // installed later inside `server::run_server`, so there is no concurrent
+    // access at the time of this call.
+    if std::env::var("WCES_API_KEY").is_err() {
+        if let Some(ref cfg) = config {
+            if let Some(ref key) = cfg.server.api_key {
+                if !key.is_empty() {
+                    // SAFETY: No background tasks have been spawned yet at this
+                    // point in `main`, so no other thread can race on the
+                    // process environment. The value is set once and never
+                    // mutated afterwards.
+                    #[allow(unused_unsafe)] // no-op in edition 2021; required in 2024
+                    unsafe {
+                        std::env::set_var("WCES_API_KEY", key);
+                    }
+                    info!("WCES_API_KEY set from config file (server.api_key)");
+                }
+            }
+        }
+    }
+
     // Start background tasks based on source
     match source {
         "esp32" => {
@@ -1341,21 +1371,6 @@ async fn main() {
                 }
             }
         });
-    }
-
-    // ADR-050: If WCES_API_KEY env var is not set but the config file has
-    // server.api_key, set the env var so the auth middleware picks it up.
-    // This fixes the dead-end where operators configure api_key in the TOML
-    // but the middleware only reads the environment variable.
-    if std::env::var("WCES_API_KEY").is_err() {
-        if let Some(ref cfg) = config {
-            if let Some(ref key) = cfg.server.api_key {
-                if !key.is_empty() {
-                    std::env::set_var("WCES_API_KEY", key);
-                    info!("WCES_API_KEY set from config file (server.api_key)");
-                }
-            }
-        }
     }
 
     // ADR-050: Parse bind address once, use for all listeners

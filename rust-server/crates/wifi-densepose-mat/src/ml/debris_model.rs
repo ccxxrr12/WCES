@@ -192,14 +192,34 @@ impl DebrisClassification {
 
     /// Estimate number of debris layers from probability distribution
     fn estimate_layers(probabilities: &[f32]) -> u8 {
+        // M-6: Guard against NaN. When `probabilities.len() <= 1`,
+        // `ln(len)` is 0.0 (or -inf for empty), and `entropy / 0.0`
+        // produces NaN, which then propagates into `estimated_layers`
+        // as `(1.0 + NaN * 4.0).round() as u8` → undefined behaviour.
+        // A single-class (or empty) distribution has zero uncertainty,
+        // so default to 1 layer.
+        if probabilities.len() <= 1 {
+            return 1;
+        }
+
         // More uniform distribution suggests more layers
         let entropy: f32 = probabilities.iter()
-            .filter(|&&p| p > 0.01)
+            .filter(|&&p| p > 0.01 && p.is_finite())
             .map(|&p| -p * p.ln())
             .sum();
 
         let max_entropy = (probabilities.len() as f32).ln();
+        // max_entropy > 0 here because len >= 2, but guard defensively
+        // against any unexpected zero (e.g. from rounding).
+        if !max_entropy.is_finite() || max_entropy <= 0.0 {
+            return 1;
+        }
         let normalized_entropy = entropy / max_entropy;
+
+        // Guard against NaN from negative probabilities or other anomalies
+        if !normalized_entropy.is_finite() || normalized_entropy < 0.0 {
+            return 1;
+        }
 
         // Map entropy to layer count (1-5)
         (1.0 + normalized_entropy * 4.0).round() as u8
@@ -501,6 +521,19 @@ impl DebrisModel {
         inputs.insert("input".to_string(), input_tensor);
 
         // Run inference
+        // TODO(M-9): `session.write().run(inputs)` holds a parking_lot write
+        // lock for the entire ONNX inference call, blocking every other async
+        // task that touches the session (including concurrent `classify`
+        // calls). This should be moved to `tokio::task::spawn_blocking` so
+        // the blocking ort inference runs on the blocking thread pool:
+        //
+        //   let session_clone = Arc::clone(session);
+        //   let outputs = tokio::task::spawn_blocking(move || {
+        //       session_clone.write().run(inputs)
+        //   }).await.map_err(...)??;
+        //
+        // This requires `OnnxSession: Send` (and the Tensor HashMap to be
+        // `Send`), which needs to be verified at compile time before enabling.
         let outputs = session.write().run(inputs)
             .map_err(|e| MlError::NeuralNetwork(e))?;
 
@@ -522,8 +555,17 @@ impl DebrisModel {
         // Apply softmax normalization
         let max_val = probs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let exp_sum: f32 = probs.iter().map(|&x| (x - max_val).exp()).sum();
-        for p in &mut probs {
-            *p = (*p - max_val).exp() / exp_sum;
+        // M-6: guard against NaN / division-by-zero if model output is
+        // degenerate (all-NaN or all-(-inf)). Fall back to uniform.
+        if !exp_sum.is_finite() || exp_sum <= 0.0 {
+            let uniform = 1.0 / probs.len() as f32;
+            for p in &mut probs {
+                *p = uniform;
+            }
+        } else {
+            for p in &mut probs {
+                *p = (*p - max_val).exp() / exp_sum;
+            }
         }
 
         Ok(DebrisClassification::new(probs))

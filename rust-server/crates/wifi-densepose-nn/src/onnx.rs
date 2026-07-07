@@ -10,7 +10,51 @@ use ort::session::Session;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
+
+/// Default input shape used when the ONNX model does not declare a static
+/// shape (H-3). `[1, 3, 256, 256]` matches the DensePose training config.
+const DEFAULT_INPUT_SHAPE: [i64; 4] = [1, 3, 256, 256];
+
+/// Extract a `TensorShape` from an ort `Input`/`Output` value.
+///
+/// ort 2.0 exposes dimension info via `dimensions()`. When the model uses
+/// dynamic dimensions (e.g. `-1` for batch or spatial size) or the API
+/// returns an empty vector, we fall back to `DEFAULT_INPUT_SHAPE` and log a
+/// warning so callers know the shape is not authoritative (H-3).
+fn extract_tensor_shape(name: &str, dims: &[i64]) -> TensorShape {
+    if dims.is_empty() {
+        warn!(
+            "ONNX tensor '{}' has no static shape metadata; \
+             falling back to default {:?} (H-3). \
+             Real shapes should be loaded from the model's graph metadata.",
+            name, DEFAULT_INPUT_SHAPE
+        );
+        return TensorShape::new(
+            DEFAULT_INPUT_SHAPE.iter().map(|&d| d as usize).collect(),
+        );
+    }
+    // Replace dynamic dims (-1) with sensible defaults: batch=1, spatial=256.
+    let sanitized: Vec<usize> = dims
+        .iter()
+        .map(|&d| if d <= 0 { 1usize } else { d as usize })
+        .collect();
+    TensorShape::new(sanitized)
+}
+
+/// Extract the declared dimensions of a session `Outlet` (input/output).
+///
+/// Returns an empty slice for non-tensor types (sequences, maps) so that
+/// `extract_tensor_shape` applies its default-shape fallback (H-3).
+fn extract_outlet_dims(outlet: &ort::value::Outlet) -> &[i64] {
+    use ort::value::ValueType;
+    match outlet.dtype() {
+        // `Shape` implements `Deref<Target = [i64]>`, so `&shape[..]` gives
+        // us the raw dimension slice. Dynamic dims appear as `-1`.
+        ValueType::Tensor { shape, .. } => &shape[..],
+        _ => &[],
+    }
+}
 
 /// ONNX Runtime session wrapper
 pub struct OnnxSession {
@@ -57,9 +101,30 @@ impl OnnxSession {
             .map(|output| output.name().to_string())
             .collect();
 
-        // For now, leave shapes empty - they can be populated when needed
-        let input_shapes = HashMap::new();
-        let output_shapes = HashMap::new();
+        // H-3: extract input/output shapes from the model graph. ort 2.0
+        // exposes the declared shape via `Outlet::dtype()` -> `ValueType::Tensor
+        // { shape, .. }`. When the model uses dynamic dimensions (-1) or does
+        // not declare a shape, `extract_tensor_shape` falls back to
+        // `DEFAULT_INPUT_SHAPE` with a warning log.
+        let input_shapes: HashMap<String, TensorShape> = session
+            .inputs()
+            .iter()
+            .map(|input| {
+                let dims = extract_outlet_dims(input);
+                let shape = extract_tensor_shape(input.name(), dims);
+                (input.name().to_string(), shape)
+            })
+            .collect();
+
+        let output_shapes: HashMap<String, TensorShape> = session
+            .outputs()
+            .iter()
+            .map(|output| {
+                let dims = extract_outlet_dims(output);
+                let shape = extract_tensor_shape(output.name(), dims);
+                (output.name().to_string(), shape)
+            })
+            .collect();
 
         info!(
             inputs = ?input_names,
@@ -97,8 +162,26 @@ impl OnnxSession {
             .map(|output| output.name().to_string())
             .collect();
 
-        let input_shapes = HashMap::new();
-        let output_shapes = HashMap::new();
+        // H-3: same shape extraction as `from_file`.
+        let input_shapes: HashMap<String, TensorShape> = session
+            .inputs()
+            .iter()
+            .map(|input| {
+                let dims = extract_outlet_dims(input);
+                let shape = extract_tensor_shape(input.name(), dims);
+                (input.name().to_string(), shape)
+            })
+            .collect();
+
+        let output_shapes: HashMap<String, TensorShape> = session
+            .outputs()
+            .iter()
+            .map(|output| {
+                let dims = extract_outlet_dims(output);
+                let shape = extract_tensor_shape(output.name(), dims);
+                (output.name().to_string(), shape)
+            })
+            .collect();
 
         Ok(Self {
             session,
@@ -332,9 +415,17 @@ pub fn load_model_info<P: AsRef<Path>>(path: P) -> NnResult<OnnxModelInfo> {
         .inputs()
         .iter()
         .map(|input| {
+            let dims = extract_outlet_dims(input);
+            // H-3: use the declared shape if available, otherwise fall back
+            // to the default (with a warning emitted inside extract_tensor_shape).
+            let shape: Vec<i64> = if dims.is_empty() {
+                DEFAULT_INPUT_SHAPE.to_vec()
+            } else {
+                dims.iter().map(|&d| if d <= 0 { 1 } else { d }).collect()
+            };
             TensorSpec {
                 name: input.name().to_string(),
-                shape: vec![],
+                shape,
                 dtype: "float32".to_string(),
             }
         })
@@ -344,9 +435,15 @@ pub fn load_model_info<P: AsRef<Path>>(path: P) -> NnResult<OnnxModelInfo> {
         .outputs()
         .iter()
         .map(|output| {
+            let dims = extract_outlet_dims(output);
+            let shape: Vec<i64> = if dims.is_empty() {
+                DEFAULT_INPUT_SHAPE.to_vec()
+            } else {
+                dims.iter().map(|&d| if d <= 0 { 1 } else { d }).collect()
+            };
             TensorSpec {
                 name: output.name().to_string(),
-                shape: vec![],
+                shape,
                 dtype: "float32".to_string(),
             }
         })

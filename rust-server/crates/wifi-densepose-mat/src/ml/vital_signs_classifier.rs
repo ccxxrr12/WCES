@@ -672,6 +672,13 @@ impl VitalSignsClassifier {
         };
 
         let mut all_outputs = Vec::with_capacity(mc_samples);
+        // TODO(M-10): each `session.write().run(inputs.clone())` is a
+        // synchronous blocking ort inference call executed on the tokio
+        // async executor. With `mc_samples` iterations this can stall the
+        // runtime for tens of milliseconds per `classify` call. This should
+        // be moved to `tokio::task::spawn_blocking` (running all MC samples
+        // inside a single blocking closure that acquires the write lock
+        // once and loops). Requires `OnnxSession: Send`.
         for _ in 0..mc_samples {
             let outputs = session.write().run(inputs.clone())
                 .map_err(|e| MlError::NeuralNetwork(e))?;
@@ -682,21 +689,208 @@ impl VitalSignsClassifier {
         self.aggregate_mc_outputs(&all_outputs, features)
     }
 
-    /// Aggregate Monte Carlo Dropout outputs
+    /// Aggregate Monte Carlo Dropout outputs (H-7).
+    ///
+    /// Computes per-element mean and variance across the MC samples for each
+    /// model output head. The mean is used as the point prediction, while the
+    /// variance across samples provides epistemic uncertainty (model
+    /// uncertainty due to limited data / dropout masks).
+    ///
+    /// Expected output names (model convention):
+    /// - `"breathing"`: `[rate_bpm, ...]`
+    /// - `"heartbeat"`: `[rate_bpm, hrv, strength, ...]`
+    /// - `"movement"`:  `[intensity, frequency, voluntary_flag, type_id]`
+    ///
+    /// If a head is missing or unparseable, falls back to the corresponding
+    /// rule-based classifier for that head.
     #[cfg(feature = "onnx")]
     fn aggregate_mc_outputs(
         &self,
         outputs: &[HashMap<String, Tensor>],
         features: &VitalSignsFeatures,
     ) -> MlResult<ClassifierOutput> {
-        // For now, use rule-based if no valid outputs
         if outputs.is_empty() {
             return self.classify_rules(features);
         }
 
-        // Extract and average predictions
-        // This is simplified - full implementation would aggregate all outputs
-        self.classify_rules(features)
+        // Collect per-key tensor data as flat f32 vectors across MC samples.
+        let mut per_key_samples: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+        for out in outputs {
+            for (key, tensor) in out.iter() {
+                match tensor.to_vec() {
+                    Ok(v) => per_key_samples.entry(key.clone()).or_default().push(v),
+                    Err(_) => continue,
+                }
+            }
+        }
+
+        if per_key_samples.is_empty() {
+            return self.classify_rules(features);
+        }
+
+        // Compute per-element mean and population variance across samples.
+        let stats_for = |key: &str| -> Option<(Vec<f32>, Vec<f32>)> {
+            let samples = per_key_samples.get(key)?;
+            if samples.is_empty() {
+                return None;
+            }
+            let n = samples.len() as f32;
+            let m = samples.iter().map(|s| s.len()).max()?;
+            if m == 0 {
+                return None;
+            }
+            let mut mean = vec![0.0_f32; m];
+            for s in samples {
+                for (i, &v) in s.iter().take(m).enumerate() {
+                    mean[i] += v;
+                }
+            }
+            for x in mean.iter_mut() {
+                *x /= n;
+            }
+            let mut var = vec![0.0_f32; m];
+            for s in samples {
+                for (i, &v) in s.iter().take(m).enumerate() {
+                    let d = v - mean[i];
+                    var[i] += d * d;
+                }
+            }
+            // Population variance; for n==1 epistemic uncertainty collapses to 0.
+            let denom = if n > 1.0 { n } else { 1.0 };
+            for x in var.iter_mut() {
+                *x /= denom;
+            }
+            Some((mean, var))
+        };
+
+        let aleatoric = 1.0 - features.signal_quality;
+
+        // --- Breathing head -------------------------------------------------
+        let breathing = if let Some((mean, var)) = stats_for("breathing") {
+            let rate_bpm = mean.first().copied().unwrap_or(0.0);
+            let rate_uncertainty = var.first().copied().unwrap_or(0.0).sqrt();
+            let breathing_type = self.classify_breathing_type(rate_bpm, features);
+            let class_probabilities = self.compute_breathing_probabilities(rate_bpm, features);
+            let power_confidence = (features.breathing_band_power * 10.0).min(1.0);
+            let quality_confidence = features.signal_quality;
+            let confidence = ((power_confidence + quality_confidence) / 2.0
+                * (1.0 - rate_uncertainty.clamp(0.0, 1.0)))
+                .max(0.0)
+                .min(1.0);
+            let epistemic = rate_uncertainty.clamp(0.0, 1.0);
+            Some(BreathingClassification {
+                breathing_type,
+                rate_bpm,
+                rate_uncertainty,
+                confidence,
+                class_probabilities,
+                uncertainty: UncertaintyEstimate::new(aleatoric, epistemic),
+            })
+        } else {
+            self.classify_breathing_rules(features)
+        };
+
+        // --- Heartbeat head -------------------------------------------------
+        let heartbeat = if let Some((mean, var)) = stats_for("heartbeat") {
+            let rate_bpm = mean.first().copied().unwrap_or(0.0);
+            let rate_uncertainty = var.first().copied().unwrap_or(0.0).sqrt();
+            if rate_bpm < 30.0 || rate_bpm > 200.0 {
+                None
+            } else {
+                let hrv = mean.get(1).copied().unwrap_or(0.0).max(0.0);
+                let strength_raw =
+                    mean.get(2).copied().unwrap_or(features.heartbeat_band_power);
+                let signal_strength = if strength_raw > 0.66 {
+                    SignalStrength::Strong
+                } else if strength_raw > 0.33 {
+                    SignalStrength::Moderate
+                } else if strength_raw > 0.1 {
+                    SignalStrength::Weak
+                } else {
+                    SignalStrength::VeryWeak
+                };
+                let epistemic = rate_uncertainty.clamp(0.0, 1.0);
+                let confidence = (1.0 - epistemic).max(0.0).min(1.0);
+                Some(HeartbeatClassification {
+                    rate_bpm,
+                    rate_uncertainty,
+                    hrv,
+                    signal_strength,
+                    confidence,
+                    uncertainty: UncertaintyEstimate::new(aleatoric, epistemic),
+                })
+            }
+        } else {
+            self.classify_heartbeat_rules(features)
+        };
+
+        // --- Movement head --------------------------------------------------
+        let movement = if let Some((mean, var)) = stats_for("movement") {
+            let intensity = mean.first().copied().unwrap_or(0.0).clamp(0.0, 1.0);
+            let frequency = mean.get(1).copied().unwrap_or(0.0).max(0.0);
+            let is_voluntary = mean.get(2).copied().unwrap_or(0.0) > 0.5;
+            let type_id = mean.get(3).copied().unwrap_or(0.0).round() as i32;
+            let movement_type = match type_id {
+                0 => MovementType::None,
+                1 => MovementType::Gross,
+                2 => MovementType::Fine,
+                3 => MovementType::Tremor,
+                4 => MovementType::Periodic,
+                _ => MovementType::None,
+            };
+            let intensity_var = var.first().copied().unwrap_or(0.0);
+            let confidence = (1.0 - intensity_var.clamp(0.0, 1.0)).max(0.0).min(1.0);
+            Some(MovementClassification {
+                movement_type,
+                intensity,
+                is_voluntary,
+                frequency,
+                confidence,
+            })
+        } else {
+            self.classify_movement_rules(features)
+        };
+
+        // --- Aggregate ------------------------------------------------------
+        let mut confidences: Vec<f32> = Vec::with_capacity(3);
+        if let Some(b) = breathing.as_ref() {
+            confidences.push(b.confidence);
+        }
+        if let Some(h) = heartbeat.as_ref() {
+            confidences.push(h.confidence);
+        }
+        if let Some(m) = movement.as_ref() {
+            confidences.push(m.confidence);
+        }
+        let overall_confidence = if confidences.is_empty() {
+            0.0
+        } else {
+            confidences.iter().sum::<f32>() / confidences.len() as f32
+        };
+
+        // Combined epistemic uncertainty = mean epistemic across heads that
+        // provided an uncertainty estimate (breathing + heartbeat).
+        let mut eps: Vec<f32> = Vec::new();
+        if let Some(b) = breathing.as_ref() {
+            eps.push(b.uncertainty.epistemic);
+        }
+        if let Some(h) = heartbeat.as_ref() {
+            eps.push(h.uncertainty.epistemic);
+        }
+        let epistemic_avg = if eps.is_empty() {
+            0.5
+        } else {
+            eps.iter().sum::<f32>() / eps.len() as f32
+        };
+        let combined_uncertainty = UncertaintyEstimate::new(aleatoric, epistemic_avg);
+
+        Ok(ClassifierOutput {
+            breathing,
+            heartbeat,
+            movement,
+            overall_confidence,
+            combined_uncertainty,
+        })
     }
 
     /// Rule-based classification (fallback)

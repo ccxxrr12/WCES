@@ -65,6 +65,8 @@ pub(crate) async fn health_system(State(state): State<SharedState>) -> Json<serd
                         "message": format!("{} client(s)", s.tx.receiver_count()) },
         },
         "metrics": {
+            // M-10: placeholder telemetry — replace with real system metrics
+            // (e.g. via the `sysinfo` crate) when available.
             "cpu_percent": 2.5,
             "memory_percent": 1.8,
             "disk_percent": 15.0,
@@ -85,6 +87,7 @@ pub(crate) async fn health_metrics(State(state): State<SharedState>) -> Json<ser
     let s = state.read().await;
     Json(serde_json::json!({
         "system_metrics": {
+            // M-10: placeholder telemetry — replace with real system metrics.
             "cpu": { "percent": 2.5 },
             "memory": { "percent": 1.8, "used_mb": 5 },
             "disk": { "percent": 15.0 },
@@ -128,6 +131,7 @@ pub(crate) async fn pose_stats(State(state): State<SharedState>) -> Json<serde_j
     let s = state.read().await;
     Json(serde_json::json!({
         "total_detections": s.total_detections,
+        // M-10: placeholder — should be computed from detection history.
         "average_confidence": 0.87,
         "frames_processed": s.tick,
         "source": s.effective_source(),
@@ -342,16 +346,53 @@ pub(crate) async fn train_start(
     State(state): State<SharedState>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let mut s = state.write().await;
-    if s.training_status == "running" {
-        return Json(serde_json::json!({
-            "error": "training already running",
-            "success": false,
-        }));
-    }
-    s.training_status = "running".to_string();
-    s.training_config = Some(body.clone());
-    info!("Training started with config keys: {:?}", body.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    // L-7: previously this handler only set `training_status = "running"` and
+    // returned without ever invoking the training pipeline. Now we spawn a
+    // background task that runs the sync `train_from_recordings` via
+    // `spawn_blocking` (so the CPU-bound training does not block the async
+    // executor) and writes the result back to shared state.
+    let (recordings_dir, training_state) = {
+        let mut s = state.write().await;
+        if s.training_status == "running" {
+            return Json(serde_json::json!({
+                "error": "training already running",
+                "success": false,
+            }));
+        }
+        s.training_status = "running".to_string();
+        s.training_config = Some(body.clone());
+        // Recordings live under <data_dir>/data/recordings (see recording_routes.rs).
+        let recordings_dir = s.data_dir.join("data/recordings");
+        info!("Training started with config keys: {:?}", body.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+        (recordings_dir, state.clone())
+    };
+
+    tokio::spawn(async move {
+        // train_from_recordings is a sync, CPU-bound function — run it on a
+        // blocking thread to keep the async executor responsive.
+        let result = tokio::task::spawn_blocking(move || {
+            adaptive_classifier::train_from_recordings(&recordings_dir)
+        })
+        .await;
+
+        let mut s = training_state.write().await;
+        match result {
+            Ok(Ok(model)) => {
+                s.adaptive_model = Some(model);
+                s.training_status = "completed".to_string();
+                info!("Training completed successfully");
+            }
+            Ok(Err(e)) => {
+                s.training_status = "failed".to_string();
+                warn!("Training failed: {}", e);
+            }
+            Err(join_err) => {
+                s.training_status = "failed".to_string();
+                warn!("Training task panicked: {}", join_err);
+            }
+        }
+    });
+
     Json(serde_json::json!({
         "success": true,
         "status": "running",

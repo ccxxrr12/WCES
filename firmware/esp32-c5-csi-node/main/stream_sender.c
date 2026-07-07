@@ -20,6 +20,21 @@ static int sender_init_internal(const char *ip, uint16_t port)
     s_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s_sock < 0) { ESP_LOGE(TAG, "socket errno %d", errno); return -1; }
 
+    /* H-1 fix: Set send timeout so sendto() cannot block the WiFi task
+     * indefinitely (e.g., during ARP resolution which can take 1-2 s).
+     * The CSI callback runs in the WiFi task context; a blocking sendto()
+     * would stall all WiFi processing. 100 ms is enough for normal sends
+     * while bounding worst-case latency. */
+    struct timeval tv = {
+        .tv_sec  = 0,
+        .tv_usec = 100 * 1000,  /* 100 ms */
+    };
+    /* M-3 fix: Check setsockopt return — if it fails, sends may still block
+     * but we log the issue rather than silently ignoring it. */
+    if (setsockopt(s_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+        ESP_LOGW(TAG, "setsockopt(SO_SNDTIMEO) failed: errno %d", errno);
+    }
+
     memset(&s_dest_addr, 0, sizeof(s_dest_addr));
     s_dest_addr.sin_family = AF_INET;
     s_dest_addr.sin_port = htons(port);
@@ -28,7 +43,7 @@ static int sender_init_internal(const char *ip, uint16_t port)
         close(s_sock); s_sock = -1; return -1;
     }
 
-    ESP_LOGI(TAG, "UDP ready: %s:%d", ip, port);
+    ESP_LOGI(TAG, "UDP ready: %s:%d (send timeout 100 ms)", ip, port);
     return 0;
 }
 

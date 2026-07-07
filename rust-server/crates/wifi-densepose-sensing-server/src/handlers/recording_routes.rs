@@ -110,10 +110,13 @@ pub(crate) async fn start_recording(
     };
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Block 1.5: blocking filesystem I/O outside any lock.
+    // Block 1.5: async filesystem I/O outside any lock.
+    // L-5: use tokio::fs instead of std::fs to avoid blocking the async
+    // executor thread. The File is converted back to std::fs::File via
+    // into_std() because the writer task below uses sync BufWriter writes.
     // ═══════════════════════════════════════════════════════════════════════
-    let file = match std::fs::File::create(&rec_path) {
-        Ok(f) => f,
+    let file = match tokio::fs::File::create(&rec_path).await {
+        Ok(f) => f.into_std().await,
         Err(e) => {
             warn!("Failed to create recording file {:?}: {}", rec_path, e);
             return Json(serde_json::json!({
@@ -132,7 +135,7 @@ pub(crate) async fn start_recording(
         let mut s = state.write().await;
         // Re-check: another request may have started a recording during I/O.
         if s.recording_active {
-            let _ = std::fs::remove_file(&rec_path);
+            let _ = tokio::fs::remove_file(&rec_path).await;
             return Json(serde_json::json!({
                 "error": "recording already in progress",
                 "success": false,
@@ -337,7 +340,7 @@ pub(crate) async fn delete_recording(
 
     // File I/O outside any lock
     if path.exists() {
-        if let Err(e) = std::fs::remove_file(&path) {
+        if let Err(e) = tokio::fs::remove_file(&path).await {
             warn!("Failed to delete recording {:?}: {}", path, e);
             return Json(serde_json::json!({ "error": format!("delete failed: {e}"), "success": false }));
         }
@@ -366,9 +369,13 @@ pub(crate) fn scan_recording_files(data_dir: &std::path::Path) -> Vec<serde_json
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                // Count lines (frames) —approximate for large files
-                let frame_count = std::fs::read_to_string(&path)
-                    .map(|s| s.lines().count())
+                // Count lines (frames) — stream the file instead of loading it
+                // all into memory, since recordings can be very large.
+                let frame_count = std::fs::File::open(&path)
+                    .map(|file| {
+                        use std::io::BufRead;
+                        std::io::BufReader::new(file).lines().count()
+                    })
                     .unwrap_or(0);
                 recordings.push(serde_json::json!({
                     "id": name,

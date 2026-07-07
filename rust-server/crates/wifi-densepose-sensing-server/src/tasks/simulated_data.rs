@@ -21,16 +21,38 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
     loop {
         interval.tick().await;
 
-        // ═══ Phase 1: Quick write lock — state mutations ═══
+        // ═══ Phase 1a: Brief write lock — increment tick only ═══
+        // The tick counter must be updated under the write lock to preserve
+        // ordering with frame_history, but the heavy CPU work of synthesising
+        // the CSI frame is deferred to the lock-free section below to
+        // minimise contention with reader tasks (HTTP handlers, WS, etc.).
+        let tick = {
+            let mut s = state.write().await;
+            s.tick += 1;
+            s.tick
+        };
+
+        // ═══ Phase 1b: Lock-free pure computation ═══
+        // generate_simulated_frame is pure CPU work (no shared state access)
+        // and the f32 conversions are simple iterator passes — both run
+        // outside the write lock to keep critical sections short.
+        let frame = generate_simulated_frame(tick);
+        let amps_f32: Vec<f32> = frame.amplitudes.iter().map(|a| *a as f32).collect();
+        let phases_f32: Vec<f32> = frame.phases.iter().map(|p| *p as f32).collect();
+
+        // ═══ Phase 1c: Write lock — stateful pipeline processing ═══
+        // Operations below mutate shared sub-engines (vital_detector,
+        // triage_engine, edge_engine) and history buffers, so they must run
+        // under the write lock. A fuller refactor would also move
+        // extract_features_from_frame outside by cloning frame_history, but
+        // that is deferred because smooth_and_classify takes &mut s and
+        // depends on the freshly-pushed frame in the same critical section.
         let (features, classification, breathing_rate_hz, sub_variances,
-             _raw_motion, vitals, tick, motion_score,
+             _raw_motion, vitals, motion_score,
              triage_update, wasm_alerts, est_persons, frame_amplitudes,
              frame_n_sub, model_status, rssi_mean) =
         {
             let mut s = state.write().await;
-            s.tick += 1;
-            let tick = s.tick;
-            let frame = generate_simulated_frame(tick);
 
             // Append current amplitudes to history before feature extraction.
             s.frame_history.push_back(frame.amplitudes.clone());
@@ -94,8 +116,8 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             let triage_update = Some(s.triage_engine.process(&triage_input));
 
             // Edge module engine: run all 10 modules
-            let amps_f32: Vec<f32> = frame.amplitudes.iter().map(|a| *a as f32).collect();
-            let phases_f32: Vec<f32> = frame.phases.iter().map(|p| *p as f32).collect();
+            // (amps_f32/phases_f32 pre-computed in Phase 1b to avoid doing
+            // the f32 conversion work while holding the write lock.)
             let wasm_alerts = Some(s.edge_engine.process_frame(
                 &phases_f32, &amps_f32, raw_motion as f32,
                 vitals.breathing_rate_bpm, vitals.heart_rate_bpm,
@@ -132,7 +154,7 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
             let rssi_mean = features.mean_rssi;
 
             (features, classification, br_hz, variances,
-             raw_motion, vitals, tick, motion_score,
+             raw_motion, vitals, motion_score,
              triage_update, wasm_alerts, est_persons, frame_amplitudes,
              frame_n_sub, model_status, rssi_mean)
         }; // ── write lock released ──

@@ -330,9 +330,16 @@ impl ModalityTranslator {
         let shape = last_feat.shape();
         let batch = shape.dim(0).unwrap_or(1);
 
-        // Determine output spatial dimensions based on encoder structure
-        let out_height = shape.dim(2).unwrap_or(1) * 2_usize.pow(encoded_features.len() as u32 - 1);
-        let out_width = shape.dim(3).unwrap_or(1) * 2_usize.pow(encoded_features.len() as u32 - 1);
+        // Determine output spatial dimensions based on encoder structure.
+        // H-4: use `saturating_sub` + `saturating_pow` to prevent integer
+        // underflow/overflow panics. The early return above already handles
+        // `len == 0`, but `saturating_sub` makes the arithmetic safe even if
+        // that guard is ever refactored away. `saturating_pow` caps at
+        // `usize::MAX` instead of panicking on overflow.
+        let upscale_exp = encoded_features.len().saturating_sub(1) as u32;
+        let upscale = 2_usize.saturating_pow(upscale_exp);
+        let out_height = shape.dim(2).unwrap_or(1).saturating_mul(upscale);
+        let out_width = shape.dim(3).unwrap_or(1).saturating_mul(upscale);
 
         Ok(Tensor::zeros_4d([batch, self.config.output_channels, out_height, out_width]))
     }

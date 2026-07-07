@@ -93,8 +93,28 @@ impl SignalPipeline {
             noise_threshold: 0.1,
             phase_range: (-std::f64::consts::PI, std::f64::consts::PI),
         };
-        let phase_sanitizer = PhaseSanitizer::new(ps_config)
-            .expect("PhaseSanitizer::new with valid config should always succeed");
+        let phase_sanitizer = match PhaseSanitizer::new(ps_config) {
+            Ok(s) => s,
+            Err(e) => {
+                // Fallback: the primary config should always validate, but if a
+                // future change breaks an invariant we degrade to the library
+                // default rather than panicking the whole server.
+                tracing::warn!(
+                    "PhaseSanitizer::new failed ({e}); falling back to default config"
+                );
+                PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig::default())
+                    .unwrap_or_else(|_| {
+                        // Ultimate fallback: construct with a minimal hardcoded
+                        // valid config if even Default fails to validate.
+                        PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig {
+                            outlier_threshold: 3.0,
+                            smoothing_window: 5,
+                            noise_threshold: 0.05,
+                            ..Default::default()
+                        }).expect("hardcoded fallback PhaseSanitizerConfig must validate")
+                    })
+            }
+        };
 
         let normalizer = HardwareNormalizer::new();
 

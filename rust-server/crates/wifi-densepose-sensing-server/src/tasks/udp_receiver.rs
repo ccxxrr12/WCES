@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
 use tokio::sync::Semaphore;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn, debug, error};
 
@@ -46,9 +47,11 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
     const BROADCAST_INTERVAL_MS: u64 = 100; // 10 Hz max
 
     // ── WhōFi + phase-doppler hybrid proximity tracking ──────────────────────
-    let mut node_prox: [f64; 4] = [0.0; 4];      // per-node EMA proximity [0,1]
-    let mut node_max: [f64; 4] = [1.0; 4];        // fixed baseline (peak, never decays)
-    let mut prev_phases: [Vec<f64>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    // M-8: keyed by node_id (u8) to support arbitrary node counts instead of
+    // the original hardcoded [f64; 4] arrays which panicked if node_id >= 4.
+    let mut node_prox: HashMap<u8, f64> = HashMap::new();      // per-node EMA proximity [0,1]
+    let mut node_max: HashMap<u8, f64> = HashMap::new();       // fixed baseline (peak, never decays)
+    let mut prev_phases: HashMap<u8, Vec<f64>> = HashMap::new();
     let mut surv_pos: [(f64, f64, f64); 8] = [(0.0, 0.0, 0.0); 8];
     const PROX_EMA: f64 = 0.12;
     const POS_EMA: f64 = 0.12;
@@ -112,10 +115,10 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
 
                     // ═══ Phase 1: Quick write lock — state mutations ═══
                     let (features, classification, breathing_rate_hz, sub_variances,
-                         _raw_motion, vitals, tick, motion_score,
+                         raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
                          prev_triage, agent_handle, node_snapshot,
-                         field_perturbation, tracked_survivors) =
+                         field_perturbation, tracked_survivors, llm_engine) =
                     {
                         let mut s = state.write().await;
                         s.source = "esp32".to_string();
@@ -256,17 +259,10 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         s.latest_vitals = vitals.clone();
                         s.tick = tick;
 
-                        // LLM analysis: push vitals into sliding windows for trend analysis
-                        // Inline — push_vitals is fast (lock+window push), no need to spawn
-                        if let Some(ref engine) = s.llm_engine {
-                            engine.push_vitals(
-                                frame.node_id,
-                                vitals.breathing_rate_bpm.unwrap_or(0.0),
-                                vitals.heart_rate_bpm.unwrap_or(0.0),
-                                raw_motion as f64,
-                                vitals.signal_quality,
-                            ).await;
-                        }
+                        // LLM analysis: capture engine clone for deferred push_vitals.
+                        // We must NOT call push_vitals (which is async) while holding
+                        // the write lock — clone the Arc here and await after release.
+                        let llm_engine = s.llm_engine.clone();
 
                         // MAT triage: compute START triage from vital signs
                         let triage_input = VitalSignsInput {
@@ -399,8 +395,21 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                          raw_motion, vitals, tick, motion_score,
                          triage_update, wasm_alerts, est_persons, rssi_mean,
                          prev_triage, agent_handle, node_snapshot,
-                         field_perturbation, tracked_survivors)
+                         field_perturbation, tracked_survivors, llm_engine)
                     }; // ── write lock released ──
+
+                    // LLM analysis: push vitals into sliding windows for trend analysis.
+                    // Deferred from the write-lock block above to avoid holding the
+                    // lock across an await point (push_vitals is async).
+                    if let Some(ref engine) = llm_engine {
+                        engine.push_vitals(
+                            frame.node_id,
+                            vitals.breathing_rate_bpm.unwrap_or(0.0),
+                            vitals.heart_rate_bpm.unwrap_or(0.0),
+                            raw_motion,
+                            vitals.signal_quality,
+                        ).await;
+                    }
 
                     // Build multi-node info from snapshot (no lock held)
                     let now = Instant::now();
@@ -547,7 +556,7 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         }
                     }
                     // ── WhōFi (60%) + frame-phase-diff (40%) positioning ──────
-                    let nid = frame.node_id as usize;
+                    let nid = frame.node_id; // u8 key into HashMap (M-8)
                     // WhōFi: top-K subcarrier variance → proximity
                     let mut sv = sub_variances.clone();
                     sv.sort_by(|a,b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
@@ -556,24 +565,28 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         sv[..k].iter().sum::<f64>() / k as f64
                     };
                     let raw_var = topk;
-                    if raw_var > node_max[nid] { node_max[nid] = raw_var * 1.2; }
-                    let var_prox = (raw_var / node_max[nid]).clamp(0.0, 1.0);
+                    let cur_max = node_max.get(&nid).copied().unwrap_or(1.0);
+                    if raw_var > cur_max { node_max.insert(nid, raw_var * 1.2); }
+                    let var_prox = (raw_var / node_max.get(&nid).copied().unwrap_or(1.0)).clamp(0.0, 1.0);
                     // Frame-phase-diff: mean |Δphase| per subcarrier → doppler proxy
-                    let phase_prox: f64 = if prev_phases[nid].len() == frame.phases.len() {
-                        let mut sum = 0.0f64; let n = frame.phases.len();
-                        for i in 0..n { sum += (frame.phases[i] - prev_phases[nid][i]).abs(); }
-                        (sum / n as f64 / std::f64::consts::PI).clamp(0.0, 1.0)
-                    } else { 0.0 };
-                    prev_phases[nid] = frame.phases.to_vec();
+                    let phase_prox: f64 = match prev_phases.get(&nid) {
+                        Some(prev) if prev.len() == frame.phases.len() => {
+                            let mut sum = 0.0f64; let n = frame.phases.len();
+                            for i in 0..n { sum += (frame.phases[i] - prev[i]).abs(); }
+                            (sum / n as f64 / std::f64::consts::PI).clamp(0.0, 1.0)
+                        }
+                        _ => 0.0,
+                    };
+                    prev_phases.insert(nid, frame.phases.to_vec());
                     // Blend: 60% WhōFi + 40% phase-doppler
                     let prox = (var_prox * 0.6 + phase_prox * 0.4).clamp(0.0, 1.0);
-                    node_prox[nid] = node_prox[nid] * (1.0 - PROX_EMA) + prox * PROX_EMA;
+                    let old_prox = node_prox.get(&nid).copied().unwrap_or(0.0);
+                    node_prox.insert(nid, old_prox * (1.0 - PROX_EMA) + prox * PROX_EMA);
 
-                    // Multi-node squared-weight centroid
+                    // Multi-node squared-weight centroid (iterates all known nodes)
                     let npos = crate::mat_pipeline::node_positions();
                     let (mut wx, mut wy, mut wz, mut tw) = (0.0, 0.0, 0.0, 0.0);
-                    for cid in 1u8..=3 {
-                        let w = node_prox[cid as usize];
+                    for (&cid, &w) in node_prox.iter() {
                         let w2 = w * w;
                         if w2 > 0.005 {
                             if let Some(&(nx, ny, nz)) = npos.get(&cid) {

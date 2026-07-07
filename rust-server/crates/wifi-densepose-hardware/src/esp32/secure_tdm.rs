@@ -56,12 +56,15 @@ const REPLAY_WINDOW: u32 = 16;
 /// Size of the authenticated beacon (manual crypto mode): 16 + 4 + 8 = 28.
 pub const AUTHENTICATED_BEACON_SIZE: usize = 16 + NONCE_SIZE + HMAC_TAG_SIZE;
 
-/// Default pre-shared key for testing (16 bytes). In production, this
-/// would be loaded from NVS or a secure key store.
-const DEFAULT_TEST_KEY: [u8; 16] = [
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-];
+// NOTE: There is intentionally NO default pre-shared key constant here.
+// In production, the mesh key MUST be provisioned from NVS (Non-Volatile
+// Storage) on the ESP32-S3 or from a secure key store / KMS on
+// aggregator-class nodes. `SecureTdmConfig::default()` returns an
+// unprovisioned configuration (`mesh_key: None`) and `is_secure()` will
+// return `false` until a real key is loaded via `SecureTdmConfig::with_key`
+// or by setting the `mesh_key` field directly. Using an unprovisioned
+// config in manual crypto mode will cause `begin_secure_cycle()` to fail
+// with `SecureTdmError::NoMeshKey`. See ADR-050 for provisioning flow.
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -282,16 +285,50 @@ impl AuthenticatedBeacon {
 // ---------------------------------------------------------------------------
 
 /// Security configuration for the secure TDM coordinator.
+///
+/// # Production hardening
+///
+/// `SecureTdmConfig::default()` returns an **unprovisioned** configuration:
+/// `mesh_key` is `None` and `sec_level` is `Enforcing`. A mesh key MUST be
+/// loaded from NVS (ESP32-S3) or a secure key store (aggregator nodes)
+/// before instantiating a `SecureTdmCoordinator` in manual crypto mode.
+/// Use `with_key()` to provision a key, or check `is_secure()` before
+/// constructing the coordinator.
 #[derive(Debug, Clone)]
 pub struct SecureTdmConfig {
     /// Security mode (QUIC or manual crypto).
     pub security_mode: SecurityMode,
     /// Pre-shared mesh key (16 bytes) for manual crypto mode.
+    ///
+    /// `None` by default. In production this MUST be populated from NVS or
+    /// a secure key store (see ADR-050). A hardcoded key is a critical
+    /// security vulnerability (C-6) and is intentionally absent.
     pub mesh_key: Option<[u8; 16]>,
     /// QUIC transport configuration (used if mode is QuicTransport).
     pub quic_config: QuicTransportConfig,
     /// Security enforcement level.
     pub sec_level: SecLevel,
+}
+
+impl SecureTdmConfig {
+    /// Returns `true` if a real mesh key has been provisioned.
+    ///
+    /// Production code should treat an insecure config as a hard error in
+    /// manual crypto mode: callers must provision a key via `with_key()`
+    /// (loaded from NVS / KMS) before constructing a coordinator.
+    pub fn is_secure(&self) -> bool {
+        self.mesh_key.is_some()
+    }
+
+    /// Provision a mesh key loaded from NVS or a secure key store.
+    ///
+    /// Returns a new config with the key set. The caller is responsible
+    /// for ensuring the key was loaded from a secure source and not
+    /// hardcoded.
+    pub fn with_key(mut self, key: [u8; 16]) -> Self {
+        self.mesh_key = Some(key);
+        self
+    }
 }
 
 /// Security enforcement level (ADR-032 Section 2.8).
@@ -309,9 +346,11 @@ impl Default for SecureTdmConfig {
     fn default() -> Self {
         Self {
             security_mode: SecurityMode::QuicTransport,
-            mesh_key: Some(DEFAULT_TEST_KEY),
+            // No hardcoded key: must be provisioned from NVS / KMS (ADR-050).
+            mesh_key: None,
             quic_config: QuicTransportConfig::default(),
-            sec_level: SecLevel::Transitional,
+            // Safer default: reject unauthenticated frames.
+            sec_level: SecLevel::Enforcing,
         }
     }
 }
@@ -586,6 +625,14 @@ mod tests {
     use crate::esp32::tdm::TdmSchedule;
     use std::time::Duration;
 
+    /// Test-only mesh key. This MUST NOT be used in production code; it is
+    /// only defined inside the `#[cfg(test)]` module so production builds
+    /// cannot accidentally reference it.
+    const TEST_KEY: [u8; 16] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    ];
+
     fn test_schedule() -> TdmSchedule {
         TdmSchedule::default_4node()
     }
@@ -593,7 +640,7 @@ mod tests {
     fn manual_config() -> SecureTdmConfig {
         SecureTdmConfig {
             security_mode: SecurityMode::ManualCrypto,
-            mesh_key: Some(DEFAULT_TEST_KEY),
+            mesh_key: Some(TEST_KEY),
             quic_config: QuicTransportConfig::default(),
             sec_level: SecLevel::Transitional,
         }
@@ -602,7 +649,7 @@ mod tests {
     fn quic_config() -> SecureTdmConfig {
         SecureTdmConfig {
             security_mode: SecurityMode::QuicTransport,
-            mesh_key: Some(DEFAULT_TEST_KEY),
+            mesh_key: Some(TEST_KEY),
             quic_config: QuicTransportConfig::default(),
             sec_level: SecLevel::Transitional,
         }
@@ -677,7 +724,7 @@ mod tests {
             drift_correction_us: -3,
             generated_at: std::time::Instant::now(),
         };
-        let key = DEFAULT_TEST_KEY;
+        let key = TEST_KEY;
         let nonce = 7u32;
 
         let mut msg = [0u8; 20];
@@ -708,7 +755,7 @@ mod tests {
             drift_correction_us: 0,
             generated_at: std::time::Instant::now(),
         };
-        let key = DEFAULT_TEST_KEY;
+        let key = TEST_KEY;
         let nonce = 1u32;
 
         let mut msg = [0u8; 20];
@@ -732,7 +779,7 @@ mod tests {
             drift_correction_us: 0,
             generated_at: std::time::Instant::now(),
         };
-        let key = DEFAULT_TEST_KEY;
+        let key = TEST_KEY;
         let nonce = 1u32;
 
         let mut msg = [0u8; 20];
@@ -991,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_hmac_different_messages_produce_different_tags() {
-        let key: [u8; 16] = DEFAULT_TEST_KEY;
+        let key: [u8; 16] = TEST_KEY;
         let tag1 = AuthenticatedBeacon::compute_tag(b"message one", &key);
         let tag2 = AuthenticatedBeacon::compute_tag(b"message two", &key);
         assert_ne!(tag1, tag2, "Different messages must produce different HMAC tags");
@@ -999,7 +1046,7 @@ mod tests {
 
     #[test]
     fn test_hmac_is_deterministic() {
-        let key: [u8; 16] = DEFAULT_TEST_KEY;
+        let key: [u8; 16] = TEST_KEY;
         let msg = b"determinism test";
         let tag1 = AuthenticatedBeacon::compute_tag(msg, &key);
         let tag2 = AuthenticatedBeacon::compute_tag(msg, &key);
@@ -1014,7 +1061,7 @@ mod tests {
             drift_correction_us: 0,
             generated_at: std::time::Instant::now(),
         };
-        let correct_key: [u8; 16] = DEFAULT_TEST_KEY;
+        let correct_key: [u8; 16] = TEST_KEY;
         let wrong_key: [u8; 16] = [0xFF; 16];
         let nonce = 1u32;
 
@@ -1035,7 +1082,7 @@ mod tests {
             drift_correction_us: 0,
             generated_at: std::time::Instant::now(),
         };
-        let key: [u8; 16] = DEFAULT_TEST_KEY;
+        let key: [u8; 16] = TEST_KEY;
         let nonce = 1u32;
 
         let mut msg = [0u8; 20];

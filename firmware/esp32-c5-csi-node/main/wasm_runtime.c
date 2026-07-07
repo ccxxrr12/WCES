@@ -237,7 +237,12 @@ static m3ApiRawFunction(host_csi_log)
     /* Safety: bounds-check against WASM memory. */
     uint32_t mem_size = 0;
     uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (mem && ptr >= 0 && len > 0 && (uint32_t)(ptr + len) <= mem_size) {
+    /* H-3 fix: Cast to uint32_t BEFORE addition to avoid signed int32_t
+     * overflow (undefined behavior). The old form (uint32_t)(ptr + len)
+     * computed the sum in int32_t first, which could wrap to a negative
+     * value and then pass the <= mem_size check. */
+    if (mem && ptr >= 0 && len > 0 &&
+        (uint32_t)ptr + (uint32_t)len <= mem_size) {
         char log_buf[128];
         int copy_len = (len > 127) ? 127 : len;
         memcpy(log_buf, mem + ptr, copy_len);
@@ -263,8 +268,13 @@ static m3ApiRawFunction(host_csi_get_phase_history)
     uint32_t mem_size = 0;
     uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
 
+    /* H-3 fix: Use division instead of multiplication to avoid overflow.
+     * The old form (buf_ptr + max_len * sizeof(float)) could overflow
+     * size_t when max_len is large, wrapping to a small value that passes
+     * the <= mem_size check but then writes past the WASM memory. */
     if (mem && buf_ptr >= 0 && max_len > 0 &&
-        (uint32_t)(buf_ptr + max_len * sizeof(float)) <= mem_size) {
+        (uint32_t)buf_ptr <= mem_size &&
+        (uint32_t)max_len <= (mem_size - (uint32_t)buf_ptr) / sizeof(float)) {
         /* Get phase history via accessor. */
         const float *history_buf = NULL;
         uint16_t history_len = 0, history_idx = 0;
@@ -507,6 +517,23 @@ esp_err_t wasm_runtime_load(const uint8_t *wasm_data, uint32_t wasm_len,
         return ESP_ERR_NO_MEM;
     }
 
+    /* H-4 fix: Instruction count limit to prevent infinite loops in WASM code.
+     * A malicious or buggy module could otherwise hang the DSP task forever
+     * (m3_CallV is synchronous with no preemption).
+     *
+     * TODO: SECURITY — this WASM3 version does NOT expose m3_SetInstructionLimit().
+     * Options to implement per-call instruction bounding:
+     *   1. Upgrade WASM3 to a version with M3_INSTRUCTION_LIMIT support and
+     *      call m3_SetInstructionLimit(slot->runtime, 10000000) here.
+     *   2. Run on_frame in a separate FreeRTOS task with a hard vTaskDelay
+     *      timeout, and kill the task if it doesn't return in time.
+     *   3. Enable the ESP32 task watchdog (esp_task_wdt) on the DSP task so
+     *      an infinite loop triggers a system reset instead of a silent hang.
+     * The existing time-based budget check (in wasm_runtime_on_frame) catches
+     * slow modules but NOT infinite loops — it only fires after m3_CallV
+     * returns. Until one of the above is implemented, untrusted WASM modules
+     * can hang the device. Only load signed/trusted RVF modules. */
+
     /* Parse module. */
     M3Result result = m3_ParseModule(s_env, &slot->module,
                                       slot->binary, wasm_len);
@@ -686,6 +713,11 @@ void wasm_runtime_on_frame(const float *phases, const float *amplitudes,
         /* Budget guard: measure execution time. */
         int64_t t_start = esp_timer_get_time();
 
+        /* H-4: m3_CallV is NOT bounded by an instruction limit in this
+         * WASM3 version (see TODO in wasm_runtime_load). The time-based
+         * budget check below only fires AFTER this call returns — it
+         * cannot interrupt an infinite loop. Only trusted RVF modules
+         * should be loaded until instruction limiting is implemented. */
         M3Result result = m3_CallV(slot->fn_on_frame, (int32_t)n_sc);
 
         int64_t t_elapsed = esp_timer_get_time() - t_start;

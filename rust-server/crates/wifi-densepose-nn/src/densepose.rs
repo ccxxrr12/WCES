@@ -312,6 +312,21 @@ impl DensePoseHead {
     }
 
     /// Apply a convolution layer
+    ///
+    /// # Performance (H-5)
+    ///
+    /// This is a naive 7-deep nested-loop convolution (`batch × out_channels ×
+    /// out_height × out_width × in_channels × kernel_h × kernel_w`). For a
+    /// typical DensePose input of `[1, 256, 64, 64]` with a 3×3 kernel this is
+    /// ~1.2 GFLOP per layer — far too slow for real-time inference.
+    ///
+    /// TODO: replace with a BLAS-backed implementation (e.g. `ndarray-linalg`
+    /// im2col + GEMM, or `tch`/`candle` conv2d) for production use. As an
+    /// interim improvement, parallelize the outer `batch × out_channels` loop
+    /// with `rayon::par_iter` and use `ndarray`'s `slices` / `zip_mut` for
+    /// the inner reduction. Do **not** call this path in hot loops — prefer
+    /// the ONNX backend (`OnnxBackend::run`) which delegates to ONNX
+    /// Runtime's optimized conv.
     fn apply_conv_layer(&self, input: &Array4<f32>, weights: &ConvLayerWeights) -> NnResult<Array4<f32>> {
         let (batch, in_channels, in_height, in_width) = input.dim();
         let (out_channels, _, kernel_h, kernel_w) = weights.weight.dim();
@@ -324,6 +339,8 @@ impl DensePoseHead {
         let mut output = Array4::zeros((batch, out_channels, out_height, out_width));
 
         // Simple convolution implementation (not optimized)
+        // PERF(H-5): see method-level doc — this is O(B·C·H·W·C·K·K) and is the
+        // single biggest inference bottleneck. Replace with BLAS/rayon.
         for b in 0..batch {
             for oc in 0..out_channels {
                 for oh in 0..out_height {

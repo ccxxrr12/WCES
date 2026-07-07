@@ -107,6 +107,11 @@ pub struct TriageConfig {
     pub survivor_timeout_secs: f64,
     pub deterioration_window: u32,
     pub min_signal_quality: f64,
+    /// Reference RSSI (dBm) at 1 meter distance. Used by `rssi_to_distance`.
+    pub rssi_ref_power: f64,
+    /// Indoor path-loss exponent (N). Typical: 2.0 free-space, 3.0 indoor,
+    /// 4.0 heavy obstruction. Used by `rssi_to_distance`.
+    pub rssi_path_loss_exponent: f64,
 }
 
 impl Default for TriageConfig {
@@ -116,6 +121,8 @@ impl Default for TriageConfig {
             survivor_timeout_secs: 30.0,
             deterioration_window: 5,
             min_signal_quality: 0.1,
+            rssi_ref_power: -30.0,
+            rssi_path_loss_exponent: 3.0,
         }
     }
 }
@@ -148,12 +155,18 @@ pub fn node_positions_arr() -> HashMap<u8, [f64; 3]> {
 // ── START 分诊规则 ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
 pub enum TriageLevel {
-    Deceased = 4,   // 黑色 — 无生命体征
-    Unknown = 5,    // 灰色 — 数据不足
-    Minor = 3,      // 绿色 — 轻伤
-    Delayed = 2,    // 黄色 — 延迟救治
-    Immediate = 1,  // 红色 — 立即救治
+    /// 灰色 — 数据不足（最低严重度）
+    Unknown = 0,
+    /// 绿色 — 轻伤
+    Minor = 1,
+    /// 黄色 — 延迟救治
+    Delayed = 2,
+    /// 红色 — 立即救治
+    Immediate = 3,
+    /// 黑色 — 无生命体征（最高严重度）
+    Deceased = 4,
 }
 
 impl TriageLevel {
@@ -175,7 +188,33 @@ impl TriageLevel {
             TriageLevel::Unknown => "gray",
         }
     }
+    /// Severity priority: higher value = more severe.
+    /// This matches the severity mapping used in `udp_receiver::is_triage_escalation`.
     pub fn priority(&self) -> u8 { *self as u8 }
+
+    /// Recover a TriageLevel from its discriminant value.
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(TriageLevel::Unknown),
+            1 => Some(TriageLevel::Minor),
+            2 => Some(TriageLevel::Delayed),
+            3 => Some(TriageLevel::Immediate),
+            4 => Some(TriageLevel::Deceased),
+            _ => None,
+        }
+    }
+
+    /// Parse a TriageLevel from its canonical name (case-sensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Immediate" | "Red" => Some(TriageLevel::Immediate),
+            "Delayed" | "Yellow" => Some(TriageLevel::Delayed),
+            "Minor" | "Green" => Some(TriageLevel::Minor),
+            "Deceased" | "Black" => Some(TriageLevel::Deceased),
+            "Unknown" | "Gray" => Some(TriageLevel::Unknown),
+            _ => None,
+        }
+    }
 }
 
 /// START 分诊计算 (遵循标准 START 协议)
@@ -227,9 +266,12 @@ pub fn calculate_triage(input: &VitalSignsInput) -> TriageLevel {
 
 // ── 简易距离估计 (RSSI → 米) ──────────────────────────────────────────────
 
-fn rssi_to_distance(rssi: f64) -> f64 {
-    let ref_rssi = -30.0;  // 1米参考 RSSI
-    let n = 3.0;           // 室内穿墙路径损耗指数
+/// Log-distance path-loss model: d = 10^((ref_rssi - rssi) / (10 * n)).
+///
+/// `ref_rssi` is the calibrated RSSI at 1 meter; `n` is the path-loss exponent
+/// (2.0 free-space, 3.0 typical indoor, 4.0 heavy obstruction). Defaults are
+/// available via `TriageConfig::default()` (ref=-30.0, n=3.0).
+fn rssi_to_distance(rssi: f64, ref_rssi: f64, n: f64) -> f64 {
     10.0_f64.powf((ref_rssi - rssi.max(-90.0)) / (10.0 * n))
 }
 
@@ -340,7 +382,11 @@ impl TriageEngine {
                 let mut total_w = 0.0f64;
                 for (nid, (rssi, _)) in obs.iter() {
                     if let Some((nx, ny, nz)) = self.config.node_positions.get(nid) {
-                        let d = rssi_to_distance(*rssi);
+                        let d = rssi_to_distance(
+                            *rssi,
+                            self.config.rssi_ref_power,
+                            self.config.rssi_path_loss_exponent,
+                        );
                         let w = 1.0 / (d.max(0.3));  // 距离越近权重越高
                         wx += nx * w; wy += ny * w; wz += nz * w;
                         total_w += w;
@@ -352,7 +398,11 @@ impl TriageEngine {
                 }
             } else if let Some((nx, ny, nz)) = self.config.node_positions.get(&input.node_id) {
                 // BUG 48: single-node RSSI with EMA smoothing.
-                let d = rssi_to_distance(input.rssi);
+                let d = rssi_to_distance(
+                    input.rssi,
+                    self.config.rssi_ref_power,
+                    self.config.rssi_path_loss_exponent,
+                );
                 let raw_x = nx + d * 0.5; let raw_y = ny + d * 0.3; let raw_z = nz * 0.5;
                 const POS_EMA: f64 = 0.15;
                 if s.position == (0.0, 0.0, 0.0) { s.position = (raw_x, raw_y, raw_z); }
@@ -370,8 +420,10 @@ impl TriageEngine {
             s.triage = calculate_triage(&smooth_input);
 
             // 恶化检测: 向更紧急变化，或转为Deceased（死亡是终极恶化）
+            // NOTE: priority() now returns severity (higher = more severe), so
+            // deterioration means the new triage has a HIGHER priority value.
             if s.triage == TriageLevel::Deceased ||
-               (s.triage.priority() < s.prev_triage.priority() && s.prev_triage != TriageLevel::Unknown) {
+               (s.triage.priority() > s.prev_triage.priority() && s.prev_triage != TriageLevel::Unknown) {
                 s.deterioration_count += 1;
                 if s.deterioration_count >= self.config.deterioration_window {
                     s.deterioration_count = 0;

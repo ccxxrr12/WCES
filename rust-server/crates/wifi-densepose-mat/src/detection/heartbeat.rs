@@ -35,8 +35,23 @@ impl CompressedHeartbeatSpectrogram {
     }
 
     /// Push one column of the spectrogram (one time step, all frequency bins).
+    ///
+    /// # Errors (H-6)
+    ///
+    /// In production this must not panic on a dimension mismatch — a single
+    /// malformed spectrogram column should not crash the heartbeat monitor.
+    /// Instead we log an error and drop the column. Callers that need hard
+    /// validation can check `column.len()` beforehand.
     pub fn push_column(&mut self, column: &[f32]) {
-        assert_eq!(column.len(), self.n_freq_bins);
+        if column.len() != self.n_freq_bins {
+            tracing::error!(
+                "heartbeat column dropped: expected {} frequency bins, got {} (H-6). \
+                 This indicates a spectrogram pipeline dimension mismatch.",
+                self.n_freq_bins,
+                column.len()
+            );
+            return;
+        }
         let ts = self.frame_count as u32;
         for (i, &val) in column.iter().enumerate() {
             // Synchronize last_access_ts with current timestamp so that the

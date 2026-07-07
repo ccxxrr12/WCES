@@ -268,6 +268,10 @@ pub struct EdgeModuleEngine {
     meta: MetaState,
     // Module 19: tmp_temporal_logic_guard — 时态逻辑安全规则
     ltl: LtlState,
+    /// Configured frame sample rate in Hz. Used to convert frame counters to
+    /// seconds for alert `value` fields and time-based thresholds. Defaults to
+    /// 20.0 (the historical hardcoded value) for backward compatibility.
+    sample_rate_hz: f32,
 }
 
 impl EdgeModuleEngine {
@@ -359,6 +363,15 @@ impl EdgeModuleEngine {
                 hr_high_timer: 0, seizure_gait_timer: 0,
                 alert_cooldown: [0; 8],
             },
+            sample_rate_hz: 20.0, // default; override via `set_sample_rate`
+        }
+    }
+
+    /// Set the frame sample rate (Hz) used for time-based thresholds.
+    /// Call once at startup after measuring the actual ESP32 frame rate.
+    pub fn set_sample_rate(&mut self, hz: f32) {
+        if hz > 0.0 {
+            self.sample_rate_hz = hz;
         }
     }
 
@@ -601,7 +614,7 @@ impl EdgeModuleEngine {
             self.cs_no_br_ctr += 1;
             if self.cs_no_br_ctr > 300 { // 15s @ 20Hz
                 alerts.push(EdgeAlert { module: "confined_space".into(), event_type: 513,
-                    event_name: "ExtractionAlert".into(), value: self.cs_no_br_ctr as f32 / 20.0, // TODO: use actual sample_rate instead of hardcoded 20Hz
+                    event_name: "ExtractionAlert".into(), value: self.cs_no_br_ctr as f32 / self.sample_rate_hz,
                     severity: "critical".into() });
             }
         } else { self.cs_no_br_ctr = 0; }
@@ -610,7 +623,7 @@ impl EdgeModuleEngine {
             self.cs_no_motion_ctr += 1;
             if self.cs_no_motion_ctr > 1200 { // 60s @ 20Hz
                 alerts.push(EdgeAlert { module: "confined_space".into(), event_type: 514,
-                    event_name: "ImmobileAlert".into(), value: self.cs_no_motion_ctr as f32 / 20.0,
+                    event_name: "ImmobileAlert".into(), value: self.cs_no_motion_ctr as f32 / self.sample_rate_hz,
                     severity: "critical".into() });
             }
         } else { self.cs_no_motion_ctr = 0; }
@@ -620,7 +633,7 @@ impl EdgeModuleEngine {
         self.pm_energy_buf.push(motion_energy);
         self.pm_var_buf.push(amp_var);
         if self.pm_cooldown == 0 && self.pm_energy_buf.len >= 100 {
-            let jerk = jerk_estimate(&self.pm_energy_buf);
+            let jerk = jerk_estimate(&self.pm_energy_buf, self.sample_rate_hz);
             let entropy = entropy_estimate(&self.pm_var_buf);
             let mean_energy = self.pm_energy_buf.mean_last(100);
             if jerk > 2.0 && entropy > 0.35 && mean_energy > 1.0 && presence {
@@ -1241,7 +1254,7 @@ impl EdgeModuleEngine {
                             alerts.push(EdgeAlert {
                                 module: "loitering".into(), event_type: 240,
                                 event_name: "LoiteringStart".into(),
-                                value: self.loiter.dwell_timer as f32 / 20.0,
+                                value: self.loiter.dwell_timer as f32 / self.sample_rate_hz,
                                 severity: "warning".into(),
                             });
                         }
@@ -1258,7 +1271,7 @@ impl EdgeModuleEngine {
                             alerts.push(EdgeAlert {
                                 module: "loitering".into(), event_type: 241,
                                 event_name: "LoiteringOngoing".into(),
-                                value: self.loiter.dwell_timer as f32 / 20.0,
+                                value: self.loiter.dwell_timer as f32 / self.sample_rate_hz,
                                 severity: "warning".into(),
                             });
                         }
@@ -1267,7 +1280,7 @@ impl EdgeModuleEngine {
                         alerts.push(EdgeAlert {
                             module: "loitering".into(), event_type: 242,
                             event_name: "LoiteringEnd".into(),
-                            value: self.loiter.dwell_timer as f32 / 20.0,
+                            value: self.loiter.dwell_timer as f32 / self.sample_rate_hz,
                             severity: "info".into(),
                         });
                         self.loiter.dwell_timer = 0;
@@ -1532,7 +1545,7 @@ fn euclid_4(a: &[f32; 4], b: &[f32; 4]) -> f32 {
     ((a[0]-b[0]).powi(2) + (a[1]-b[1]).powi(2) + (a[2]-b[2]).powi(2) + (a[3]-b[3]).powi(2)).sqrt()
 }
 
-fn jerk_estimate(buf: &RingBuf<100>) -> f32 {
+fn jerk_estimate(buf: &RingBuf<100>, sample_rate_hz: f32) -> f32 {
     if buf.len < 3 { return 0.0; }
     let mut max_jerk = 0.0f32;
     let idx = buf.idx;
@@ -1543,7 +1556,7 @@ fn jerk_estimate(buf: &RingBuf<100>) -> f32 {
         let j = (v2 - 2.0 * v1 + v0).abs(); // second derivative
         if j > max_jerk { max_jerk = j; }
     }
-    max_jerk * 20.0 // scale to Hz
+    max_jerk * sample_rate_hz // scale to Hz
 }
 
 fn entropy_estimate(buf: &RingBuf<100>) -> f32 {

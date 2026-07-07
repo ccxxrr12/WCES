@@ -92,39 +92,37 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                 }
                                 Some("agent_analyze_request") => {
                                     let patient_id = msg["patient_id"].as_str().unwrap_or("UNKNOWN");
-                                    let engine = {
+                                    // M-11: single read lock to extract engine + vitals
+                                    // snapshot + tx clone (was 3 separate lock acquisitions,
+                                    // each requiring its own atomic lock/unlock cycle).
+                                    let (engine, br, hr, motion, quality,
+                                         triage_label, alerts, tx) = {
                                         let s = state.read().await;
-                                        s.llm_engine.clone()
+                                        let triage = s.latest_update.as_ref()
+                                            .and_then(|u| u.triage_update.as_ref())
+                                            .and_then(|t| t.survivors.iter()
+                                                .find(|surv| surv.id == patient_id)
+                                                .map(|surv| surv.triage.clone()))
+                                            .unwrap_or_else(|| "Unknown".to_string());
+                                        let a: Vec<String> = s.latest_update.as_ref()
+                                            .and_then(|u| u.wasm_alerts.as_ref())
+                                            .map(|alerts: &Vec<EdgeAlert>| alerts.iter().map(|a| a.event_name.clone()).collect())
+                                            .unwrap_or_default();
+                                        (
+                                            s.llm_engine.clone(),
+                                            s.latest_vitals.breathing_rate_bpm,
+                                            s.latest_vitals.heart_rate_bpm,
+                                            s.smoothed_motion,
+                                            s.latest_vitals.signal_quality,
+                                            triage,
+                                            a,
+                                            s.tx.clone(),
+                                        )
                                     };
-                                    if let Some(ref engine) = engine {
-                                        let (br, hr, motion, quality, triage_label, alerts) = {
-                                            let s = state.read().await;
-                                            let triage = s.latest_update.as_ref()
-                                                .and_then(|u| u.triage_update.as_ref())
-                                                .and_then(|t| t.survivors.iter()
-                                                    .find(|surv| surv.id == patient_id)
-                                                    .map(|surv| surv.triage.clone()))
-                                                .unwrap_or_else(|| "Unknown".to_string());
-                                            let a: Vec<String> = s.latest_update.as_ref()
-                                                .and_then(|u| u.wasm_alerts.as_ref())
-                                                .map(|alerts: &Vec<EdgeAlert>| alerts.iter().map(|a| a.event_name.clone()).collect())
-                                                .unwrap_or_default();
-                                            (s.latest_vitals.breathing_rate_bpm,
-                                             s.latest_vitals.heart_rate_bpm,
-                                             s.smoothed_motion,
-                                             s.latest_vitals.signal_quality,
-                                             triage,
-                                             a)
-                                        };
-
-                                        let eng = engine.clone();
+                                    if let Some(engine) = engine {
                                         let pid = patient_id.to_string();
-                                        let tx = {
-                                            let s = state.read().await;
-                                            s.tx.clone()
-                                        };
                                         tokio::spawn(async move {
-                                            if let Some(mut rx) = eng.trigger_analysis_streaming(
+                                            if let Some(mut rx) = engine.trigger_analysis_streaming(
                                                 &pid, br, hr, motion, quality,
                                                 &triage_label, &alerts,
                                             ).await {

@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WCES - 方舱生命体征监测系统</title>
-    <script src="/ui/lib/three.min.js"></script>
-    <script src="/ui/lib/OrbitControls.js"></script>
     <script src="/ui/js/triage-common.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -30,6 +28,8 @@
             --heatmap-mid: rgba(255,200,0,0.25);
             --heatmap-high: rgba(255,50,0,0.4);
             --bg-secondary-85: rgba(28,28,30,0.85);
+            --accent-blue: #0A84FF;
+            --border-subtle: rgba(255,255,255,0.08);
         }
         :root.light {
             --bg-primary: #F2F2F7;
@@ -42,6 +42,8 @@
             --card-shadow: rgba(0,0,0,0.08);
             --overlay-bg: rgba(240,240,245,0.9);
             --bg-secondary-85: rgba(255,255,255,0.85);
+            --accent-blue: #007AFF;
+            --border-subtle: rgba(0,0,0,0.08);
         }
 
         body {
@@ -1018,19 +1020,19 @@ function renderFromServer(){
     if(now-lastRenderStamp>=MIN_RENDER_MS){
         lastRenderStamp=now;
 
-        // Sort survivors by severity before rendering
-        if(latestTriage.survivors){
+        // Sort survivors by severity before rendering (H-2: sort a copy, don't mutate server cache)
+        const sortedSurvivors = latestTriage.survivors ? [...latestTriage.survivors].sort((a,b)=>{
             const sev={red:0,yellow:1,green:2,black:3};
-            latestTriage.survivors.sort((a,b)=>(sev[a.triage_color]??9)-(sev[b.triage_color]??9));
-        }
+            return (sev[a.triage_color]??9)-(sev[b.triage_color]??9);
+        }) : [];
 
         // Survivors list — only redraw if content changed
         let newSurvivorHtml;
-        if(!latestTriage.survivors||latestTriage.survivors.length===0){
+        if(sortedSurvivors.length===0){
             newSurvivorHtml='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-text">未检测到伤员</div></div>';
         }else{
-            newSurvivorHtml=latestTriage.survivors.map((s,idx)=>`
-                <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" onclick="selectSurvivor('${escapeHtml(s.id)}');openEhr(latestTriage.survivors[${idx}])">
+            newSurvivorHtml=sortedSurvivors.map((s,idx)=>`
+                <div class="survivor-card ${escapeHtml(s.triage_color)}${s.id===selectedPatientId?' active':''}" onclick="selectSurvivor('${escapeHtml(s.id)}');openEhr(latestTriage.survivors.find(x=>x.id===\`${escapeHtml(s.id)}\`))">
                     <div class="survivor-header">
                         <div class="survivor-id"><div class="survivor-avatar">${escapeHtml(s.id.substring(5,7))}</div><div class="survivor-info"><h3>${escapeHtml(s.id)}</h3><p>追踪 ${s.tracked_seconds.toFixed(0)}s · 节点${s.node_id} · ${escapeHtml(s.estimated_age)}</p></div></div>
                         <div style="display:flex;gap:6px;align-items:center;">${s.is_deteriorating?'<span class="deteriorating-badge">⚠ 恶化</span>':''}${s.reidentified?'<span class="reid-badge">🔄 重识别</span>':''}<span class="triage-badge ${escapeHtml(s.triage_color)}">${escapeHtml(s.triage)}</span></div>
@@ -1211,48 +1213,6 @@ function handleUpdate(data){
     if(ms&&latestData?.model_status)ms.textContent='🧠 Model Active';else if(ms)ms.textContent='';
     if(data.triage_update){latestTriage=data.triage_update;renderFromServer();enableAnalyzeButton()}
 }
-function startDemo(){
-    var T=0,wp=0,seg=0,phase=0,lastT=0,done=0;
-    var pts=[{x:0,y:2.0},{x:-2.2,y:-1.5},{x:2.2,y:-1.5},{x:0,y:0}];
-    var sx=0,sy=2.0;
-    function tick(ts){
-        if(done)return;
-        var dt=lastT?(ts-lastT)*0.001:0.05;
-        dt=Math.min(dt,0.2);lastT=ts;T+=dt;
-        if(phase==0){
-            seg+=dt;
-            if(seg>=2){seg=0;phase=1;wp=(wp+1)%4;if(wp==3)done=1;}
-        }else{
-            seg+=dt;
-            var t=Math.min(seg/3,1);
-            var f=pts[(wp-1+4)%4],g=pts[wp];
-            sx=f.x+(g.x-f.x)*t;sy=f.y+(g.y-f.y)*t;
-            if(t>=1){seg=0;phase=0}
-        }
-        var d1=Math.hypot(sx,sy-2),d2=Math.hypot(sx+2.2,sy+1.5),d3=Math.hypot(sx-2.2,sy+1.5);
-        var nn=d1<d2?(d1<d3?1:3):(d2<d3?2:3);
-        var tc=nn==1?'yellow':'green',tl=nn==1?'Delayed':'Minor';
-        var br=16+3*Math.sin(T*.5)+Math.random()*1.5,hr=70+5*Math.sin(T*.7)+Math.random()*3;
-        handleUpdate({type:'sensing_update',source:'esp32',tick:Math.round(T*10),
-            nodes:[
-                {node_id:1,rssi_dbm:-52,position:[0,2,1],amplitude:Array(56).fill(12),subcarrier_count:56,breathing_rate_bpm:nn==1?br:null,heart_rate_bpm:nn==1?hr:null,motion_level:'present_still',presence:!0,active:!0,channel:149,band:'5GHz'},
-                {node_id:2,rssi_dbm:-55,position:[-2.2,-1.5,1],amplitude:Array(56).fill(8),subcarrier_count:56,breathing_rate_bpm:nn==2?br:null,heart_rate_bpm:nn==2?hr:null,motion_level:'absent',presence:!0,active:!0,channel:149,band:'5GHz'},
-                {node_id:3,rssi_dbm:-53,position:[2.2,-1.5,1],amplitude:Array(56).fill(8),subcarrier_count:56,breathing_rate_bpm:nn==3?br:null,heart_rate_bpm:nn==3?hr:null,motion_level:'absent',presence:!0,active:!0,channel:149,band:'5GHz'}
-            ],
-            features:{mean_rssi:-52,variance:1200,motion_band_power:15,breathing_band_power:8,dominant_freq_hz:.25,change_points:5,spectral_power:400},
-            classification:{motion_level:'present_still',presence:!0,confidence:.75},
-            signal_field:{grid_size:[20,1,20],values:Array(400).fill(.05)},
-            vital_signs:{breathing_rate_bpm:br,heart_rate_bpm:hr,breathing_confidence:.55,heartbeat_confidence:.35,signal_quality:.45},
-            triage_update:{survivors:[{id:'S1',triage:tl,triage_color:tc,triage_priority:tc=='yellow'?2:3,breathing_rate:br,heart_rate:hr,motion_score:.15,position:[sx,sy,1],position_confidence:.65,is_deteriorating:!1,tracked_seconds:T,node_id:nn,estimated_age:'Adult',status:'active',reidentified:!1}],assessment:{total:1,immediate:0,delayed:tc=='yellow'?1:0,minor:tc=='green'?1:0,deceased:0,unknown:0,severity:tc=='yellow'?'Moderate':'Minimal',rescuer_estimate:2},alerts:[]},
-            wasm_alerts:[],pose_keypoints:null,model_status:null,persons:null,estimated_persons:1,tracked_survivors:null,alerts:null
-        });
-        drawMap();
-    }
-    document.getElementById('statusDot').className='status-dot online';
-    document.getElementById('statusText').textContent='已连接';
-    requestAnimationFrame(function R(ts){tick(ts);if(!done)requestAnimationFrame(R)});
-}
-
 // ═══════════════════════════════════════════════════════════
 // AGENT ANALYSIS
 // ═══════════════════════════════════════════════════════════
@@ -1342,8 +1302,12 @@ function registerPatient(){
         medications:document.getElementById('regMedications').value.split(',').map(s=>s.trim()).filter(Boolean),
         allergies:document.getElementById('regAllergies').value.split(',').map(s=>s.trim()).filter(Boolean),
         notes:document.getElementById('regNotes').value.trim()||null};
-    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'patient_register',...registeredPatients[patientId]}));
-    try{localStorage.setItem('wces_patients',JSON.stringify(registeredPatients))}catch(e){}
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'patient_register',...registeredPatients[patientId],_token:localStorage.getItem('wces_token')||''}));
+    try {
+        const data = JSON.stringify(registeredPatients);
+        try { localStorage.setItem('wces_patients', data); }
+        catch(e) { console.warn('localStorage 配额超限，无法保存伤员数据'); }
+    } catch(e) { console.error('无法序列化伤员数据', e); }
     selectedPatientId=patientId;refreshPatientList();closePatientModal();enableAnalyzeButton();
 }
 function refreshPatientList(){
@@ -1370,12 +1334,11 @@ try{
     drawMap();
     console.log('[TRIAGE] drawMap() completed');
 }catch(e){showError('drawMap failed: '+e.message);console.error(e)}
-startDemo();
-var s=document.createElement('script');s.src='demo-walk.js';document.head.appendChild(s);
 // Observe resize for canvas
 if(window.ResizeObserver){mapResizeObserver=new ResizeObserver(()=>{if(currentView==='map')drawMap()});mapResizeObserver.observe(document.getElementById('mapContainer'))}
 window.addEventListener('beforeunload',cleanup);
 console.log('[TRIAGE] Init complete. WS state:',ws?ws.readyState:'not created');
 </script>
+<script src="demo-walk.js"></script>
 </body>
 </html>

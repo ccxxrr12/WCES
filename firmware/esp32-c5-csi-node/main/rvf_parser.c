@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
 #include "mbedtls/private/sha256.h"
+#include "mbedtls/md.h"
 
 static const char *TAG = "rvf";
 
@@ -73,7 +74,20 @@ esp_err_t rvf_parse(const uint8_t *data, uint32_t data_len, rvf_parsed_t *out)
         return ESP_ERR_INVALID_SIZE;
     }
 
-    /* Verify total_len consistency. */
+    /* C-12 fix: Bound test_vectors_len to prevent integer overflow in the
+     * total size computation below. Without this, a crafted header with a
+     * huge test_vectors_len could cause expected_total to wrap around to a
+     * small value, bypassing the truncation check and leading to
+     * out-of-bounds reads when locating sections. */
+    if (hdr->test_vectors_len > (128 * 1024)) {
+        ESP_LOGE(TAG, "Bad test_vectors size: %lu", (unsigned long)hdr->test_vectors_len);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    /* Verify total_len consistency.
+     * Each component is now individually bounded (wasm_len ≤ 128 KB,
+     * signature_len ∈ {0, 64}, test_vectors_len ≤ 128 KB), so the sum
+     * cannot overflow uint32_t (max ~256 KB + header + manifest). */
     uint32_t expected_total = RVF_HEADER_SIZE + RVF_MANIFEST_SIZE
                             + hdr->wasm_len + hdr->signature_len
                             + hdr->test_vectors_len;
@@ -185,57 +199,49 @@ esp_err_t rvf_verify_signature(const rvf_parsed_t *parsed, const uint8_t *data,
     uint32_t signed_len = RVF_HEADER_SIZE + RVF_MANIFEST_SIZE + parsed->wasm_len;
 
     /*
-     * Ed25519 verification.
+     * C-11 fix: HMAC-SHA256 integrity check (TEMPORARY — NOT Ed25519).
      *
-     * ESP-IDF v5.2 mbedtls does NOT include Ed25519 (Curve25519 is
-     * for ECDH/X25519 only).  We use a SHA-256-HMAC integrity check:
+     * The previous implementation computed SHA-256(pubkey || signed_region),
+     * which is a plain hash that anyone can recompute given the public key —
+     * it provided NO authentication and NO forgery resistance (an attacker
+     * who knows the pubkey can forge a valid "signature").
      *
-     *   expected = SHA-256(pubkey || signed_region)
+     * This temporary scheme treats the 32-byte "pubkey" parameter as a
+     * shared HMAC secret and verifies:
+     *   signature[0..31] == HMAC-SHA256(secret, header ‖ manifest ‖ wasm)
      *
-     * The first 32 bytes of the 64-byte signature field must match.
-     * This provides tamper detection and key-binding — a different
-     * pubkey produces a different expected hash, so unauthorized
-     * publishers cannot forge a valid signature.
+     * HMAC provides proper key-binding: without the secret, an attacker
+     * cannot produce a valid tag even if they can choose the message.
      *
-     * For full Ed25519 (NaCl-style), enable CONFIG_MBEDTLS_EDDSA_C
-     * or link TweetNaCl.  The RVF builder should match this scheme.
+     * TODO: SECURITY — implement real Ed25519 verification.
+     * ESP-IDF v5.3+ supports CONFIG_MBEDTLS_EDDSA_C; alternatively link
+     * TweetNaCl. The RVF builder MUST be updated to sign with the matching
+     * Ed25519 scheme when this is deployed in production.
      */
-    uint8_t hash_input_prefix[32];
-    memcpy(hash_input_prefix, pubkey, 32);
-
-    /* Compute SHA-256(pubkey || header+manifest+wasm). */
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    int ret = mbedtls_sha256_starts(&ctx, 0);
-    if (ret != 0) {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
-    ret = mbedtls_sha256_update(&ctx, hash_input_prefix, 32);
-    if (ret != 0) {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
-    ret = mbedtls_sha256_update(&ctx, data, signed_len);
-    if (ret != 0) {
-        mbedtls_sha256_free(&ctx);
+    const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (md_info == NULL) {
+        ESP_LOGE(TAG, "mbedtls_md_info_from_type(SHA256) failed");
         return ESP_FAIL;
     }
 
     uint8_t expected[32];
-    ret = mbedtls_sha256_finish(&ctx, expected);
-    mbedtls_sha256_free(&ctx);
+    int ret = mbedtls_md_hmac(md_info, pubkey, 32, data, signed_len, expected);
     if (ret != 0) {
+        ESP_LOGE(TAG, "HMAC-SHA256 computation failed: -0x%04x", -ret);
         return ESP_FAIL;
     }
 
-    /* Compare first 32 bytes of signature against expected hash. */
-    if (memcmp(parsed->signature, expected, 32) != 0) {
-        ESP_LOGE(TAG, "Signature verification failed — key mismatch or tampered");
+    /* Constant-time comparison to prevent timing side-channels. */
+    volatile uint8_t diff = 0;
+    for (int i = 0; i < 32; i++) {
+        diff |= parsed->signature[i] ^ expected[i];
+    }
+    if (diff != 0) {
+        ESP_LOGE(TAG, "Signature verification failed — HMAC mismatch or tampered");
         return ESP_ERR_INVALID_CRC;
     }
 
-    ESP_LOGW(TAG, "Signature verified (SHA-256-HMAC integrity check — NOT Ed25519). "
-             "For full Ed25519, enable CONFIG_MBEDTLS_EDDSA_C (ESP-IDF >=5.3) or link TweetNaCl.");
+    ESP_LOGW(TAG, "Signature verified (HMAC-SHA256 — TEMPORARY scheme, NOT Ed25519). "
+             "TODO: implement real Ed25519 (CONFIG_MBEDTLS_EDDSA_C or TweetNaCl).");
     return ESP_OK;
 }

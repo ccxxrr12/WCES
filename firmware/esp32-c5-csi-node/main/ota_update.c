@@ -246,7 +246,11 @@ esp_err_t ota_update_init(void)
         /* Persist to NVS */
         nvs_handle_t nvs_w;
         if (nvs_open(PSK_AUTH_NVS_NAMESPACE, NVS_READWRITE, &nvs_w) == ESP_OK) {
-            nvs_set_str(nvs_w, PSK_AUTH_NVS_KEY, s_ota_psk);
+            /* M-3 fix: Check nvs_set_str return value before committing. */
+            esp_err_t set_err = nvs_set_str(nvs_w, PSK_AUTH_NVS_KEY, s_ota_psk);
+            if (set_err != ESP_OK) {
+                ESP_LOGE(TAG, "nvs_set_str failed: %s", esp_err_to_name(set_err));
+            }
             esp_err_t commit_err = nvs_commit(nvs_w);
             nvs_close(nvs_w);
             if (commit_err != ESP_OK) {
@@ -272,6 +276,33 @@ esp_err_t ota_update_init(void)
 
 esp_err_t ota_update_init_ex(void **out_server)
 {
+    /* C-10 fix: Load OTA PSK from NVS before starting the server.
+     * Without this, s_ota_psk remains empty and ota_check_auth() rejects
+     * every request (OTA becomes completely unusable).
+     * Unlike ota_update_init(), this variant does NOT auto-generate a PSK;
+     * the caller must provision one via NVS first (run ota_update_init()
+     * once, or use provision.py --ota-psk). */
+    if (s_ota_psk[0] == '\0') {
+        nvs_handle_t nvs;
+        bool psk_found = false;
+        if (nvs_open(PSK_AUTH_NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
+            size_t len = sizeof(s_ota_psk);
+            if (nvs_get_str(nvs, PSK_AUTH_NVS_KEY, s_ota_psk, &len) == ESP_OK) {
+                ESP_LOGI(TAG, "OTA PSK loaded from NVS (%d chars) — authentication enabled",
+                         (int)len - 1);
+                psk_found = true;
+            }
+            nvs_close(nvs);
+        }
+        if (!psk_found) {
+            ESP_LOGE(TAG, "OTA PSK not found in NVS — authentication cannot be enabled. "
+                     "Run ota_update_init() to auto-generate, or provision via NVS key '%s'.",
+                     PSK_AUTH_NVS_KEY);
+            if (out_server) *out_server = NULL;
+            return ESP_FAIL;
+        }
+    }
+
     return ota_start_server((httpd_handle_t *)out_server);
 }
 

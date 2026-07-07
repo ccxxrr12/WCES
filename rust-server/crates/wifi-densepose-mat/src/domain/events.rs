@@ -45,6 +45,21 @@ impl DomainEvent {
             DomainEvent::Tracking(e) => e.event_type(),
         }
     }
+
+    /// Get the survivor ID associated with this event, if any (M-1).
+    ///
+    /// Returns `Some` for `Detection`, `Alert::AlertGenerated`, and all
+    /// `Tracking` events. Other alert/zone/system events do not reference a
+    /// specific survivor and return `None`.
+    pub fn survivor_id(&self) -> Option<&SurvivorId> {
+        match self {
+            DomainEvent::Detection(e) => Some(e.survivor_id()),
+            DomainEvent::Alert(AlertEvent::AlertGenerated { survivor_id, .. }) => Some(survivor_id),
+            DomainEvent::Alert(_) => None,
+            DomainEvent::Tracking(e) => Some(e.survivor_id()),
+            DomainEvent::Zone(_) | DomainEvent::System(_) => None,
+        }
+    }
 }
 
 /// Detection-related events
@@ -477,6 +492,17 @@ impl TrackingEvent {
             TrackingEvent::TrackRescued { .. } => "TrackRescued",
         }
     }
+
+    /// Get the survivor ID associated with this tracking event (M-1).
+    pub fn survivor_id(&self) -> &SurvivorId {
+        match self {
+            TrackingEvent::TrackBorn { survivor_id, .. } => survivor_id,
+            TrackingEvent::TrackLost { survivor_id, .. } => survivor_id,
+            TrackingEvent::TrackReidentified { survivor_id, .. } => survivor_id,
+            TrackingEvent::TrackTerminated { survivor_id, .. } => survivor_id,
+            TrackingEvent::TrackRescued { survivor_id, .. } => survivor_id,
+        }
+    }
 }
 
 /// Event store for persisting domain events
@@ -495,21 +521,61 @@ pub trait EventStore: Send + Sync {
 }
 
 /// In-memory event store implementation
-#[derive(Debug, Default)]
+///
+/// Bounded by a configurable capacity (M-2). When the capacity is reached,
+/// the oldest events are evicted in FIFO order to make room for new ones.
+#[derive(Debug)]
 pub struct InMemoryEventStore {
     events: parking_lot::RwLock<Vec<DomainEvent>>,
+    /// Maximum number of events retained. Older events are dropped first.
+    capacity: usize,
+}
+
+/// Default retention capacity for the in-memory event store (M-2).
+pub const DEFAULT_EVENT_STORE_CAPACITY: usize = 10_000;
+
+impl Default for InMemoryEventStore {
+    fn default() -> Self {
+        Self {
+            events: parking_lot::RwLock::new(Vec::new()),
+            capacity: DEFAULT_EVENT_STORE_CAPACITY,
+        }
+    }
 }
 
 impl InMemoryEventStore {
-    /// Create a new in-memory event store
+    /// Create a new in-memory event store with the default capacity.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a new in-memory event store with a custom capacity (M-2).
+    pub fn with_capacity(capacity: usize) -> Self {
+        let cap = if capacity == 0 { DEFAULT_EVENT_STORE_CAPACITY } else { capacity };
+        Self {
+            events: parking_lot::RwLock::new(Vec::with_capacity(cap.min(1024))),
+            capacity: cap,
+        }
+    }
+
+    /// Current configured capacity.
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 }
 
 impl EventStore for InMemoryEventStore {
     fn append(&self, event: DomainEvent) -> Result<(), crate::MatError> {
-        self.events.write().push(event);
+        let mut events = self.events.write();
+        events.push(event);
+        // Evict oldest events while exceeding capacity (M-2). Using
+        // `drain` on the leading slice is O(excess) and amortised cheap
+        // because we evict at most a small fraction per append in steady
+        // state.
+        if events.len() > self.capacity {
+            let excess = events.len() - self.capacity;
+            events.drain(0..excess);
+        }
         Ok(())
     }
 
@@ -528,17 +594,15 @@ impl EventStore for InMemoryEventStore {
     }
 
     fn for_survivor(&self, survivor_id: &SurvivorId) -> Result<Vec<DomainEvent>, crate::MatError> {
+        // M-1: previously this only matched `DomainEvent::Detection`, silently
+        // dropping `Tracking` events and `Alert::AlertGenerated` that also
+        // reference a survivor. Use the unified `survivor_id()` accessor so
+        // every survivor-scoped event is returned.
         Ok(self
             .events
             .read()
             .iter()
-            .filter(|e| {
-                if let DomainEvent::Detection(de) = e {
-                    de.survivor_id() == survivor_id
-                } else {
-                    false
-                }
-            })
+            .filter(|e| e.survivor_id() == Some(survivor_id))
             .cloned()
             .collect())
     }

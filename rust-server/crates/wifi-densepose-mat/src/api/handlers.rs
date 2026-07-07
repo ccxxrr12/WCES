@@ -775,6 +775,11 @@ fn survivor_to_response(survivor: &crate::Survivor) -> SurvivorResponse {
     let latest_vitals = survivor.vital_signs().latest();
     let vital_signs = VitalSignsSummaryDto {
         breathing_rate: latest_vitals.and_then(|v| v.breathing.as_ref().map(|b| b.rate_bpm)),
+        // TODO(M-5): these fieldless enums rely on `{:?}` to emit the variant
+        // name (e.g. "Normal"). This is correct today but would leak internal
+        // fields if variants ever gain data. Implement `Display` for
+        // BreathingType / MovementType / AgeCategory / AlertStatus to make
+        // the contract explicit.
         breathing_type: latest_vitals.and_then(|v| v.breathing.as_ref().map(|b| format!("{:?}", b.pattern_type))),
         heart_rate: latest_vitals.and_then(|v| v.heartbeat.as_ref().map(|h| h.rate_bpm)),
         has_heartbeat: latest_vitals.map(|v| v.has_heartbeat()).unwrap_or(false),
@@ -929,6 +934,21 @@ pub async fn push_csi_data(
         ));
     }
 
+    // M-4: bound the per-request sample count to protect the pipeline buffer
+    // and downstream allocations from a single oversized payload. 1M samples
+    // is roughly 16s of 62.5 kHz data, far beyond any realistic single push.
+    const MAX_CSI_SAMPLES_PER_REQUEST: usize = 1_000_000;
+    if request.amplitudes.len() > MAX_CSI_SAMPLES_PER_REQUEST {
+        return Err(ApiError::validation(
+            format!(
+                "CSI data too large: {} samples exceeds limit of {}",
+                request.amplitudes.len(),
+                MAX_CSI_SAMPLES_PER_REQUEST
+            ),
+            Some("amplitudes".to_string()),
+        ));
+    }
+
     let pipeline = state.detection_pipeline();
     let sample_count = request.amplitudes.len();
     pipeline.add_data(&request.amplitudes, &request.phases);
@@ -1064,7 +1084,14 @@ pub async fn list_domain_events(
         .map(|e| DomainEventDto {
             event_type: e.event_type().to_string(),
             timestamp: e.timestamp(),
-            details: format!("{:?}", e),
+            // M-5: previously `format!("{:?}", e)` leaked the internal Rust
+            // struct layout (field names, nested enums) into the API
+            // response. Use only public accessors to build a stable summary
+            // that does not expose implementation details.
+            details: match e.survivor_id() {
+                Some(sid) => format!("{}: survivor={}", e.event_type(), sid),
+                None => e.event_type().to_string(),
+            },
         })
         .collect();
 

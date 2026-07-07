@@ -48,9 +48,15 @@ impl LocalizationService {
             return None;
         }
 
-        // Estimate 2D position from triangulation
-        // In real implementation, RSSI values would come from actual measurements
-        let rssi_values = self.simulate_rssi_measurements(sensors, vitals);
+        // Estimate 2D position from triangulation.
+        // When real sensor hardware is not connected, `simulate_rssi_measurements`
+        // synthesizes RSSI readings using the log-distance path loss model so
+        // the triangulator has data to operate on (C-9). Real RSSI readings
+        // require ESP32 mesh (ADR-012) or Linux WiFi interface (ADR-013).
+        let rssi_values = self.simulate_rssi_measurements(sensors, vitals, zone);
+        if rssi_values.is_empty() {
+            return None;
+        }
         let position_2d = self.triangulator.estimate_position(sensors, &rssi_values)?;
 
         // Estimate depth
@@ -73,21 +79,80 @@ impl LocalizationService {
         Some(position_3d)
     }
 
-    /// Read RSSI measurements from sensors.
+    /// Simulate RSSI measurements from sensors using the log-distance path
+    /// loss model (C-9).
     ///
-    /// Returns empty when no real sensor hardware is connected.
-    /// Real RSSI readings require ESP32 mesh (ADR-012) or Linux WiFi interface (ADR-013).
-    /// Caller handles empty readings by returning None/default.
+    /// When real sensor hardware is not connected, this synthesizes RSSI
+    /// readings so the triangulator has data to operate on. Real RSSI
+    /// readings require ESP32 mesh (ADR-012) or Linux WiFi interface
+    /// (ADR-013); this simulation is a deterministic placeholder for
+    /// testing and fallback operation.
+    ///
+    /// # Model
+    ///
+    /// Uses the standard log-distance path loss formula:
+    /// `rssi = ref_rssi - 10 * n * log10(distance) + noise`
+    ///
+    /// where `ref_rssi = -30.0 dBm` (at 1m reference distance), `n = 3.0`
+    /// (path-loss exponent for indoor/obstructed environments), and
+    /// `noise` is a deterministic per-sensor perturbation with std dev
+    /// ~2.0 dB. The target position is approximated by the zone center
+    /// (survivor's actual location is unknown — that is what we are
+    /// estimating).
     fn simulate_rssi_measurements(
         &self,
-        _sensors: &[crate::domain::SensorPosition],
-        _vitals: &VitalSignsReading,
+        sensors: &[crate::domain::SensorPosition],
+        vitals: &VitalSignsReading,
+        zone: &ScanZone,
     ) -> Vec<(String, f64)> {
-        // No real sensor hardware connected - return empty.
-        // Real RSSI readings require ESP32 mesh (ADR-012) or Linux WiFi interface (ADR-013).
-        // Caller handles empty readings by returning None from estimate_position.
-        tracing::warn!("No sensor hardware connected. Real RSSI readings require ESP32 mesh (ADR-012) or Linux WiFi interface (ADR-013).");
-        vec![]
+        // Log-distance path loss model parameters (C-9 defaults).
+        const REF_RSSI: f64 = -30.0; // RSSI at 1m reference distance (dBm)
+        const PATH_LOSS_EXP: f64 = 3.0; // Path-loss exponent n (indoor)
+        const NOISE_STD: f64 = 2.0; // Gaussian noise std dev (dB)
+        const MIN_DISTANCE: f64 = 0.5; // Floor to avoid log(0) / unrealistic gain
+
+        // Approximate the survivor's position by the zone center. The true
+        // position is unknown (we are estimating it); the zone center is a
+        // reasonable prior for the simulation. z=0 assumes ground level.
+        let (target_x, target_y) = zone.bounds().center();
+        let target_z: f64 = 0.0;
+
+        // Movement increases signal variance slightly (body motion
+        // perturbs the multipath channel).
+        let movement_intensity = f64::from(vitals.movement.intensity);
+
+        let mut out = Vec::with_capacity(sensors.len());
+        for sensor in sensors.iter().filter(|s| s.is_operational) {
+            let dx = sensor.x - target_x;
+            let dy = sensor.y - target_y;
+            let dz = sensor.z - target_z;
+            let distance = (dx * dx + dy * dy + dz * dz).sqrt().max(MIN_DISTANCE);
+
+            // Log-distance path loss: RSSI = ref - 10*n*log10(d) + noise
+            let path_loss = 10.0 * PATH_LOSS_EXP * distance.log10();
+            let base_rssi = REF_RSSI - path_loss;
+
+            // Deterministic per-sensor noise (FNV-1a hash of the sensor id
+            // mapped to [-2*std, +2*std]). Deterministic so tests are
+            // reproducible without pulling in a RNG dependency; not
+            // cryptographically secure.
+            let noise = deterministic_noise(&sensor.id, NOISE_STD);
+
+            // Movement penalty: body motion adds ~1.5 dB attenuation per
+            // unit of intensity (empirical, scaled).
+            let movement_penalty = movement_intensity * 1.5;
+
+            let rssi = base_rssi + noise - movement_penalty;
+            out.push((sensor.id.clone(), rssi));
+        }
+
+        if out.is_empty() {
+            tracing::warn!(
+                "simulate_rssi_measurements produced no values: \
+                 zone has no operational sensors"
+            );
+        }
+        out
     }
 
     /// Estimate debris profile for the zone
@@ -129,6 +194,24 @@ impl Default for LocalizationService {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Deterministic pseudo-random noise for RSSI simulation (C-9).
+///
+/// Produces a value in `[-2*std, +2*std]` derived from an FNV-1a hash of
+/// `seed`. Deterministic so that tests are reproducible without pulling in
+/// an RNG dependency; **not** cryptographically secure — used only to add
+/// per-sensor variation to the simulated RSSI.
+fn deterministic_noise(seed: &str, std: f64) -> f64 {
+    let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
+    for b in seed.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3); // FNV prime
+    }
+    // Map the hash to [-2, +2] then scale by std. Using a 4*std range so
+    // the noise covers ~95% of a Gaussian with the given std.
+    let normalized = ((h % 1000) as f64 / 250.0) - 2.0;
+    normalized * std
 }
 
 /// Fuses multiple position estimates

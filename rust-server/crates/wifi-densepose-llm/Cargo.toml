@@ -33,6 +33,9 @@ sled = "0.34"
 anyhow.workspace = true
 tracing.workspace = true
 
+# Hashing (PII pseudonymization in prompt_builder — C-7/C-8)
+sha2.workspace = true
+
 # Agent mode: cloud API gateway + streaming + validation
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"], optional = true }
 tokio-stream = { version = "0.1", optional = true }

@@ -9,6 +9,13 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Maximum allowed size for a serialized patient record (H-2).
+///
+/// Records larger than this are rejected during deserialization to prevent
+/// resource exhaustion / OOM from malformed or hostile blobs read back from
+/// sled. 1 MiB is far above the expected size of a `PatientRecord` (~1 KiB).
+const MAX_RECORD_SIZE: usize = 1 * 1024 * 1024;
+
 // ── Data Types ──────────────────────────────────────────────────────────────
 
 /// A patient record stored in the embedded database.
@@ -108,9 +115,32 @@ impl PatientRecordDB {
     }
 
     /// Store a patient record. Uses separate batches per tree for primary+index consistency.
+    ///
+    /// # Atomicity caveat (H-1)
+    ///
+    /// sled `Tree::apply_batch` is atomic **per tree** but cannot span
+    /// multiple trees in a single call. A crash between the `patients` and
+    /// `node_index` batch applications can leave the secondary index
+    /// inconsistent with the primary.
+    ///
+    /// TODO: use `sled::Db::transaction` (or the `transactional!` macro) to
+    /// make the primary + index update atomic across both trees. Until that
+    /// refactor lands, the index write failure path below attempts a
+    /// compensating rollback of the primary tree so the database is not left
+    /// in a half-applied state.
     pub fn put(&self, record: &PatientRecord) -> Result<()> {
         let key = record.patient_id.as_bytes();
         let value = serde_json::to_vec(record).context("Failed to serialize patient record")?;
+
+        // H-2: reject oversized records at write time too.
+        if value.len() > MAX_RECORD_SIZE {
+            anyhow::bail!(
+                "patient record {} serializes to {} bytes, exceeds MAX_RECORD_SIZE ({} bytes)",
+                record.patient_id,
+                value.len(),
+                MAX_RECORD_SIZE
+            );
+        }
 
         let mut patients_batch = sled::Batch::default();
         patients_batch.insert(key, value);
@@ -122,21 +152,50 @@ impl PatientRecordDB {
         }
         // Remove stale node_index entry if node_id changed
         if let Some(old_bytes) = self.patients.get(&key)? {
-            if let Ok(old_record) = serde_json::from_slice::<PatientRecord>(&old_bytes) {
-                if old_record.node_id != record.node_id {
-                    if let Some(old_node) = old_record.node_id {
-                        index_batch.remove(old_node.to_be_bytes().to_vec());
+            // H-2: size-check before deserializing stale record.
+            if old_bytes.len() <= MAX_RECORD_SIZE {
+                if let Ok(old_record) = serde_json::from_slice::<PatientRecord>(&old_bytes) {
+                    if old_record.node_id != record.node_id {
+                        if let Some(old_node) = old_record.node_id {
+                            index_batch.remove(old_node.to_be_bytes().to_vec());
+                        }
                     }
                 }
+            } else {
+                tracing::warn!(
+                    "stale record for {} is {} bytes (>MAX); skipping stale-index cleanup",
+                    record.patient_id,
+                    old_bytes.len()
+                );
             }
         }
 
         // Apply primary tree first. Note: sled tree-level batches cannot span trees —
         // a crash between these two calls leaves index inconsistent. Mitigated by:
-        // (1) the index is rebuilt on startup if missing; (2) the crash window is ~μs.
+        // (1) the index is rebuilt on startup if missing; (2) the crash window is ~μs;
+        // (3) on index-write failure we attempt a compensating rollback below (H-1).
         self.patients.apply_batch(patients_batch)?;
         if let Err(e) = self.node_index.apply_batch(index_batch) {
-            tracing::warn!("Patient index write failed (primary OK): {e}. Index will auto-repair on next lookup.");
+            tracing::error!(
+                "Patient index write failed (primary already applied): {e}. \
+                 Attempting compensating rollback of primary tree (H-1)."
+            );
+            // Compensating rollback: remove the just-written primary record so
+            // the database is not left in a half-applied state. A subsequent
+            // `put` can retry the full operation.
+            let mut rollback = sled::Batch::default();
+            rollback.remove(&*key);
+            if let Err(rb_err) = self.patients.apply_batch(rollback) {
+                tracing::error!(
+                    "Compensating rollback ALSO failed: {rb_err}. \
+                     Primary tree now contains record {} without a valid index entry; \
+                     run index rebuild on startup.",
+                    record.patient_id
+                );
+            }
+            return Err(anyhow::anyhow!(
+                "patient index write failed and primary was rolled back: {e}"
+            ));
         }
         Ok(())
     }
@@ -149,6 +208,22 @@ impl PatientRecordDB {
             .context("Failed to read from patient database")?;
         match raw {
             Some(bytes) => {
+                // H-2: reject oversized blobs before deserialization to
+                // prevent OOM / resource exhaustion from hostile data.
+                if bytes.len() > MAX_RECORD_SIZE {
+                    tracing::error!(
+                        "patient record {} is {} bytes (>MAX {}); refusing to deserialize",
+                        patient_id,
+                        bytes.len(),
+                        MAX_RECORD_SIZE
+                    );
+                    anyhow::bail!(
+                        "patient record {} is {} bytes, exceeds MAX_RECORD_SIZE ({} bytes)",
+                        patient_id,
+                        bytes.len(),
+                        MAX_RECORD_SIZE
+                    );
+                }
                 let record: PatientRecord =
                     serde_json::from_slice(&bytes).context("Failed to deserialize patient record")?;
                 Ok(Some(record))
@@ -171,6 +246,15 @@ impl PatientRecordDB {
         let mut records = Vec::new();
         for item in self.patients.iter() {
             let (_, value) = item.context("Failed to iterate patient database")?;
+            // H-2: skip oversized blobs rather than crashing the iteration.
+            if value.len() > MAX_RECORD_SIZE {
+                tracing::warn!(
+                    "skipping oversized patient record ({} bytes > MAX {}) during list_all",
+                    value.len(),
+                    MAX_RECORD_SIZE
+                );
+                continue;
+            }
             if let Ok(record) = serde_json::from_slice::<PatientRecord>(&value) {
                 records.push(record);
             }
@@ -184,16 +268,26 @@ impl PatientRecordDB {
 
         // Remove node_index entry if this patient had a node_id
         if let Some(bytes) = self.patients.get(&key)? {
-            if let Ok(record) = serde_json::from_slice::<PatientRecord>(&bytes) {
-                if let Some(node_id) = record.node_id {
-                    let mut patients_batch = sled::Batch::default();
-                    patients_batch.remove(&*key);
-                    let mut index_batch = sled::Batch::default();
-                    index_batch.remove(node_id.to_be_bytes().to_vec());
-                    self.patients.apply_batch(patients_batch)?;
-                    self.node_index.apply_batch(index_batch)?;
-                    return Ok(());
+            // H-2: size-check before deserializing to delete index entry.
+            if bytes.len() <= MAX_RECORD_SIZE {
+                if let Ok(record) = serde_json::from_slice::<PatientRecord>(&bytes) {
+                    if let Some(node_id) = record.node_id {
+                        let mut patients_batch = sled::Batch::default();
+                        patients_batch.remove(&*key);
+                        let mut index_batch = sled::Batch::default();
+                        index_batch.remove(node_id.to_be_bytes().to_vec());
+                        self.patients.apply_batch(patients_batch)?;
+                        self.node_index.apply_batch(index_batch)?;
+                        return Ok(());
+                    }
                 }
+            } else {
+                tracing::warn!(
+                    "patient record {} is {} bytes (>MAX); deleting primary only, \
+                     index entry (if any) will be orphaned",
+                    patient_id,
+                    bytes.len()
+                );
             }
         }
 

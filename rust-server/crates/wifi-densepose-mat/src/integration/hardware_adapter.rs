@@ -1097,14 +1097,29 @@ impl Default for HardwareAdapter {
     }
 }
 
-/// Simple pseudo-random number generator (for simulation)
+/// Non-predictable random number in `[-0.5, 0.5)` used for simulation noise (H-8).
+///
+/// The previous implementation derived the value solely from
+/// `SystemTime::now().subsec_nanos()`, which is predictable: an attacker
+/// synchronised to the host clock could reproduce the sequence and anticipate
+/// simulated RSSI jitter. We now draw entropy from the OS CSPRNG via
+/// `getrandom`, which is not clock-derived and cannot be replayed.
+///
+/// Returns 0.0 (silently centred) if the OS entropy source fails — this only
+/// affects simulation realism, never correctness of real-hardware paths.
 fn rand_simple() -> f64 {
-    use std::time::SystemTime;
-    let nanos = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    (nanos % 1000) as f64 / 1000.0 - 0.5
+    // Pull 8 bytes of OS entropy and map to [-0.5, 0.0) ∪ [0.0, 0.5).
+    let mut buf = [0u8; 8];
+    match getrandom::getrandom(&mut buf) {
+        Ok(()) => {
+            // Interpret as little-endian u64, mask to 53 bits for a clean
+            // double mantissa, then scale to [-0.5, 0.5).
+            let bits = u64::from_le_bytes(buf) & ((1u64 << 53) - 1);
+            let unit = (bits as f64) / ((1u64 << 53) as f64); // [0.0, 1.0)
+            unit - 0.5
+        }
+        Err(_) => 0.0,
+    }
 }
 
 /// CSI readings from sensors
