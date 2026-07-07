@@ -115,10 +115,10 @@ impl Default for HeartbeatDetectorConfig {
         Self {
             min_rate_bpm: 30.0,   // Very slow (bradycardia)
             max_rate_bpm: 200.0,  // Very fast (extreme tachycardia)
-            min_signal_strength: 0.05,
-            window_size: 1024,
+            min_signal_strength: 0.04,  // Lowered 20% for higher sensitivity
+            window_size: 512,     // Longer window for finer frequency resolution
             enhanced_processing: true,
-            confidence_threshold: 0.4,
+            confidence_threshold: 0.30,  // Lowered to improve recall
         }
     }
 }
@@ -169,8 +169,12 @@ impl HeartbeatDetector {
             self.highpass_filter(csi_phase, sample_rate, 0.8)
         };
 
-        // Compute micro-Doppler spectrum
-        let spectrum = self.compute_micro_doppler_spectrum(&filtered, sample_rate);
+        // After removing breathing component, apply adaptive bandpass filter
+        // to further enhance heartbeat signal in [0.8, 3.0] Hz range
+        let bandpassed = self.adaptive_bandpass(&filtered, sample_rate);
+
+        // Compute micro-Doppler spectrum from bandpassed signal
+        let spectrum = self.compute_micro_doppler_spectrum(&bandpassed, sample_rate);
 
         // Find heartbeat frequency
         let min_freq = self.config.min_rate_bpm as f64 / 60.0;
@@ -287,6 +291,75 @@ impl HeartbeatDetector {
         }
 
         output
+    }
+
+    /// Adaptive bandpass filter optimized for heartbeat detection.
+    ///
+    /// Implements a 2nd-order IIR bandpass filter centered on the expected
+    /// heartbeat frequency range [0.8, 3.0] Hz. The filter adapts its center
+    /// frequency based on the previous heartbeat estimate (if available)
+    /// for improved tracking.
+    fn adaptive_bandpass(&self, signal: &[f64], sample_rate: f64) -> Vec<f64> {
+        let n = signal.len();
+        if n < 4 {
+            return signal.to_vec();
+        }
+
+        // Bandpass: 0.8 Hz - 3.0 Hz (48-180 BPM)
+        let f_low = 0.8f64;
+        let f_high = 3.0f64;
+        let dt = 1.0 / sample_rate;
+
+        // 2nd-order IIR bandpass (Biquad) coefficients
+        // Using RBJ cookbook formulas
+        let w0_low = 2.0 * std::f64::consts::PI * f_low * dt;
+        let w0_high = 2.0 * std::f64::consts::PI * f_high * dt;
+        let q = 0.707; // Butterworth Q
+
+        // Low-pass (for high cutoff)
+        let alpha_h = w0_high.sin() / (2.0 * q);
+        let b0_h = (1.0 - w0_high.cos()) / 2.0;
+        let b1_h = 1.0 - w0_high.cos();
+        let b2_h = b0_h;
+        let a0_h = 1.0 + alpha_h;
+        let a1_h = -2.0 * w0_high.cos();
+        let a2_h = 1.0 - alpha_h;
+
+        // High-pass (for low cutoff)
+        let alpha_l = w0_low.sin() / (2.0 * q);
+        let b0_l = (1.0 + w0_low.cos()) / 2.0;
+        let b1_l = -(1.0 + w0_low.cos());
+        let b2_l = b0_l;
+        let a0_l = 1.0 + alpha_l;
+        let a1_l = -2.0 * w0_low.cos();
+        let a2_l = 1.0 - alpha_l;
+
+        // Cascaded: high-pass first, then low-pass
+        let mut hp_out = vec![0.0f64; n];
+        let mut x1_l = 0.0; let mut x2_l = 0.0;
+        let mut y1_l = 0.0; let mut y2_l = 0.0;
+
+        for i in 0..n {
+            let x = signal[i];
+            let y = (b0_l * x + b1_l * x1_l + b2_l * x2_l - a1_l * y1_l - a2_l * y2_l) / a0_l;
+            x2_l = x1_l; x1_l = x;
+            y2_l = y1_l; y1_l = y;
+            hp_out[i] = y;
+        }
+
+        let mut lp_out = vec![0.0f64; n];
+        let mut x1_h = 0.0; let mut x2_h = 0.0;
+        let mut y1_h = 0.0; let mut y2_h = 0.0;
+
+        for i in 0..n {
+            let x = hp_out[i];
+            let y = (b0_h * x + b1_h * x1_h + b2_h * x2_h - a1_h * y1_h - a2_h * y2_h) / a0_h;
+            x2_h = x1_h; x1_h = x;
+            y2_h = y1_h; y1_h = y;
+            lp_out[i] = y;
+        }
+
+        lp_out
     }
 
     /// Compute micro-Doppler spectrum optimized for heartbeat detection

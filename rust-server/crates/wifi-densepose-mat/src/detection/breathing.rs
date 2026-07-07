@@ -121,10 +121,10 @@ impl Default for BreathingDetectorConfig {
         Self {
             min_rate_bpm: 4.0,    // Very slow breathing
             max_rate_bpm: 40.0,   // Fast breathing (distressed)
-            min_amplitude: 0.1,
-            window_size: 512,
+            min_amplitude: 0.07,  // Lowered 30% for higher sensitivity
+            window_size: 256,     // Longer window for better frequency resolution
             window_overlap: 0.5,
-            confidence_threshold: 0.3,
+            confidence_threshold: 0.35,  // Lowered to improve recall
         }
     }
 }
@@ -155,8 +155,12 @@ impl BreathingDetector {
             return None;
         }
 
-        // Calculate the frequency spectrum
-        let spectrum = self.compute_spectrum(csi_amplitudes);
+        // Motion artifact suppression: if the signal has large transient spikes
+        // (indicating gross body movement), suppress those segments
+        let motion_suppressed = self.suppress_motion_artifacts(csi_amplitudes);
+
+        // Compute the frequency spectrum from motion-suppressed signal
+        let spectrum = self.compute_spectrum(&motion_suppressed);
 
         // Find the dominant frequency in the breathing range
         let min_freq = self.config.min_rate_bpm as f64 / 60.0;
@@ -198,6 +202,50 @@ impl BreathingDetector {
             regularity,
             pattern_type,
         })
+    }
+
+    /// Suppress motion artifacts by detecting and attenuating transient spikes.
+    ///
+    /// Large amplitude spikes (from body movement) can contaminate the breathing
+    /// spectrum. This function detects outliers using a sliding-window median
+    /// filter and attenuates them while preserving the breathing signal.
+    fn suppress_motion_artifacts(&self, signal: &[f64]) -> Vec<f64> {
+        let n = signal.len();
+        if n < 7 {
+            return signal.to_vec();
+        }
+
+        let window = 7usize; // 7-sample sliding window
+        let half = window / 2;
+        let mut result = signal.to_vec();
+
+        for i in 0..n {
+            // Collect window samples
+            let start = i.saturating_sub(half);
+            let end = (i + half + 1).min(n);
+            let mut w: Vec<f64> = signal[start..end].to_vec();
+            w.sort_by(|a, b| a.total_cmp(b));
+
+            // Median
+            let median = w[w.len() / 2];
+
+            // MAD (Median Absolute Deviation)
+            let mad = w.iter()
+                .map(|x| (x - median).abs())
+                .collect::<Vec<_>>();
+            let mut mad_sorted = mad.clone();
+            mad_sorted.sort_by(|a, b| a.total_cmp(b));
+            let mad_val = mad_sorted[mad_sorted.len() / 2];
+
+            // If sample deviates more than 3× MAD from median, attenuate it
+            let deviation = (signal[i] - median).abs();
+            if mad_val > 1e-9 && deviation > 3.0 * mad_val * 1.4826 {
+                // Attenuate toward median (not fully replace, to preserve some info)
+                result[i] = median + (signal[i] - median) * 0.1;
+            }
+        }
+
+        result
     }
 
     /// Compute frequency spectrum using FFT

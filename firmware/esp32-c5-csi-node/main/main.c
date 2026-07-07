@@ -169,9 +169,11 @@ static void wifi_init_sta(void)
         .ghz_5g = WIFI_PROTOCOL_11N,
     };
     ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
+    /* ESP32-C5 in 802.11ax mode only supports 20 MHz bandwidth; HT20 also
+     * gives cleaner, more stable CSI for sensing (denser subcarrier spacing). */
     wifi_bandwidths_t bandwidth = {
-        .ghz_2g = WIFI_BW40,
-        .ghz_5g = WIFI_BW40,
+        .ghz_2g = WIFI_BW20,
+        .ghz_5g = WIFI_BW20,
     };
     ESP_ERROR_CHECK(esp_wifi_set_bandwidths(WIFI_IF_STA, &bandwidth));
 #endif
