@@ -49,16 +49,11 @@ pub(crate) fn generate_signal_field(
         if weight < 1e-6 {
             continue;
         }
-        // ESP32-C5 HT20: 56 subcarriers, spaced 312.5 kHz apart, centered at DC
-        // Map subcarrier index to physical angle using frequency-dependent steering vector
-        let _subcarrier_spacing_hz = 312.5e3;
-        let _carrier_freq_hz = 2.4e9; // or 5.8e9 for 5GHz
-        let _wavelength_m = 3.0e8 / _carrier_freq_hz;
-        // For a virtual aperture from subcarrier diversity:
+        // Map subcarrier index to an angle across the full 2π sweep.
         let angle = (k as f64 / n_sub as f64) * 2.0 * std::f64::consts::PI;
-        // Distance estimate: stronger variance → closer to sensor
-        // Use inverse relationship (closer = stronger signal perturbation)
-        let radius = center * (0.2 + 0.6 * (1.0 - weight.min(0.95)));
+        // Place the hotspot at a distance proportional to the weight, capped at 40% of
+        // the grid radius so it stays within the room model.
+        let radius = center * 0.8 * weight.sqrt();
         let hx = center + radius * angle.cos();
         let hz = center + radius * angle.sin();
 
@@ -67,8 +62,8 @@ pub(crate) fn generate_signal_field(
                 let dx = x as f64 - hx;
                 let dz = z as f64 - hz;
                 let dist2 = dx * dx + dz * dz;
-                // Higher-variance subcarriers get tighter blobs (more confident direction)
-                let spread = (0.3 + (1.0 - weight) * 1.5).max(0.3);
+                // Gaussian blob centred on the hotspot; spread scales with weight.
+                let spread = (0.5 + weight * 2.0).max(0.5);
                 values[z * grid + x] += weight * (-dist2 / (2.0 * spread * spread)).exp();
             }
         }
@@ -187,122 +182,6 @@ pub(crate) fn estimate_breathing_rate_hz(frame_history: &VecDeque<Vec<f64>>, sam
     }
 }
 
-/// Enhanced breathing rate estimation with multi-subcarrier fusion.
-///
-/// Improvements over `estimate_breathing_rate_hz()`:
-/// 1. Uses per-subcarrier time series instead of mean amplitude (preserves spatial info)
-/// 2. Selects top-K high-SNR subcarriers based on variance
-/// 3. Applies a bandpass filter before Goertzel detection
-/// 4. Fuses results from multiple subcarriers via weighted majority voting
-///
-/// # Parameters
-/// - `frame_history`: sliding window of per-subcarrier amplitude vectors
-/// - `phase_history`: sliding window of per-subcarrier phase vectors (for phase-based detection)
-/// - `sample_rate_hz`: CSI sampling rate in Hz
-///
-/// # Returns
-/// - Estimated breathing rate in Hz, or 0.0 if no breathing detected
-pub(crate) fn estimate_breathing_rate_enhanced(
-    frame_history: &VecDeque<Vec<f64>>,
-    phase_history: &VecDeque<Vec<f64>>,
-    sample_rate_hz: f64,
-) -> f64 {
-    let _ = phase_history; // reserved for future phase-based detection
-    let n = frame_history.len();
-    if n < 10 {
-        return 0.0;
-    }
-
-    let n_sub = frame_history.front().map(|f| f.len()).unwrap_or(0);
-    if n_sub == 0 {
-        return 0.0;
-    }
-
-    // Step 1: Compute per-subcarrier variance to find high-SNR subcarriers
-    let variances = compute_subcarrier_variances(frame_history, n_sub);
-    let top_k = n_sub.min(8); // Use top 8 subcarriers
-    let top_indices: Vec<usize> = {
-        let mut indexed: Vec<(usize, f64)> = variances.iter().enumerate().map(|(i, &v)| (i, v)).collect();
-        // NOTE: spec used `select_nth_unstable_by` (nightly-only). Replaced with
-        // `sort_by` to keep compilation on stable Rust — same top-K selection.
-        indexed.sort_by(|a, b| b.1.total_cmp(&a.1));
-        indexed.iter().take(top_k).map(|(i, _)| *i).collect()
-    };
-
-    // Step 2: For each top subcarrier, run Goertzel in breathing band [0.1, 0.5] Hz
-    let n_candidates = 15usize; // Finer frequency resolution than original 9
-    let f_low = 0.1f64;
-    let f_high = 0.5f64;
-    let mut votes: Vec<(f64, f64)> = Vec::new(); // (freq, weight)
-
-    for &k in &top_indices {
-        // Build per-subcarrier time series
-        let series: Vec<f64> = frame_history.iter()
-            .map(|f| if k < f.len() { f[k] } else { 0.0 })
-            .collect();
-
-        // De-mean
-        let mean = series.iter().sum::<f64>() / n as f64;
-        let detrended: Vec<f64> = series.iter().map(|x| x - mean).collect();
-
-        // Simple bandpass: subtract a moving average (acts as high-pass)
-        let ma_window = (sample_rate_hz as usize / 2).max(3).min(n);
-        let mut bp_filtered = detrended.clone();
-        if ma_window < n {
-            for i in ma_window..n {
-                let ma: f64 = detrended[i - ma_window..i].iter().sum::<f64>() / ma_window as f64;
-                bp_filtered[i] = detrended[i] - ma;
-            }
-        }
-
-        // Goertzel at candidate frequencies
-        for i in 0..n_candidates {
-            let freq = f_low + (f_high - f_low) * i as f64 / (n_candidates - 1).max(1) as f64;
-            let omega = 2.0 * std::f64::consts::PI * freq / sample_rate_hz;
-            let coeff = 2.0 * omega.cos();
-            let mut s_prev2 = 0.0f64;
-            let mut s_prev1 = 0.0f64;
-            for &x in &bp_filtered {
-                let s = x + coeff * s_prev1 - s_prev2;
-                s_prev2 = s_prev1;
-                s_prev1 = s;
-            }
-            let power = s_prev2 * s_prev2 + s_prev1 * s_prev1 - coeff * s_prev1 * s_prev2;
-            // Weight by subcarrier variance (higher variance = more informative)
-            let weight = variances[k] * power;
-            votes.push((freq, weight));
-        }
-    }
-
-    if votes.is_empty() {
-        return 0.0;
-    }
-
-    // Step 3: Aggregate votes into frequency bins
-    let mut freq_power: Vec<(f64, f64)> = vec![(0.0, 0.0); n_candidates];
-    for (freq, weight) in &votes {
-        // Find nearest candidate index
-        let idx = ((freq - f_low) / (f_high - f_low) * (n_candidates - 1) as f64).round() as usize;
-        if idx < n_candidates {
-            freq_power[idx].0 = f_low + (f_high - f_low) * idx as f64 / (n_candidates - 1).max(1) as f64;
-            freq_power[idx].1 += weight;
-        }
-    }
-
-    // Find best frequency
-    let (best_freq, best_power) = freq_power.iter()
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .unwrap();
-
-    // Noise threshold: best power must exceed 2× average
-    let avg_power: f64 = freq_power.iter().map(|(_, p)| *p).sum::<f64>() / n_candidates as f64;
-    if *best_power > avg_power * 2.0 && *best_freq > 0.05 {
-        best_freq.clamp(f_low, f_high)
-    } else {
-        0.0
-    }
-}
-
 /// Compute per-subcarrier variance across the sliding window of `frame_history`.
 ///
 /// For each subcarrier index `k`, returns `Var[A_k]` over all stored frames.
@@ -332,74 +211,6 @@ pub(crate) fn compute_subcarrier_variances(frame_history: &VecDeque<Vec<f64>>, n
             (sq_mean - mean * mean).max(0.0)
         })
         .collect()
-}
-
-/// Compute per-subcarrier variance across the sliding window, combining
-/// amplitude and phase variance for improved spatial sensitivity.
-///
-/// Phase variance is especially important for micro-motion detection
-/// (breathing, heartbeat) and provides complementary spatial information
-/// to amplitude variance.
-pub(crate) fn compute_subcarrier_variances_combined(
-    amp_history: &VecDeque<Vec<f64>>,
-    phase_history: &VecDeque<Vec<f64>>,
-    n_sub: usize,
-) -> Vec<f64> {
-    if amp_history.is_empty() || n_sub == 0 {
-        return vec![0.0; n_sub];
-    }
-
-    let n_frames = amp_history.len() as f64;
-    let mut amp_means = vec![0.0f64; n_sub];
-    let mut amp_sq_means = vec![0.0f64; n_sub];
-    let mut phase_means = vec![0.0f64; n_sub];
-    let mut phase_sq_means = vec![0.0f64; n_sub];
-
-    // Single-pass mean accumulation
-    for (amp_frame, phase_frame) in amp_history.iter().zip(phase_history.iter()) {
-        for k in 0..n_sub {
-            let a = if k < amp_frame.len() { amp_frame[k] } else { 0.0 };
-            let p = if k < phase_frame.len() { phase_frame[k] } else { 0.0 };
-            amp_means[k] += a;
-            amp_sq_means[k] += a * a;
-            phase_means[k] += p;
-            phase_sq_means[k] += p * p;
-        }
-    }
-
-    // Combined variance: amplitude variance (primary) + phase variance (secondary, weighted)
-    // Phase variance is weighted 0.3x because it's noisier but provides complementary info
-    (0..n_sub)
-        .map(|k| {
-            let amp_mean = amp_means[k] / n_frames;
-            let amp_var = (amp_sq_means[k] / n_frames - amp_mean * amp_mean).max(0.0);
-            let phase_mean = phase_means[k] / n_frames;
-            let phase_var = (phase_sq_means[k] / n_frames - phase_mean * phase_mean).max(0.0);
-            // Weighted fusion: amplitude dominates, phase adds spatial resolution
-            amp_var + 0.3 * phase_var
-        })
-        .collect()
-}
-
-/// Select the top-K subcarriers with highest variance for focused analysis.
-///
-/// High-variance subcarriers correspond to spatial directions with human motion.
-/// Selecting only the top-K reduces noise from inactive subcarriers and
-/// improves localization precision.
-///
-/// Returns indices sorted by variance (descending).
-pub(crate) fn select_top_subcarriers(variances: &[f64], top_k: usize) -> Vec<usize> {
-    let mut indexed: Vec<(usize, f64)> = variances.iter()
-        .enumerate()
-        .map(|(i, &v)| (i, v))
-        .collect();
-    if indexed.is_empty() || top_k == 0 {
-        return Vec::new();
-    }
-    let len = indexed.len();
-    // Partial sort: only need top_k
-    indexed.select_nth_unstable_by(top_k.min(len).saturating_sub(1), |a, b| b.1.total_cmp(&a.1));
-    indexed.iter().take(top_k).map(|(i, _)| *i).collect()
 }
 
 /// Select top-K most sensitive subcarriers by temporal variance.

@@ -186,15 +186,4 @@ mod tests {
         // (left and bottom are heavier, so x should decrease, z should increase)
         assert!(refined[0] <= raw[0], "refined x should shift toward heavier side");
     }
-
-    #[test]
-    fn top_subcarriers_selects_highest_variance() {
-        let variances = vec![0.1, 0.5, 0.3, 0.8, 0.2, 0.45, 0.4, 0.7];
-        let top = crate::signal_processing::select_top_subcarriers(&variances, 3);
-        assert_eq!(top.len(), 3);
-        // Top 3 should be indices 3 (0.8), 7 (0.7), 1 (0.5)
-        assert!(top.contains(&3));
-        assert!(top.contains(&7));
-        assert!(top.contains(&1));
-    }
 }

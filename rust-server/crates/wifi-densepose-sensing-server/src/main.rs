@@ -11,7 +11,6 @@
 mod adaptive_classifier;
 mod app_config;
 mod edge_module_engine;
-mod field_localize;
 mod rvf_container;
 mod rvf_pipeline;
 mod vital_signs;

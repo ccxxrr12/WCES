@@ -50,7 +50,8 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
     // M-8: keyed by node_id (u8) to support arbitrary node counts instead of
     // the original hardcoded [f64; 4] arrays which panicked if node_id >= 4.
     let mut node_prox: HashMap<u8, f64> = HashMap::new();      // per-node EMA proximity [0,1]
-    let mut node_max: HashMap<u8, f64> = HashMap::new();       // fixed baseline (peak, never decays)
+    let mut node_max: HashMap<u8, f64> = HashMap::new();       // adaptive peak with slow decay
+    const NODE_MAX_DECAY: f64 = 0.9995; // ~10% decay over 200 frames (~10s at 20Hz)
     let mut prev_phases: HashMap<u8, Vec<f64>> = HashMap::new();
     let mut surv_pos: [(f64, f64, f64); 8] = [(0.0, 0.0, 0.0); 8];
     const PROX_EMA: f64 = 0.12;
@@ -420,9 +421,9 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         let pos = crate::mat_pipeline::node_positions_arr()
                             .get(&nid).copied().unwrap_or([2.,0.,1.5]);
                         if nid == frame.node_id {
-                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: frame.amplitudes.iter().take(56).cloned().collect(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: if frame.freq_mhz > 5000 { ((frame.freq_mhz - 5000) / 5) as u8 } else { ((frame.freq_mhz - 2407) / 5) as u8 }, band: if frame.freq_mhz > 5000 { "5GHz".into() } else { "2.4GHz".into() } }
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: frame.amplitudes.clone(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: if frame.freq_mhz > 5000 { ((frame.freq_mhz - 5000) / 5) as u8 } else { ((frame.freq_mhz - 2407) / 5) as u8 }, band: if frame.freq_mhz > 5000 { "5GHz".into() } else { "2.4GHz".into() } }
                         } else if active {
-                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: br, heart_rate_bpm: hr, motion_level: Some(ml.clone()), presence: pres, active: true, channel: 0, band: "5GHz".into() }
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: br, heart_rate_bpm: hr, motion_level: Some(ml.clone()), presence: pres, active: true, channel: 0, band: "2.4GHz".into() }
                         } else { NodeInfo { node_id: nid, rssi_dbm: 0., position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: None, heart_rate_bpm: None, motion_level: None, presence: false, active: false, channel: 0, band: "".into() } }
                     }).collect();
 
@@ -566,8 +567,12 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                     };
                     let raw_var = topk;
                     let cur_max = node_max.get(&nid).copied().unwrap_or(1.0);
-                    if raw_var > cur_max { node_max.insert(nid, raw_var * 1.2); }
-                    let var_prox = (raw_var / node_max.get(&nid).copied().unwrap_or(1.0)).clamp(0.0, 1.0);
+                    // Track peak with slow exponential decay so transient spikes
+                    // (walking close to a node) don't permanently suppress proximity.
+                    let decayed = cur_max * NODE_MAX_DECAY;
+                    let new_max = if raw_var > decayed { raw_var.max(decayed) } else { decayed.max(0.01) };
+                    node_max.insert(nid, new_max);
+                    let var_prox = (raw_var / new_max.max(1e-9)).clamp(0.0, 1.0);
                     // Frame-phase-diff: mean |Δphase| per subcarrier → doppler proxy
                     let phase_prox: f64 = match prev_phases.get(&nid) {
                         Some(prev) if prev.len() == frame.phases.len() => {

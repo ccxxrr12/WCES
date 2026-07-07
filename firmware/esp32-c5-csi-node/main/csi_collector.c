@@ -377,16 +377,16 @@ void csi_collector_init(void)
         .acquire_csi_su           = true,   /* HE SU — WiFi 6 single-user frames */
         .acquire_csi_mu           = false,  /* MU rarely triggered; saves buffer */
         .acquire_csi_dcm          = false,  /* DCM rare; reduces noise */
-        .acquire_csi_beamformed   = true,   /* leverage beamforming to raise CSI SNR */
+        .acquire_csi_beamformed   = false,  /* beamformed CSI unstable; C5 is 1T1R */
         .acquire_csi_force_lltf   = false,  /* auto: use best available LTF type */
         .val_scale_cfg            = 3,      /* higher precision; suits weak-signal scenarios */
         .dump_ack_en              = false,  /* ACK frames have poor CSI SNR */
     };
-    /* ESP32-C5 CSI theoretical parameters:
-     *   - WiFi 6 (802.11ax) HT20: ~56 subcarriers, 16-bit I/Q per subcarrier
-     *   - Theoretical max sampling rate: ~100 Hz (promiscuous mode),
-     *     ~15 Hz (STA mode)
-     *   - Current operating mode: STA mode, ~5-15 Hz */
+    /* ESP32-C5 CSI parameters (WiFi 6 HE):
+     *   - HE SU (acquire_csi_su): HE-LTF, 242 sc (HE20) / 484 sc (HE40)
+     *   - HT40 legacy (acquire_csi_ht40): HT-LTF, 114 sc (for 11n/ac APs)
+     *   - HT20 legacy (acquire_csi_ht20): HT-LTF, 56 sc (for 11n/ac APs)
+     *   - Actual subcarrier count depends on AP PPDU type; HE SU gives best resolution */
 #else
     /* S3/C3/ESP32: Legacy CSI config API */
     wifi_csi_config_t csi_config = {

@@ -139,11 +139,16 @@ impl TriageConfig {
 /// - Node 1: top (north)
 /// - Node 2: bottom-left (southwest)
 /// - Node 3: bottom-right (southeast)
+/// Node spacing scaled to actual physical deployment (≥5m). Update these
+/// coordinates to match the measured floor-plan positions of your ESP32-C5s.
 pub fn node_positions() -> HashMap<u8, (f64, f64, f64)> {
     let mut pos = HashMap::new();
-    pos.insert(1, (0.0, 1.15, 1.0));
-    pos.insert(2, (-1.0, -0.58, 1.0));
-    pos.insert(3, (1.0, -0.58, 1.0));
+    // Equilateral triangle, side ≈ 6m, centred at origin, height 1m
+    let side = 6.0; // metres — adjust to your actual measured spacing
+    let h = side * (3.0_f64.sqrt() / 2.0); // equilateral triangle height
+    pos.insert(1, (0.0, 2.0 * h / 3.0, 1.0));       // top (north)
+    pos.insert(2, (-side / 2.0, -h / 3.0, 1.0));     // bottom-left (southwest)
+    pos.insert(3, (side / 2.0, -h / 3.0, 1.0));      // bottom-right (southeast)
     pos
 }
 
