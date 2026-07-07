@@ -179,6 +179,14 @@ size_t csi_serialize_frame(const wifi_csi_info_t *info, uint8_t *buf, size_t buf
         }
     }
 
+    /* Guard: if channel is 0 (WiFi not yet connected) or out of band table
+     * range, freq_mhz stays 0. Reject the frame rather than sending garbage. */
+    if (freq_mhz == 0) {
+        ESP_LOGW(TAG, "CSI frame dropped: cannot derive frequency for channel %u, band %d",
+                 (unsigned)channel, (int)s_wifi_band);
+        return 0;
+    }
+
     /* Magic (LE) */
     uint32_t magic = CSI_MAGIC;
     memcpy(&buf[0], &magic, 4);

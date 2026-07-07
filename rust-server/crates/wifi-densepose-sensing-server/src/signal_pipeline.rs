@@ -103,15 +103,29 @@ impl SignalPipeline {
                     "PhaseSanitizer::new failed ({e}); falling back to default config"
                 );
                 PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig::default())
-                    .unwrap_or_else(|_| {
-                        // Ultimate fallback: construct with a minimal hardcoded
-                        // valid config if even Default fails to validate.
-                        PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig {
-                            outlier_threshold: 3.0,
-                            smoothing_window: 5,
-                            noise_threshold: 0.05,
-                            ..Default::default()
-                        }).expect("hardcoded fallback PhaseSanitizerConfig must validate")
+                    .unwrap_or_else(|e| {
+                        // Ultimate fallback: if even the hardcoded config fails,
+                        // log and return a PhaseSanitizer with library Default.
+                        // We must NOT panic here — this runs inside the UDP
+                        // receiver task and a panic would silently kill CSI ingestion.
+                        tracing::error!(
+                            "PhaseSanitizer hardcoded fallback failed ({e}); \
+                             using library default. CSI data quality may be degraded."
+                        );
+                        PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig::default())
+                            .unwrap_or_else(|_| {
+                                // Last resort: all-zero config (no outlier removal, no smoothing).
+                                // This should never fail validation.
+                                PhaseSanitizer::new(wifi_densepose_signal::phase_sanitizer::PhaseSanitizerConfig {
+                                    outlier_threshold: 0.0,
+                                    smoothing_window: 1,
+                                    noise_threshold: 0.0,
+                                    enable_outlier_removal: false,
+                                    enable_smoothing: false,
+                                    enable_noise_filtering: false,
+                                    ..Default::default()
+                                }).expect("zero-config PhaseSanitizer must validate")
+                            })
                     })
             }
         };

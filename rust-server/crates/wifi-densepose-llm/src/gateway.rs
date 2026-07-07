@@ -272,6 +272,7 @@ impl LlmGateway {
 
         tokio::spawn(async move {
             let mut buffer = String::new();
+            let mut stream_error = false;
             tokio::pin!(byte_stream);
             use tokio_stream::StreamExt;
 
@@ -311,6 +312,7 @@ impl LlmGateway {
                     Ok(Some(Err(e))) => {
                         let _ = tx.send(Err(StreamError { message: e.to_string() })).await;
                         breaker.on_failure();
+                        stream_error = true;
                         break;
                     }
                     Ok(None) => break, // stream ended normally
@@ -324,12 +326,17 @@ impl LlmGateway {
                             message: "SSE read timeout".into(),
                         })).await;
                         breaker.on_failure();
+                        stream_error = true;
                         break;
                     }
                 }
             }
 
-            breaker.on_success();
+            // Only reset the breaker on clean stream completion — errors/timeouts
+            // leave the breaker in its current (possibly OPEN) state (BUG 53 fix).
+            if !stream_error {
+                breaker.on_success();
+            }
         });
 
         Ok(tokio_stream::wrappers::ReceiverStream::new(rx))

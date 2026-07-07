@@ -1241,6 +1241,8 @@ function connectWebSocket(){
         try{
             const d=JSON.parse(e.data);
             if(d.type==='sensing_update')handleUpdate(d);
+            else if(d.type==='alert')handleAlertMessage(d);
+            else if(d.type==='edge_vitals')handleEdgeVitals(d);
             else if(d.type==='agent_stream')handleAgentStream(d);
             else if(d.type==='agent_analysis_complete')handleAgentComplete(d);
             else if(d.type==='agent_fallback')handleAgentFallback(d);

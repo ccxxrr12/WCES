@@ -1349,7 +1349,7 @@ function requestAgentAnalysis(){
     const btn=document.getElementById('agentAnalyzeBtn');btn.disabled=true;btn.innerHTML='<span style="animation:pulse 1s infinite">⏳</span> 分析中...';
     if(Object.keys(agentStreamBuffer).length>50){const oldest=Object.keys(agentStreamBuffer)[0];delete agentStreamBuffer[oldest]}
     agentStreamBuffer[selectedPatientId]={text:'',isStreaming:true};renderAgentStreamCard(selectedPatientId,'');
-    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'agent_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id}));
+    if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'agent_analyze_request',patient_id:selectedPatientId,node_id:survivor.node_id,_token:localStorage.getItem('wces_token')||''}));
     else generateLocalAnalysis(selectedPatientId,survivor);
 }
 function handleAgentStream(data){

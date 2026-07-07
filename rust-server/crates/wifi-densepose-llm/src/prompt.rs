@@ -64,14 +64,24 @@ impl PromptCompiler {
     }
 
     fn deep_task(&self, ctx: &StructuredContext) -> String {
+        // Sanitize triage label before interpolation: strip newlines and
+        // control characters to prevent prompt injection via triage field.
+        let triage_safe: String = ctx.triage_current
+            .chars()
+            .filter(|c| !c.is_control() || *c == ' ')
+            .collect();
         self.deep_task_template
-            .replace("{triage}", &ctx.triage_current)
+            .replace("{triage}", &triage_safe)
             .replace("{alerts}", &ctx.recent_alerts.join(", "))
     }
 
     fn brief_task(&self, ctx: &StructuredContext) -> String {
+        let triage_safe: String = ctx.triage_current
+            .chars()
+            .filter(|c| !c.is_control() || *c == ' ')
+            .collect();
         self.brief_task_template
-            .replace("{triage}", &ctx.triage_current)
+            .replace("{triage}", &triage_safe)
     }
 
     fn estimate_tokens(text: &str) -> u16 {

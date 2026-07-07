@@ -133,9 +133,12 @@ if ($HOP_ENABLED -eq 'true') {
     $HopEnabledLine = '# CONFIG_CSI_CHANNEL_HOP_ENABLED is not set'
 }
 
-# Build CSI band line
-if ($CSI_BAND -and $CSI_BAND -ne 'AUTO') {
-    $BandLine = 'CONFIG_CSI_WIFI_BAND="' + $CSI_BAND + '"'
+# Build CSI band line (normalize TOML values to Kconfig: 5G_ONLY→5G, 2G_ONLY→2G, AUTO→skip)
+$KconfigBand = $CSI_BAND
+if ($CSI_BAND -eq '5G_ONLY') { $KconfigBand = '5G' }
+elseif ($CSI_BAND -eq '2G_ONLY') { $KconfigBand = '2G' }
+if ($KconfigBand -and $KconfigBand -ne 'AUTO') {
+    $BandLine = 'CONFIG_CSI_WIFI_BAND="' + $KconfigBand + '"'
 } else {
     $BandLine = '# CONFIG_CSI_WIFI_BAND not set (AUTO)'
 }

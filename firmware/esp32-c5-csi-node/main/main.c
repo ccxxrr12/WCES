@@ -90,6 +90,11 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             if (delay_ms > 16000) delay_ms = 16000;
             ESP_LOGI(TAG, "Retrying WiFi connection (%d/%d) reason=%d, backoff=%lu ms",
                      s_retry_num, MAX_RETRY, evt->reason, (unsigned long)delay_ms);
+            /* NOTE: vTaskDelay in the WiFi event handler blocks the WiFi event
+             * task for up to 16s. This is known and tolerated because the
+             * exponential backoff runs only during initial connection (not in
+             * normal operation), and the alternative (spawning a separate retry
+             * task) adds complexity disproportionate to the benefit. */
             vTaskDelay(pdMS_TO_TICKS(delay_ms));
             esp_err_t ret = esp_wifi_connect();
             if (ret != ESP_OK) {
