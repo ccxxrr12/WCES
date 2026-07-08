@@ -31,6 +31,8 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
+#include "esp_psram.h"
 #include "sdkconfig.h"
 
 /* ADR-060: Access the global NVS config for MAC filter and channel override. */
@@ -75,6 +77,34 @@ static SemaphoreHandle_t s_wifi_sem = NULL;
 /** Ring buffer overflow drop counter — increments each time edge_enqueue_csi
  *  returns false because the SPSC ring is full. Used for diagnostics. */
 static uint32_t s_ring_drops = 0;
+
+/* ---- PSRAM burst ring (ADR-159) ---- */
+
+/** Number of frames the PSRAM ring can buffer before overwriting.
+ *  256 slots × ~532 bytes = ~133 KB — negligible on 8MB PSRAM. */
+#define CSI_BURST_SLOTS  256
+
+/** Flush interval: how often the burst ring is drained over UDP.
+ *  100 ms balances latency against TX efficiency. */
+#define CSI_BURST_FLUSH_INTERVAL_MS  100
+
+/** PSRAM ring buffer base pointer (allocated from SPIRAM at init). */
+static uint8_t  *s_burst_ring = NULL;
+
+/** Per-slot frame lengths (SRAM index — 256 × 2 = 512 bytes). */
+static uint16_t  s_burst_lens[CSI_BURST_SLOTS];
+
+/** Ring head (producer — CSI callback writes here). */
+static volatile uint32_t s_burst_head = 0;
+
+/** Ring tail (consumer — flush timer reads here). */
+static volatile uint32_t s_burst_tail = 0;
+
+/** Whether PSRAM is available and the burst ring is active. */
+static bool s_psram_ok = false;
+
+/** Handle for the periodic flush timer. */
+static esp_timer_handle_t s_flush_timer = NULL;
 
 /** Wi-Fi band detected at init time. Used to disambiguate 6 GHz channel
  *  numbers (1-233) from 2.4 GHz (1-13) since they overlap.
@@ -286,28 +316,39 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
     size_t frame_len = csi_serialize_frame(info, frame_buf, sizeof(frame_buf));
 
     if (frame_len > 0) {
-        /* Rate-limit UDP sends to avoid ENOMEM from lwIP pbuf exhaustion.
-         * In promiscuous mode, CSI callbacks can fire 100-500+ times/sec.
-         * We only need 20-50 Hz for the sensing pipeline. */
-        int64_t now = esp_timer_get_time();
-        if ((now - s_last_send_us) >= CSI_MIN_SEND_INTERVAL_US) {
-            /* NOTE: sendto() may block briefly on ARP resolution.
-             * Rate-limiting via CSI_MIN_SEND_INTERVAL_US mitigates this
-             * but cannot eliminate the worst-case latency of ~1-2s for
-             * ARP timeout. */
-            int ret = stream_sender_send(frame_buf, frame_len);
-            if (ret > 0) {
-                s_send_ok++;
-                s_last_send_us = now;
-                if (s_send_ok <= 3) ESP_LOGI(TAG, "UDP OK #%lu %uB", (unsigned long)s_send_ok, (unsigned)frame_len);
+        if (s_psram_ok) {
+            /* ── PSRAM burst path: enqueue into ring, never drop ────── */
+            uint32_t next = (s_burst_head + 1) % CSI_BURST_SLOTS;
+            if (next != s_burst_tail) {
+                size_t off = (size_t)s_burst_head * CSI_MAX_FRAME_SIZE;
+                memcpy(&s_burst_ring[off], frame_buf, frame_len);
+                s_burst_lens[s_burst_head] = (uint16_t)frame_len;
+                /* Memory fence: ensure ring data is visible before head update.
+                 * Required for correctness on multi-hart systems; on single-core
+                 * C5 this is a compiler barrier (volatile handles the rest). */
+                __sync_synchronize();
+                s_burst_head = next;
+                s_send_ok++;  /* count as "queued" not "sent" */
             } else {
-                s_send_fail++;
-                if (s_send_fail <= 5) {
-                    ESP_LOGW(TAG, "sendto failed (fail #%lu)", (unsigned long)s_send_fail);
-                }
+                s_rate_skip++;  /* ring full — flush may be stalled */
             }
         } else {
-            s_rate_skip++;
+            /* ── Direct UDP fallback: rate-limited sendto ───────────── */
+            int64_t now = esp_timer_get_time();
+            if ((now - s_last_send_us) >= CSI_MIN_SEND_INTERVAL_US) {
+                int ret = stream_sender_send(frame_buf, frame_len);
+                if (ret > 0) {
+                    s_send_ok++;
+                    s_last_send_us = now;
+                } else {
+                    s_send_fail++;
+                    if (s_send_fail <= 5) {
+                        ESP_LOGW(TAG, "sendto failed (fail #%lu)", (unsigned long)s_send_fail);
+                    }
+                }
+            } else {
+                s_rate_skip++;
+            }
         }
     }
 
@@ -323,8 +364,46 @@ static void wifi_csi_callback(void *ctx, wifi_csi_info_t *info)
     }
 }
 /* BUG 9: wifi_promiscuous_cb removed — dead code.
- * Promiscuous mode is OFF; CSI is extracted from normal STA RX path.
- * If promiscuous is re-enabled, register via esp_wifi_set_promiscuous_rx_cb(). */
+ * Promiscuous mode is ON with PSRAM burst mode; CSI is captured at full rate
+ * into the PSRAM ring and flushed in brief TX windows by csi_burst_flush_cb(). */
+
+/* ── PSRAM burst flush (ADR-159) ─────────────────────────────────────────── */
+
+/**
+ * Periodic flush callback: briefly disables promiscuous RX, drains the PSRAM
+ * ring over UDP, then re-enables promiscuous.
+ *
+ * The radio is in TX mode for only ~1-2ms per 100ms cycle, so CSI frame loss
+ * is negligible. Without PSRAM the original rate-limited direct-UDP path is
+ * used instead (see wifi_csi_callback above).
+ */
+static void csi_burst_flush_cb(void *arg)
+{
+    (void)arg;
+
+    if (!s_psram_ok || s_burst_ring == NULL) {
+        return;
+    }
+
+    /* Briefly release the radio for TX. */
+    esp_wifi_set_promiscuous(false);
+
+    /* Drain all buffered frames. */
+    while (s_burst_tail != s_burst_head) {
+        size_t off = (size_t)s_burst_tail * CSI_MAX_FRAME_SIZE;
+        uint16_t len = s_burst_lens[s_burst_tail];
+        int ret = stream_sender_send(&s_burst_ring[off], len);
+        if (ret > 0) {
+            s_send_ok++;
+        } else {
+            s_send_fail++;
+        }
+        s_burst_tail = (s_burst_tail + 1) % CSI_BURST_SLOTS;
+    }
+
+    /* Resume promiscuous CSI capture. */
+    esp_wifi_set_promiscuous(true);
+}
 
 void csi_collector_init(void)
 {
@@ -374,36 +453,47 @@ void csi_collector_init(void)
     /* Enable promiscuous mode — required for reliable CSI callbacks.
      * Without this, CSI only fires on frames destined to this station,
      * which may be very infrequent on a quiet network. */
-    /* Promiscuous mode disabled on C5: sniffer starves TX hardware.
-     * CSI still works from normal STA RX frames (AP beacons, directed traffic).
-     * Frame rate is lower (~5-15 Hz) but TX works normally. */
-    ESP_LOGI(TAG, "Promiscuous mode OFF — CSI from normal STA RX, TX available");
+    /* PSRAM burst mode: keep promiscuous ON for high-rate CSI capture.
+     * Frames are serialized into the PSRAM ring in the callback (fast memcpy,
+     * no UDP), then drained in brief TX windows by the flush timer.
+     * This avoids the C5 single-radio TX starvation issue — the radio only
+     * pauses RX for ~1-2ms per 100ms flush cycle. */
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+    ESP_LOGI(TAG, "Promiscuous ON — PSRAM burst mode (flush every %u ms)",
+             (unsigned)CSI_BURST_FLUSH_INTERVAL_MS);
 
     /* CSI configuration.
      * C5/C6/C61: wifi_csi_acquire_config_t (esp_wifi_he_types.h, ESP-IDF v5.4+).
      * S3/C3/ESP32: wifi_csi_config_t (esp_wifi_types.h, legacy API).
-     * Reference: https://github.com/espressif/esp-csi/blob/master/examples/get-started/csi_recv/main/app_main.c */
+     *
+     * Strategy: prefer HE SU (242-tone, highest resolution). Keep HT40 as
+     * 11n fallback when the AP does not support 802.11ax. VHT20 as tertiary
+     * backup. Legacy/HT20 disabled — their 52/56 subcarriers add dimension
+     * jitter without SNR benefit. MU/DCM/beamformed disabled — rare PPDU
+     * types that add noise without improving vital-sign SNR. */
 #if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61 || \
     (CONFIG_IDF_TARGET_ESP32C6 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0))
     /* C5/C6/C61: New CSI config API (ESP-IDF v5.4+) */
     wifi_csi_acquire_config_t csi_config = {
         .enable                   = true,
-        .acquire_csi_legacy       = true,   /* L-LTF  ~52 subcarriers */
-        .acquire_csi_ht20         = true,   /* HT-LTF 20MHz ~56 subcarriers */
-        .acquire_csi_ht40         = true,   /* HT-LTF 40MHz ~114 subcarriers */
-        .acquire_csi_su           = true,   /* HE SU — WiFi 6 single-user frames */
-        .acquire_csi_mu           = false,  /* MU rarely triggered; saves buffer */
-        .acquire_csi_dcm          = false,  /* DCM rare; reduces noise */
-        .acquire_csi_beamformed   = false,  /* beamformed CSI unstable; C5 is 1T1R */
-        .acquire_csi_force_lltf   = false,  /* auto: use best available LTF type */
-        .val_scale_cfg            = 3,      /* higher precision; suits weak-signal scenarios */
+        .acquire_csi_legacy       = false,  /* L-LTF 52sc — SNR too low */
+        .acquire_csi_ht20         = false,  /* HT20 56sc — dimension jitter */
+        .acquire_csi_ht40         = true,   /* HT40 114sc — 11n fallback */
+        .acquire_csi_su           = true,   /* HE SU 242sc — primary */
+        .acquire_csi_mu           = false,  /* MU OFDMA — rare, no benefit */
+        .acquire_csi_dcm          = false,  /* DCM — remote weak-signal, rare */
+        .acquire_csi_beamformed   = false,  /* BF — phase distorted by precoding */
+        .acquire_csi_force_lltf   = false,  /* auto: use best available LTF */
+        .acquire_csi_vht          = true,   /* VHT20 — tertiary fallback (C5-only) */
+        .acquire_csi_he_stbc_mode = 0,      /* HE-LTF1 only, no alternating */
+        .val_scale_cfg            = 5,      /* higher precision for weak signals */
         .dump_ack_en              = false,  /* ACK frames have poor CSI SNR */
     };
-    /* ESP32-C5 CSI parameters (WiFi 6 HE):
-     *   - HE SU (acquire_csi_su): HE-LTF, 242 sc (HE20) / 484 sc (HE40)
-     *   - HT40 legacy (acquire_csi_ht40): HT-LTF, 114 sc (for 11n/ac APs)
-     *   - HT20 legacy (acquire_csi_ht20): HT-LTF, 56 sc (for 11n/ac APs)
-     *   - Actual subcarrier count depends on AP PPDU type; HE SU gives best resolution */
+    /* ESP32-C5 CSI subcarrier counts by PPDU type:
+     *   - HE SU (acquire_csi_su): HE-LTF, 242-tone HE20 (C5 11ax is 20MHz-only)
+     *   - HT40 (acquire_csi_ht40): HT-LTF, 114-tone (11n fallback)
+     *   - VHT20 (acquire_csi_vht): VHT-LTF, 56-tone (11ac fallback)
+     *   - Only one type is active at a time — no dimension mixing. */
 #else
     /* S3/C3/ESP32: Legacy CSI config API */
     wifi_csi_config_t csi_config = {
@@ -420,6 +510,45 @@ void csi_collector_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_csi_config(&csi_config));
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(wifi_csi_callback, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_csi(true));
+
+    /* ── PSRAM burst ring init ─────────────────────────────────────────── */
+#if CONFIG_SPIRAM
+    if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) > 0) {
+        size_t ring_bytes = (size_t)CSI_BURST_SLOTS * CSI_MAX_FRAME_SIZE;
+        s_burst_ring = heap_caps_malloc(ring_bytes,
+                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (s_burst_ring != NULL) {
+            memset(s_burst_ring, 0, ring_bytes);
+            s_psram_ok = true;
+            ESP_LOGI(TAG, "PSRAM burst ring: %u slots × %u B = %u KB",
+                     (unsigned)CSI_BURST_SLOTS, (unsigned)CSI_MAX_FRAME_SIZE,
+                     (unsigned)(ring_bytes / 1024));
+        } else {
+            ESP_LOGW(TAG, "PSRAM ring alloc failed — using direct UDP fallback");
+        }
+    } else {
+        ESP_LOGI(TAG, "PSRAM not initialized — using direct UDP fallback");
+    }
+#else
+    ESP_LOGI(TAG, "CONFIG_SPIRAM=n — using direct UDP fallback");
+#endif
+
+    /* ── Start flush timer (PSRAM burst mode) ─────────────────────────── */
+    if (s_psram_ok) {
+        esp_timer_create_args_t flush_args = {
+            .callback = csi_burst_flush_cb,
+            .arg      = NULL,
+            .name     = "csi_flush",
+        };
+        esp_err_t err = esp_timer_create(&flush_args, &s_flush_timer);
+        if (err == ESP_OK) {
+            esp_timer_start_periodic(s_flush_timer,
+                                     (uint64_t)CSI_BURST_FLUSH_INTERVAL_MS * 1000);
+            ESP_LOGI(TAG, "Flush timer: every %u ms", (unsigned)CSI_BURST_FLUSH_INTERVAL_MS);
+        } else {
+            ESP_LOGW(TAG, "Flush timer create failed: %s", esp_err_to_name(err));
+        }
+    }
 
     if (g_nvs_config.filter_mac_set) {
         ESP_LOGI(TAG, "MAC filter active: %02x:%02x:%02x:%02x:%02x:%02x",

@@ -25,19 +25,24 @@ static int sender_init_internal(const char *ip, uint16_t port)
     s_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s_sock < 0) { ESP_LOGE(TAG, "socket errno %d", errno); return -1; }
 
-    /* H-1 fix: Set send timeout so sendto() cannot block the WiFi task
-     * indefinitely (e.g., during ARP resolution which can take 1-2 s).
-     * The CSI callback runs in the WiFi task context; a blocking sendto()
-     * would stall all WiFi processing. 100 ms is enough for normal sends
-     * while bounding worst-case latency. */
+    /* H-1 fix: Set send timeout. For burst mode we use a short 10 ms
+     * timeout — individual packet loss is acceptable for CSI streams.
+     * The flush timer drains the ring and retries next cycle. */
     struct timeval tv = {
         .tv_sec  = 0,
-        .tv_usec = 100 * 1000,  /* 100 ms */
+        .tv_usec = 10 * 1000,  /* 10 ms (was 100ms) */
     };
     /* M-3 fix: Check setsockopt return — if it fails, sends may still block
      * but we log the issue rather than silently ignoring it. */
     if (setsockopt(s_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
         ESP_LOGW(TAG, "setsockopt(SO_SNDTIMEO) failed: errno %d", errno);
+    }
+
+    /* Burst mode: larger send buffer to accommodate multi-packet flush.
+     * 64 KB is safe on C5 with PSRAM relieving SRAM pressure. */
+    int sndbuf = 64 * 1024;
+    if (setsockopt(s_sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0) {
+        ESP_LOGW(TAG, "setsockopt(SO_SNDBUF) failed: errno %d", errno);
     }
 
     memset(&s_dest_addr, 0, sizeof(s_dest_addr));

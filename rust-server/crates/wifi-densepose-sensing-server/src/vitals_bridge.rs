@@ -28,17 +28,14 @@ impl VitalsBridge {
     /// Create a new vitals pipeline for the given subcarrier count and sample rate.
     /// `alpha` controls EMA responsiveness (0.05 = slow tracking, better static suppression).
     pub fn new(n_subcarriers: usize, sample_rate: f64) -> Self {
+        let n_sc = n_subcarriers.max(1);
         Self {
-            preprocessor: CsiVitalPreprocessor::new(n_subcarriers, 0.05),
+            preprocessor: CsiVitalPreprocessor::new(n_sc, 0.05),
             breathing: BreathingExtractor::new(
-                n_subcarriers.min(64),
-                sample_rate.max(1.0),
-                30.0, // 30-second window
+                n_sc, sample_rate.max(1.0), 30.0, // 30-second window
             ),
             heartrate: HeartRateExtractor::new(
-                n_subcarriers.min(64),
-                sample_rate.max(1.0),
-                15.0, // 15-second window
+                n_sc, sample_rate.max(1.0), 15.0, // 15-second window
             ),
             sample_rate,
         }
@@ -84,7 +81,7 @@ impl VitalsBridge {
         // Guard against empty residuals: `1.0 / 0 as f64` would produce Inf,
         // and passing empty weights to the extractors is undefined. Return
         // early with no estimates instead.
-        let rn = residuals.len().min(64);
+        let rn = residuals.len();  // full subcarrier count (was .min(64))
         if rn == 0 {
             return (None, None, 0.0, 0.0);
         }

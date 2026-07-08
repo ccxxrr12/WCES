@@ -28,6 +28,8 @@ pub enum HardwareNormError {
 pub enum HardwareType {
     /// ESP32-S3 with LWIP CSI: 64 subcarriers, 1x1 SISO
     Esp32S3,
+    /// ESP32-C5/C6 with WiFi 6 HE20: 242 subcarriers, 1x1 SISO
+    Esp32C5,
     /// Intel 5300 NIC: 30 subcarriers, up to 3x3 MIMO
     Intel5300,
     /// Atheros (ath9k/ath10k): 56 subcarriers, up to 3x3 MIMO
@@ -41,6 +43,7 @@ impl HardwareType {
     pub fn subcarrier_count(&self) -> usize {
         match self {
             Self::Esp32S3 => 64,
+            Self::Esp32C5 => 242,
             Self::Intel5300 => 30,
             Self::Atheros => 56,
             Self::Generic => 56,
@@ -51,6 +54,7 @@ impl HardwareType {
     pub fn mimo_streams(&self) -> usize {
         match self {
             Self::Esp32S3 => 1,
+            Self::Esp32C5 => 1,
             Self::Intel5300 => 3,
             Self::Atheros => 3,
             Self::Generic => 1,
@@ -91,6 +95,7 @@ pub struct HardwareNormalizer {
 
 impl HardwareNormalizer {
     /// Create a normalizer with default canonical subcarrier count (56).
+    /// For hardware-specific canonical counts, use `with_canonical_subcarriers()`.
     pub fn new() -> Self {
         Self { canonical_subcarriers: 56, hw_stats: HashMap::new() }
     }
@@ -119,6 +124,7 @@ impl HardwareNormalizer {
             64 => HardwareType::Esp32S3,
             30 => HardwareType::Intel5300,
             56 => HardwareType::Atheros,
+            242 => HardwareType::Esp32C5,
             _ => HardwareType::Generic,
         }
     }

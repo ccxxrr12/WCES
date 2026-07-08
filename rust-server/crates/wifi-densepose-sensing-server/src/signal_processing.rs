@@ -484,7 +484,7 @@ pub(crate) fn generate_synthetic_pose(tick: u64, amplitudes: &[f64], motion_scor
 
 pub(crate) fn generate_simulated_frame(tick: u64) -> Esp32Frame {
     let t = tick as f64 * 0.1;
-    let n_sub = 56usize;
+    let n_sub = 242usize;  // C5 HE20: 242-tone (was 56 for S3 HT20)
     let mut amplitudes = Vec::with_capacity(n_sub);
     let mut phases = Vec::with_capacity(n_sub);
 
@@ -519,26 +519,24 @@ pub(crate) fn generate_simulated_frame(tick: u64) -> Esp32Frame {
 /// Returns a raw score (0.0..1.0) that the caller converts to person count
 /// after temporal smoothing.
 pub(crate) fn compute_person_score(feat: &FeatureInfo) -> f64 {
-    // Normalize each feature to [0, 1] using calibrated ranges:
+    // Normalize each feature to [0, 1] using calibrated ranges.
+    // Originally calibrated for 56 subcarriers (S3); scaled for 242 (C5 HE20, ~4.3x).
     //
-    //   variance: intra-frame amp variance. 1-person ~2-15, 2-person ~15-60,
-    //     real ESP32 can go higher. Use 30.0 as scaling midpoint.
+    //   variance: intra-frame amp variance (per-subcarrier mean). Scale ~30.
     let var_norm = (feat.variance / 30.0).clamp(0.0, 1.0);
 
-    //   change_points: threshold crossings in 56 subcarriers. 1-person ~5-15,
-    //     2-person ~15-30. Scale by 30.0 (half of max 55).
-    let cp_norm = (feat.change_points as f64 / 30.0).clamp(0.0, 1.0);
+    //   change_points: threshold crossings across all subcarriers.
+    //     Scales with subcarrier count — 130 for 242sc (was 30 for 56sc).
+    let cp_norm = (feat.change_points as f64 / 130.0).clamp(0.0, 1.0);
 
-    //   motion_band_power: upper-half subcarrier variance. 1-person ~1-8,
-    //     2-person ~8-25. Scale by 20.0.
-    let motion_norm = (feat.motion_band_power / 20.0).clamp(0.0, 1.0);
+    //   motion_band_power: upper-half subcarrier variance sum.
+    //     Scales with subcarrier count — 85 for 242sc (was 20 for 56sc).
+    let motion_norm = (feat.motion_band_power / 85.0).clamp(0.0, 1.0);
 
-    //   spectral_power: mean squared amplitude. Highly variable (~100-1000+).
-    //     Use relative change indicator: high spectral_power with high variance
-    //     suggests multiple reflectors. Scale by 500.0.
+    //   spectral_power: mean squared amplitude per subcarrier. Scale ~500.
     let sp_norm = (feat.spectral_power / 500.0).clamp(0.0, 1.0);
 
-    // Weighted composite —variance and change_points carry the most signal.
+    // Weighted composite — variance and change_points carry the most signal.
     var_norm * 0.35 + cp_norm * 0.30 + motion_norm * 0.20 + sp_norm * 0.15
 }
 

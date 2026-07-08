@@ -51,12 +51,12 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
     // the original hardcoded [f64; 4] arrays which panicked if node_id >= 4.
     let mut node_prox: HashMap<u8, f64> = HashMap::new();      // per-node EMA proximity [0,1]
     let mut node_max: HashMap<u8, f64> = HashMap::new();       // adaptive peak with slow decay
-    const NODE_MAX_DECAY: f64 = 0.9995; // ~10% decay over 200 frames (~10s at 20Hz)
+    const NODE_MAX_DECAY: f64 = 0.9998; // ~10% decay over ~500 frames (~5s at 100Hz)
     let mut prev_phases: HashMap<u8, Vec<f64>> = HashMap::new();
     let mut surv_pos: [(f64, f64, f64); 8] = [(0.0, 0.0, 0.0); 8];
-    const PROX_EMA: f64 = 0.12;
-    const POS_EMA: f64 = 0.12;
-    const TOP_K: usize = 12;
+    const PROX_EMA: f64 = 0.03;  // τ≈33 frames = 0.33s at 100Hz (was 0.12 for 20Hz)
+    const POS_EMA: f64 = 0.08;
+    const TOP_K: usize = 24;     // ~10% of 242 subcarriers (was 12/114)
 
     let mut buf = [0u8; 2048];
     loop {

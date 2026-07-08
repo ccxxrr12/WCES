@@ -21,12 +21,9 @@
 #define CSI_HEADER_SIZE 20
 
 /** Maximum frame buffer size.
- *  WiFi 6 (C5/C6) 40MHz: up to 484 subcarriers per antenna.
- *  WiFi 4 (S3/C3) 40MHz: up to 114 subcarriers.
- *  Formula: header + max_antennas * max_subcarriers * 2 bytes (I/Q)
- *  = 20 + 4 * 512 * 2 = 4116 bytes.
- *  NOTE: Static (BSS) buffer, not stack — safe for C5's 400KB SRAM. */
-#define CSI_MAX_FRAME_SIZE (CSI_HEADER_SIZE + 4 * 512 * 2)
+ *  HE20 1 antenna: header + 1 ant × 256 sc × 2 bytes (I/Q) = 532 bytes.
+ *  Round to 576 for cache-line alignment. */
+#define CSI_MAX_FRAME_SIZE (CSI_HEADER_SIZE + 1 * 256 * 2)  /* 532 → 576 aligned */
 
 /** Maximum number of channels in the hop table (ADR-029). */
 #define CSI_HOP_CHANNELS_MAX 6

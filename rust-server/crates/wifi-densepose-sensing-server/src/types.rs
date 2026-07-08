@@ -14,7 +14,7 @@ use crate::vital_signs::VitalSigns;
 pub const ESP32_OFFLINE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Number of frames retained in `frame_history` for temporal analysis.
-pub const FRAME_HISTORY_CAPACITY: usize = 100;
+pub const FRAME_HISTORY_CAPACITY: usize = 300;  // 3s at 100Hz (was 100 = 1s)
 
 // Signal processing constants
 pub const DEBOUNCE_FRAMES: u32 = 4;

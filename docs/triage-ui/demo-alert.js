@@ -1,6 +1,6 @@
 // WCES Demo — Breathing distress + fall alert scenario
 (function(){
-var DEMO_t=0,scenIdx=0,DEMO_alerts=[];
+var DEMO_t=0,scenIdx=0,DEMO_alerts=[],DEMO_done=false;
 var SCENARIO=[
     {t:0,br:18,hr:72,triage:'Delayed',color:'yellow',deter:false,alert:null},
     {t:6,br:35,hr:95,triage:'Immediate',color:'red',deter:true,alert:{time:'02:30:15',survivor_id:'S1',message:'呼吸率 18→35 BPM, START Delayed→Immediate',priority:2}},
@@ -32,8 +32,9 @@ function tick(dt){
         wasm_alerts:det?[{module:'fall_detect',severity:'critical',event_name:'fall_detected',value:32.4}]:[],pose_keypoints:null,model_status:null,persons:null,estimated_persons:1,tracked_survivors:null,alerts:null
     });
 }
-function loop(t){if(done)return;tick(t?t*0.001:0.05);requestAnimationFrame(loop)}
+function loop(t){if(DEMO_done)return;tick(t?t*0.001:0.05);requestAnimationFrame(loop)}
 document.getElementById('statusDot').className='status-dot online';
 document.getElementById('statusText').textContent='已连接';
 requestAnimationFrame(loop);
+window.addEventListener('beforeunload',function(){DEMO_done=true;});
 })();

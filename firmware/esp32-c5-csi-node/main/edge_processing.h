@@ -30,13 +30,13 @@
 
 /* ---- Buffer sizes ---- */
 #if CONFIG_IDF_TARGET_ESP32C5 || CONFIG_IDF_TARGET_ESP32C61
-#define EDGE_MAX_SUBCARRIERS  512   /**< C5/C61 WiFi 6: up to 484 subcarriers (40MHz HE). */
-#define EDGE_MAX_IQ_BYTES     2068  /**< C5/C61: 484 subcarriers × 2 bytes × 2 antennas + margin. */
+#define EDGE_MAX_SUBCARRIERS  512   /**< C5/C61: HE20 242-tone (11ax) / HT40 114-tone (11n fallback). */
+#define EDGE_MAX_IQ_BYTES     2068  /**< C5/C61: 242 subcarriers × 2 bytes × 2 antennas + margin. */
 #else
 #define EDGE_MAX_SUBCARRIERS  128   /**< S3/C3/ESP32: up to 114 subcarriers (40MHz HT). */
 #define EDGE_MAX_IQ_BYTES     1024  /**< S3/C3: 114 subcarriers × 2 bytes × 4 antennas. */
 #endif
-#define EDGE_RING_SLOTS       16    /**< SPSC ring buffer slots (power of 2). */
+#define EDGE_RING_SLOTS       64    /**< SPSC ring buffer slots (16→64: PSRAM relieves SRAM pressure). */
 #define EDGE_PHASE_HISTORY_LEN 256  /**< Phase history buffer depth. */
 #define EDGE_TOP_K            8     /**< Top-K subcarriers to track. */
 

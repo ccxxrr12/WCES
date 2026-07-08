@@ -308,6 +308,12 @@ static uint32_t s_frame_count;
 /** Previous phase velocity for fall detection (acceleration). */
 static float s_prev_phase_velocity;
 
+/* Dynamic sample rate measurement (ADR-159).
+ * EMA-smoothed to avoid jitter from burst-mode flush gaps.
+ * Seed at 20 Hz; adapts within ~7 frames at 100 Hz. */
+static float   s_measured_sample_rate = 20.0f;
+static int64_t s_last_frame_us = 0;
+
 /** Fall detection debounce state (issue #263). */
 static uint8_t  s_fall_consec_count;   /**< Consecutive frames above threshold. */
 static int64_t  s_fall_last_alert_us;  /**< Timestamp of last fall alert (debounce). */
@@ -695,9 +701,18 @@ static void process_frame(const edge_ring_slot_t *slot)
      * reliable dynamic rate measurement in the current implementation.
      * If actual callback rate differs (e.g., 10 Hz on quiet networks or
      * 50+ Hz in promiscuous mode), BPM estimates and biquad filter design
-     * will be inaccurate. A future improvement would measure the inter-frame
-     * interval and use a moving average for the effective sample rate. */
-    const float sample_rate = 20.0f;
+     * will be inaccurate. Dynamic measurement uses frame-to-frame interval
+     * with EMA smoothing (α=0.15, same as Rust measured_sample_rate). */
+    float sample_rate;
+    int64_t now_us = esp_timer_get_time();
+    if (s_last_frame_us > 0) {
+        float dt = (float)(now_us - s_last_frame_us) * 1e-6f;
+        if (dt > 0.001f && dt < 1.0f) {
+            s_measured_sample_rate = s_measured_sample_rate * 0.85f + (1.0f / dt) * 0.15f;
+        }
+    }
+    s_last_frame_us = now_us;
+    sample_rate = s_measured_sample_rate > 0.0f ? s_measured_sample_rate : 20.0f;
 
     /* --- Step 1-2: Phase extraction + unwrapping per subcarrier --- */
     /* Static allocation: 512 floats = 2048 bytes each. Stack would

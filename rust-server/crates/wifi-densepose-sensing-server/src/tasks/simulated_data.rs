@@ -12,6 +12,7 @@ use crate::types::{
 use crate::SharedState;
 use crate::signal_processing::*;
 use crate::state_ops::{smooth_and_classify, adaptive_override, smooth_vitals};
+use crate::vital_signs::VitalSigns;
 use crate::mat_pipeline::VitalSignsInput;
 
 pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
@@ -41,7 +42,7 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
         let phases_f32: Vec<f32> = frame.phases.iter().map(|p| *p as f32).collect();
 
         // ═══ Phase 1c: Write lock — stateful pipeline processing ═══
-        // Operations below mutate shared sub-engines (vital_detector,
+        // Operations below mutate shared sub-engines (VitalsBridge,
         // triage_engine, edge_engine) and history buffers, so they must run
         // under the write lock. A fuller refactor would also move
         // extract_features_from_frame outside by cloning frame_history, but
@@ -75,29 +76,37 @@ pub(crate) async fn simulated_data_task(state: SharedState, tick_ms: u64) {
                 else if classification.motion_level == "present_still" { 0.3 }
                 else { 0.05 };
 
-            // 子载波灵敏度选择: 取 top-30 高方差子载波提升生命体征SNR
-            let sensitive_sc = select_sensitive_subcarriers(
-                &s.frame_history, frame.n_subcarriers as usize, 30
-            );
-            let selected_amps = extract_selected_amplitudes(&frame.amplitudes, &sensitive_sc);
-            let selected_phases = extract_selected_amplitudes(&frame.phases, &sensitive_sc);
-
-            let raw_vitals = s.vital_detector.process_frame(
-                if selected_amps.len() >= 10 { &selected_amps } else { &frame.amplitudes },
-                if selected_phases.len() >= 10 { &selected_phases } else { &frame.phases },
-            );
+            // VitalsBridge: use the same IIR bandpass pipeline as the UDP path.
+            // Replaces the old FFT+Goertzel VitalSignDetector (removed ADR-142).
+            let sample_rate_hz = 1000.0 / tick_ms as f64;
+            let mut raw_vitals = VitalSigns::default();
+            {
+                let vb = s.vitals_bridges.entry(1)
+                    .or_insert_with(|| {
+                        wifi_densepose_sensing_server::vitals_bridge::VitalsBridge::new(
+                            frame.n_subcarriers as usize, sample_rate_hz)
+                    });
+                vb.set_sample_rate(sample_rate_hz);
+                let (vb_br, vb_hr, vb_br_conf, vb_hr_conf) =
+                    vb.extract(&frame.amplitudes, &frame.phases, tick);
+                if vb_br.is_some() { raw_vitals.breathing_rate_bpm = vb_br; }
+                if vb_hr.is_some() { raw_vitals.heart_rate_bpm = vb_hr; }
+                raw_vitals.breathing_confidence = vb_br_conf.max(raw_vitals.breathing_confidence);
+                raw_vitals.heartbeat_confidence = vb_hr_conf.max(raw_vitals.heartbeat_confidence);
+                raw_vitals.signal_quality = (raw_vitals.breathing_confidence
+                    .max(raw_vitals.heartbeat_confidence) * 0.8 + 0.2).clamp(0.0, 1.0);
+            }
             let vitals = smooth_vitals(&mut s, &raw_vitals);
             s.latest_vitals = vitals.clone();
 
             // LLM analysis: push vitals into sliding windows for trend analysis
             if let Some(ref engine) = s.llm_engine {
                 let eng = engine.clone();
-                let node_id = 1u8;
                 let br = vitals.breathing_rate_bpm.unwrap_or(0.0);
                 let hr = vitals.heart_rate_bpm.unwrap_or(0.0);
                 let sq = vitals.signal_quality;
                 tokio::spawn(async move {
-                    eng.push_vitals(node_id, br, hr, raw_motion as f64, sq).await;
+                    eng.push_vitals(1u8, br, hr, raw_motion as f64, sq).await;
                 });
             }
 

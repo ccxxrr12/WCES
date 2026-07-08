@@ -133,7 +133,8 @@ impl SignalPipeline {
             })
             .ok();
 
-        let normalizer = HardwareNormalizer::new();
+        let normalizer = HardwareNormalizer::with_canonical_subcarriers(242)
+            .expect("242 is a valid canonical subcarrier count");
 
         let hampel_config = HampelConfig {
             half_window: 3,
@@ -156,16 +157,19 @@ impl SignalPipeline {
         let motion_detector = MotionDetector::new(motion_config);
 
         // Feature extractor: needed by MotionDetector.
+        // sampling_rate is initialized to 100 Hz (C5 burst mode); updated
+        // per-frame via set_sample_rate() to match measured CSI arrival rate.
         let feature_config = FeatureExtractorConfig {
             fft_size: 128,
-            sampling_rate: 30.0,
+            sampling_rate: 100.0,
             min_doppler_history: 10,
             enable_doppler: false, // skip Doppler for lower latency
         };
         let feature_extractor = FeatureExtractor::new(feature_config);
 
         // Coherence: track per-subcarrier z-score stability.
-        let coherence = CoherenceState::new(56, 0.85);
+        // Uses canonical 242 (C5 HE20, matching HardwareNormalizer default).
+        let coherence = CoherenceState::new(242, 0.85);
 
         // Gate: Accept >= 0.85, Reject < 0.5, max 200 stale frames before recalibrate.
         let gate_config = GatePolicyConfig {

@@ -23,6 +23,7 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
@@ -211,12 +212,13 @@ static void wifi_init_sta(void)
      * Reference: esp-csi/examples/get-started/csi_recv/main/app_main.c */
     ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
     wifi_protocols_t protocols = {
-        .ghz_2g = WIFI_PROTOCOL_11N,
-        .ghz_5g = WIFI_PROTOCOL_11N,
+        .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX,
+        .ghz_5g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX,
     };
     ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
-    /* ESP32-C5 supports HE40 (40 MHz) in STA mode, providing 484 subcarriers
-     * for high-resolution CSI sensing — 4× the resolution of HT40 (114 sc). */
+    /* ESP32-C5 in 802.11ax: HE20 242-tone (C5 WiFi 6 is 20MHz-only non-AP).
+     * 802.11n fallback: HT40 114-tone. BW40 is set below for 11n fallback;
+     * in 11ax mode the PHY auto-limits to 20 MHz per the C5 datasheet. */
     wifi_bandwidths_t bandwidth = {
         .ghz_2g = WIFI_BW40,
         .ghz_5g = WIFI_BW40,
@@ -254,6 +256,25 @@ void app_main(void)
     nvs_config_load(&g_nvs_config);
 
     ESP_LOGI(TAG, "ESP32-C5 CSI Node (ADR-018) — Node ID: %d", g_nvs_config.node_id);
+
+    /* Initialize PSRAM (N8R8 module: 8MB Quad SPI).
+     * With CONFIG_SPIRAM_BOOT_INIT=y, PSRAM is auto-initialized at boot;
+     * this block verifies availability and logs free space for diagnostics.
+     * Must precede WiFi init so CSI burst ring can allocate from SPIRAM. */
+#if CONFIG_SPIRAM
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    if (psram_free > 64 * 1024) {
+        ESP_LOGI(TAG, "PSRAM: %u KB available — burst mode enabled",
+                 (unsigned)(psram_free / 1024));
+    } else if (psram_free > 0) {
+        ESP_LOGW(TAG, "PSRAM: only %u KB free — burst mode may be limited",
+                 (unsigned)(psram_free / 1024));
+    } else {
+        ESP_LOGW(TAG, "PSRAM: not available — falling back to direct UDP");
+    }
+#else
+    ESP_LOGI(TAG, "PSRAM not configured (CONFIG_SPIRAM=n) — using direct UDP send");
+#endif
 
     /* Initialize WiFi STA (skip entirely under QEMU mock — no RF hardware) */
 #ifndef CONFIG_CSI_MOCK_SKIP_WIFI_CONNECT

@@ -7,6 +7,11 @@ set(SRCS
 
 set(REQUIRES "")
 
+# ADR-159: PSRAM for CSI burst ring (N8R8 = 8MB Quad SPI)
+if(CONFIG_SPIRAM)
+    list(APPEND REQUIRES esp_psram)
+endif()
+
 # ADR-061: Mock CSI generator for QEMU testing
 if(CONFIG_CSI_MOCK_ENABLED)
     list(APPEND SRCS "mock_csi.c")
@@ -15,7 +20,7 @@ endif()
 # ADR-045: AMOLED display support (compile-time optional)
 if(CONFIG_DISPLAY_ENABLE)
     list(APPEND SRCS "display_hal.c" "display_ui.c" "display_task.c")
-    set(REQUIRES esp_lcd esp_lcd_touch lvgl)
+    list(APPEND REQUIRES esp_lcd esp_lcd_touch lvgl)
 endif()
 
 idf_component_register(
