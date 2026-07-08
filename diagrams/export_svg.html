@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Mermaid 图表导出工具</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 20px auto; background: #f5f5f5; }
+.card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 24px; }
+.card h2 { margin-top: 0; color: #333; }
+.btn { color: #fff; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 8px; }
+.btn-svg { background: #2563eb; }
+.btn-png { background: #16a34a; }
+.btn-all { background: #9333ea; }
+.mermaid { display: flex; justify-content: center; padding: 12px; overflow: auto; }
+svg { max-width: 100%; }
+.tip { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 12px 16px; margin-bottom: 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Mermaid 图表导出工具</h1>
+<div class="tip">
+  <b>Word 插入建议</b>：Word 对 SVG 文字渲染有缺陷。请点击 <b style="color:#16a34a">下载 PNG 高清2x</b> 按钮，PNG 在 Word 中文字显示完美。
+</div>
+<button class="btn btn-all" onclick="downloadAllPNG()">一键下载全部 PNG</button>
+
+<div class="card">
+  <h2>图1. 系统四层总体架构</h2>
+  <div class="mermaid" id="d1">
+flowchart TB
+    subgraph L1["感知层 ESP32-C5 三节点"]
+        N1["节点1 242子载波 PSRAM"]
+        N2["节点2 242子载波 PSRAM"]
+        N3["节点3 242子载波 PSRAM"]
+    end
+    subgraph L2["传输层 WiFi 6 WLAN"]
+        UDP["UDP端口5005 信道跳转"]
+    end
+    subgraph L3["计算层 RZ-G2L Rust"]
+        Rx["UDP接收与帧解析"]
+        SP["SignalPipeline 五级清洗"]
+        VB["VitalsBridge 生命体征"]
+        CB["CIRBridge 信道估计"]
+        FB["FieldBridge 信号场"]
+        TE["TriageEngine START分诊"]
+        EB["EdgeModuleEngine 19模块"]
+        LB["LocBridge与TrackBridge"]
+        AA["MedAgent LLM协调"]
+        WS["Axum Server HTTP WS"]
+        Rx --> SP
+        SP --> VB
+        SP --> TE
+        VB --> TE
+        CB --> LB
+        FB --> LB
+        TE --> EB
+        TE --> AA
+        TE --> WS
+        LB --> WS
+    end
+    subgraph L4["展示层 Browser"]
+        Dash["分诊仪表盘 伤员地图热力图"]
+        Skel["3D骨架 Three.js 17关键点"]
+    end
+    N1 --> UDP
+    N2 --> UDP
+    N3 --> UDP
+    UDP --> Rx
+    WS --> Dash
+    WS --> Skel
+    style L1 fill:#e0f2fe,stroke:#0284c7
+    style L3 fill:#fef3c7,stroke:#d97706
+    style L4 fill:#dcfce7,stroke:#16a34a
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d1','fig1_system_arch.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d1','fig1_system_arch.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图2. 服务端每帧处理管线 数据依赖DAG</h2>
+  <div class="mermaid" id="d2">
+flowchart TD
+    Frame["frame amplitudes phases"] --> S1["1 动态采样率 EMA"]
+    Frame --> S2["2 SignalPipeline 五级清洗"]
+    Frame --> S3["3 特征提取 帧间差方差频带功率"]
+    Frame --> S6["6 CIRBridge ISTA稀疏恢复"]
+    Frame --> S7["7 FieldBridge SVD校准"]
+    S2 --> S4["4 运动分类 四级"]
+    S2 --> S5["5 VitalsBridge IIR零交叉 自相关"]
+    S1 --> S5
+    S3 --> S8["8 TriageEngine START分诊"]
+    S4 --> S8
+    S5 --> S8
+    S6 --> S10["10 定位追踪 混合质心 6D Kalman"]
+    S7 --> S10
+    S4 --> S9["9 EdgeModuleEngine 19模块"]
+    S5 --> S9
+    S10 --> S8
+    S8 --> S11["11 AlertingBridge FIFO告警"]
+    S8 --> S12["12 LLM push_vitals"]
+    S9 --> Output["SensingUpdate JSON WebSocket"]
+    S10 --> Output
+    S11 --> Output
+    S12 --> Output
+    style Frame fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    style S8 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style Output fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d2','fig2_pipeline.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d2','fig2_pipeline.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图3. 设计流程与关键决策点</h2>
+  <div class="mermaid" id="d3">
+flowchart LR
+    D1{"C5 242子载波 vs S3 114"} -->|选定C5| P2["固件开发"]
+    P2 --> D2{"TX阻塞"}
+    D2 -->|是| F1["PSRAM突发缓冲 256槽"]
+    F1 --> D3{"FFT精度足"}
+    D3 -->|否 迭代1| A1["IIR零交叉 自相关"]
+    A1 --> D4{"RSSI小于5m"}
+    D4 -->|否 迭代2| A2["混合质心 SVD ISTA"]
+    A2 --> P4["集成重构"]
+    P4 --> D5{"路径冗余"}
+    D5 -->|是 迭代3| R1["精简VitalsBridge"]
+    R1 --> P5["验证部署"]
+    P5 --> D6{"0错误"}
+    D6 -->|是| DONE["交付"]
+    D6 -.->|否 回退| P4
+    style D2 fill:#fee,stroke:#c33
+    style D3 fill:#fee,stroke:#c33
+    style D4 fill:#fee,stroke:#c33
+    style D5 fill:#fee,stroke:#c33
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d3','fig3_design_flow.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d3','fig3_design_flow.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图4. 系统部署拓扑</h2>
+  <div class="mermaid" id="d4">
+flowchart TD
+    RT["千兆路由器 192.168.1.0"]
+    N1["ESP32-C5 节点1 192.168.1.10"]
+    N2["ESP32-C5 节点2 192.168.1.11"]
+    N3["ESP32-C5 节点3 192.168.1.12"]
+    MCU["瑞萨 RZ-G2L 主控AI 192.168.1.100"]
+    RT --> N1
+    RT --> N2
+    RT --> N3
+    RT --> MCU
+    style RT fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    style MCU fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style N1 fill:#dcfce7,stroke:#16a34a
+    style N2 fill:#dcfce7,stroke:#16a34a
+    style N3 fill:#dcfce7,stroke:#16a34a
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d4','fig4_network_topology.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d4','fig4_network_topology.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图5. CSI采集模块流程</h2>
+  <div class="mermaid" id="d5">
+flowchart TD
+    CB["wifi_csi_callback"] --> D1{"data_len小于UINT16_MAX"}
+    D1 -->|否| DROP["丢弃帧"]
+    D1 -->|是| S1["提取rx_ctrl rx_ant 动态天线数"]
+    S1 --> S2["计算n_subcarriers等于data_len减4"]
+    S2 --> D2{"CSI buffer长度匹配"}
+    D2 -->|否| DROP
+    D2 -->|是| D3{"帧数少于300 AGC学习"}
+    D3 -->|是| AGC["AGC增益锁定"]
+    D3 -->|否| D4{"距上次发送大于等于20ms"}
+    AGC --> D4
+    D4 -->|否| SKIP["跳过本帧 50Hz限速"]
+    D4 -->|是| PUSH["Ring Push SPSC环形缓冲"]
+    PUSH --> UDP["UDP发送"]
+    style DROP fill:#fee,stroke:#c33
+    style PUSH fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d5','fig5_csi_callback.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d5','fig5_csi_callback.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图6. 边缘预处理模块流程</h2>
+  <div class="mermaid" id="d6">
+flowchart TD
+    IN["输入 CSI振幅序列与相位序列"] --> IIR["Biquad IIR带通滤波 呼吸0.1到0.5Hz 心率0.8到2.0Hz"]
+    IN --> PH["相位提取与解卷绕 atan2 unwrap"]
+    IN --> ME["运动能量 帧间相位变化率"]
+    IN --> PD["存在检测 振幅方差大于自适应阈值"]
+    IIR --> GUARD["NaN Inf防护 参数校验"]
+    PH --> PKG["打包 边缘生命体征包 magic 0xC511_0002 32B"]
+    ME --> PKG
+    PD --> PKG
+    GUARD --> PKG
+    style IN fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    style PKG fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d6','fig6_edge_processing.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d6','fig6_edge_processing.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图7. 服务端每帧处理管线 11步DAG</h2>
+  <div class="mermaid" id="d7">
+flowchart TD
+    UDP["ESP32-C5 UDP帧到达端口5005"] --> S1["1 C5-CSI帧解析 magic 0xC511"]
+    S1 --> S2["2 SignalPipeline PhaseSanitize Normalizer Hampel Motion CoherenceGate"]
+    S1 --> S3["3 extract_features 帧间差方差频带功率"]
+    S1 --> S4["4 动态采样率 EMA"]
+    S1 --> S7["7 FieldBridge SVD校准 信号场热力图"]
+    S1 --> S8["8 CIRBridge ISTA L1稀疏恢复 ToF测距"]
+    S2 --> S5["5 运动分类四级 motion_score EMA阈值"]
+    S2 --> S6["6 VitalsBridge IIR带通零交叉BR 自相关HR"]
+    S4 --> S6
+    S8 --> S9["9 混合定位 子载波方差60% 相位多普勒40%"]
+    S3 --> S9
+    S5 --> S10["10 TriageEngine cos匹配 START五级分诊"]
+    S6 --> S10
+    S9 --> S10
+    S5 --> S11["11 EdgeModuleEngine 10模块并行"]
+    S6 --> S11
+    S10 --> OUT["SensingUpdate JSON WebSocket"]
+    S11 --> OUT
+    style UDP fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    style S10 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style OUT fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d7','fig7_pipeline_11steps.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d7','fig7_pipeline_11steps.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图8. TriageEngine 分诊流程</h2>
+  <div class="mermaid" id="d8">
+flowchart TD
+    START["TriageEngine process"] --> LOOP["for each survivor"]
+    LOOP --> EMB["generate_embedding 8维向量 br hr motion quality rssi"]
+    EMB --> MATCH{"match_or_create 余弦大于等于0.75"}
+    MATCH -->|匹配| UPDATE["更新追踪 EMA平滑生命体征"]
+    MATCH -->|不匹配| REID["Re-ID重识别"]
+    MATCH -->|新建| NEW["新建 Survivor ID hex"]
+    UPDATE --> TRIAGE{"calculate_triage START五级判定"}
+    REID --> TRIAGE
+    NEW --> TRIAGE
+    TRIAGE --> T1["Immediate RED RR大于30 RR小于10 HR大于120 HR小于40"]
+    TRIAGE --> T2["Delayed YELLOW 中等异常"]
+    TRIAGE --> T3["Minor GREEN 体征正常"]
+    TRIAGE --> T4["Deceased BLACK 无生命体征"]
+    TRIAGE --> T5["Unknown GRAY 数据不足"]
+    T1 --> DET{"恶化检测 连续下降大于等于2级"}
+    T2 --> DET
+    T3 --> DET
+    T4 --> DET
+    T5 --> DET
+    DET -->|是| ALERT["DETERIORATION告警"]
+    DET -->|否| AGE["年龄估算"]
+    ALERT --> AGE
+    AGE --> BUILD["build_update 群体评估 救援需求"]
+    style START fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    style TRIAGE fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style BUILD fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style T1 fill:#fee,stroke:#c33
+    style T4 fill:#ddd,stroke:#666
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d8','fig8_triage_engine.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d8','fig8_triage_engine.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图9. Medical Agent 架构</h2>
+  <div class="mermaid" id="d9">
+flowchart LR
+    subgraph LOCAL["本地 RZ-G2L"]
+        SIG["信号处理与分诊"]
+    end
+    subgraph CLOUD["云端 Coordinator模式"]
+        INJ["Prompt注入防护 患者数据JSON转义"]
+        TOK["Token估算 ASCII x0.25 CJK x1.5"]
+        GW["API Gateway 流式请求 SSE解析 JSON聚合"]
+        CB{"Circuit Breaker 3次失败"}
+        COOL["5分钟冷却 模板降级"]
+        LLM["DeepSeek V4 Pro LLM深度分析"]
+        TMPL["本地模板 离线标准化伤病报告"]
+        INJ --> GW
+        TOK --> GW
+        GW --> CB
+        CB -->|是| COOL
+        CB -->|否| LLM
+        COOL --> TMPL
+    end
+    SIG --> GW
+    LLM --> OUT["分析结果"]
+    TMPL --> OUT
+    style LOCAL fill:#e0f2fe,stroke:#0284c7
+    style CLOUD fill:#fef3c7,stroke:#d97706
+    style OUT fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d9','fig9_medical_agent.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d9','fig9_medical_agent.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<div class="card">
+  <h2>图10. 软件整体架构 模块依赖与数据流总览</h2>
+  <div class="mermaid" id="d10">
+flowchart TD
+    subgraph FW["ESP32-C5固件"]
+        CSI["csi_collector CSI采集 AGC锁定 PSRAM突发缓冲256槽"]
+        EDGE["edge_processing IIR带通 相位解卷绕 运动能量 存在检测"]
+        SEND["stream_sender UDP端口5005发送"]
+        CSI --> EDGE
+        EDGE --> SEND
+    end
+    subgraph RX["Rust服务端 接收与调度"]
+        MAIN["main.rs 1244行 CLI解析 SharedState 任务调度 Axum端口8080"]
+        UDP["udp_receiver 帧解析 magic 0xC511 HashMap隔离3节点"]
+        MAIN --> UDP
+    end
+    subgraph SIG["Rust服务端 信号处理"]
+        SP["SignalPipeline PhaseSanitizer Normalizer Hampel Motion CoherenceGate"]
+        VB["VitalsBridge BreathingExtractor IIR零交叉 HeartRateExtractor 自相关"]
+        FB["FieldBridge SVD空房间校准 扰动能量 20x20信号场"]
+        CB["CIRBridge ISTA L1稀疏恢复 ToF测距"]
+        SP --> VB
+    end
+    subgraph LOC["Rust服务端 定位与追踪"]
+        MIX["混合质心定位 子载波方差60% 相位多普勒40%"]
+        KAL["6维Kalman CV滤波器 Joseph形式 马氏距离门控"]
+        TRACK["TrackingBridge 多目标关联追踪"]
+        MIX --> KAL
+        KAL --> TRACK
+    end
+    subgraph AI["Rust服务端 智能决策"]
+        TE["TriageEngine 8维嵌入匹配 START五级分诊 恶化检测"]
+        EME["EdgeModuleEngine 10模块并行"]
+        AB["AlertingBridge FIFO告警队列 max 50"]
+        LLM["Medical Agent Coordinator模式 Circuit Breaker"]
+        TE --> EME
+        EME --> AB
+        TE --> LLM
+    end
+    subgraph WEB["Web可视化前端"]
+        WS["WebSocket SensingUpdate JSON"]
+        MAP["Canvas 2D伤员地图 节点标记 信号场热力图"]
+        SKEL["Three.js 3D骨架 17 COCO关键点"]
+        CARD["伤员卡片 告警侧栏 EHR sparkline趋势"]
+        WS --> MAP
+        WS --> SKEL
+        WS --> CARD
+    end
+    SEND --> UDP
+    UDP --> SP
+    UDP --> FB
+    UDP --> CB
+    CB --> MIX
+    VB --> MIX
+    TE --> MIX
+    TRACK --> TE
+    AB --> WS
+    LLM --> WS
+    style FW fill:#dcfce7,stroke:#16a34a
+    style RX fill:#e0f2fe,stroke:#0284c7
+    style SIG fill:#fef3c7,stroke:#d97706
+    style LOC fill:#fce7f3,stroke:#db2777
+    style AI fill:#ede9fe,stroke:#7c3aed
+    style WEB fill:#fff7ed,stroke:#ea580c
+  </div>
+  <button class="btn btn-svg" onclick="downloadSVG('d10','fig10_software_arch.svg')">下载 SVG</button>
+  <button class="btn btn-png" onclick="downloadPNG('d10','fig10_software_arch.png',2)">下载 PNG 高清2x</button>
+</div>
+
+<script>
+mermaid.initialize({ startOnLoad: true, theme: 'default' });
+
+function getSVG(containerId) {
+  var svg = document.getElementById(containerId).querySelector('svg');
+  if (!svg) { alert('图表尚未渲染完成，请稍候'); return null; }
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  return svg;
+}
+
+function downloadSVG(containerId, filename) {
+  var svg = getSVG(containerId);
+  if (!svg) return;
+  var svgString = new XMLSerializer().serializeToString(svg);
+  var blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  triggerDownload(blob, filename);
+}
+
+function downloadPNG(containerId, filename, scale) {
+  var svg = getSVG(containerId);
+  if (!svg) return;
+  var svgString = new XMLSerializer().serializeToString(svg);
+  var svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  var url = URL.createObjectURL(svgBlob);
+  var img = new Image();
+  img.onload = function() {
+    var w = svg.clientWidth || svg.getBoundingClientRect().width || 800;
+    var h = svg.clientHeight || svg.getBoundingClientRect().height || 600;
+    var canvas = document.createElement('canvas');
+    canvas.width = w * scale;
+    canvas.height = h * scale;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(function(blob) {
+      triggerDownload(blob, filename);
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  };
+  img.onerror = function() {
+    alert('PNG转换失败，请改用SVG下载');
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+function triggerDownload(blob, filename) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 100);
+}
+
+function downloadAllPNG() {
+  var ids = ['d1','d2','d3','d4','d5','d6','d7','d8','d9','d10'];
+  var names = ['fig1_system_arch','fig2_pipeline','fig3_design_flow','fig4_network_topology','fig5_csi_callback','fig6_edge_processing','fig7_pipeline_11steps','fig8_triage_engine','fig9_medical_agent','fig10_software_arch'];
+  ids.forEach(function(id, i) {
+    setTimeout(function() { downloadPNG(id, names[i] + '.png', 2); }, i * 1500);
+  });
+}
+</script>
+</body>
+</html>
