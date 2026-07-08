@@ -39,11 +39,11 @@
 
 本系统瞄准**极端环境或大规模伤亡场景下的批量伤员连续监测**这一全球应急医学核心痛点。三类典型场景的监测困境具有高度一致的根源——短时间内伤员爆发式增长与极端环境下医护、设备、基础设施严重不足之间的不可调和矛盾：
 
-**自然灾害临时医院**：德国Fraunhofer IIS研究指出，单次伤亡超10人的大规模事件中，传统分诊仅能提供单次生命体征记录，几乎不可能实现连续监测——而这正是本系统非接触穿墙感知所解决的。《BMJ Quality & Safety》(2026)的地震救援研究证实，临时医疗点大量伤员在无监护下等待转运，隐匿性恶化无法及时识别。山东大学齐鲁医院在《中华急诊医学杂志》(2023)中指出，狭小空间救援现场仅能对极危重伤员进行间断监测。
+**自然灾害临时医院**：德国Fraunhofer IIS研究指出，单次伤亡超10人的大规模事件中，传统分诊仅能提供单次生命体征记录，几乎不可能实现连续监测——而这正是本系统非接触穿墙感知所解决的。多项地震救援研究证实，临时医疗点大量伤员在无监护下等待转运，隐匿性恶化无法及时识别。山东大学齐鲁医院在《中华急诊医学杂志》(2023)中指出，狭小空间救援现场仅能对极危重伤员进行间断监测。
 
-**疫情方舱医院**：武汉方舱实践表明，患者基数大、医护配比仅为传统医院的1/4~1/5，人工巡诊无法实现全员连续监测，新冠肺炎部分患者由轻型快速转重型难以早期识别（《陆军军医大学学报》2020）。上海方舱经验显示，数千张床位仅能对少数高危患者部署远程监护（中国医学装备协会）。
+**疫情方舱医院**：武汉方舱实践表明，患者基数大、医护配比严重不足，人工巡诊无法实现全员连续监测，新冠肺炎部分患者由轻型快速转重型难以早期识别（2020年武汉方舱多项临床观察）。上海方舱经验显示，数千张床位仅能对少数高危患者部署远程监护（中国医学装备协会《方舱医院装备产品集》2022）。
 
-**战时野战医院**：俄乌冲突中，乌军前线监护设备严重短缺，重伤员从交战区后送平均耗时3.5小时且全程无连续监护（中国指挥与控制学会2025）；俄方超30%战伤截肢与院前监测不当直接相关（CNA智库解密报告）。WHO统计2024年乌克兰医疗设施遭390次袭击，进一步瓦解监测能力。加沙地带36所医院仅17所部分运行，大量伤员只能靠肉眼观察判断伤情（无国界医生2024）。
+**战时野战医院**：俄乌冲突中，乌军前线监护设备严重短缺，重伤员从交战区后送平均耗时3.5小时且全程无连续监护（中国指挥与控制学会2025）；俄方战伤截肢率高企，据俄罗斯副劳动部长2023年公开数据，54%的重伤士兵至少有一肢截肢，反映院前监护与救治的严峻挑战（CNA智库公开报告2024）。WHO统计2024年乌克兰医疗设施遭470余次袭击，进一步瓦解监测能力。加沙地带36所医院仅17所部分运行，大量伤员只能靠肉眼观察判断伤情（无国界医生2024）。
 
 WIFI穿透性强，覆盖面积广，同时本项目为非接触式无源探测，数据本地运行，可私有化部署，对于传统的信息采集、人员定位、生命体征监护设备具有以下优势：
 - 毫米波雷达：单个毫米波雷达只能覆盖不超过25m³，5-8㎡，全屋部署需要约5-10个，单个价格在300元左右，同时毫米波雷达只能穿透约10cm的混凝土。而2.4G WIFI最多可穿透30cm等标混凝土。
@@ -868,59 +868,59 @@ Coordinator模式:
 
 [3] Q. Pu, S. Gupta, S. Gollakota, and S. Patel, "Whole-Home Gesture Recognition Using Wireless Signals," in *Proc. ACM MobiCom '13*, Miami, FL, USA, 2013, pp. 27-38. DOI: 10.1145/2500423.2500436. （WiSee系统：首次利用WiFi多普勒频移实现全屋手势识别，开创通信信号复用感知范式）
 
-[4] F. Zhang, D. Zhang, J. Xiong, et al., "From Fresnel Diffraction Model to Fine-grained Human Respiration Sensing with Commodity Wi-Fi Devices," *Proc. ACM IMWUT*, vol. 2, no. 3, article 103, 2018. DOI: 10.1145/3264928. （将菲涅尔区衍射模型应用于呼吸感知，量化衍射增益与胸腔位移关系，为本项目CSI呼吸检测信号处理提供理论依据）
+[4] F. Zhang, D. Zhang, J. Xiong, et al., "From Fresnel Diffraction Model to Fine-grained Human Respiration Sensing with Commodity Wi-Fi Devices," *Proc. ACM IMWUT*, vol. 2, no. 1, article 53, pp. 1-23, 2018. DOI: 10.1145/3191785. （将菲涅尔区衍射模型应用于呼吸感知，量化衍射增益与胸腔位移关系，为本项目CSI呼吸检测信号处理提供理论依据）
 
 [5] D. Zhang, H. Wang, and D. Wu, "Toward Centimeter-Scale Human Activity Sensing with Wi-Fi Signals," *IEEE Computer*, vol. 50, no. 1, pp. 48-57, 2017. DOI: 10.1109/MC.2017.7. （WiFi感知菲涅尔区理论基础，使能厘米级人体活动感知）
 
 ## WiFi 6 / 802.11ax CSI感知
 
-[6] S. Cominelli, F. Gringoli, and F. Restuccia, "Exposing the CSI: A Systematic Investigation of CSI-based Wi-Fi Sensing Capabilities and Limitations," in *Proc. IEEE PerCom 2023*, arXiv:2302.00992, 2023. （WiFi 6 CSI系统研究：802.11ax较802.11n数据点增加~250倍，78.125kHz子载波间距使能细粒度生命体征感知）
+[6] M. Cominelli, F. Gringoli, and F. Restuccia, "Exposing the CSI: A Systematic Investigation of CSI-based Wi-Fi Sensing Capabilities and Limitations," in *Proc. IEEE PerCom 2023*, arXiv:2302.00992, 2023. （WiFi 6 CSI系统研究：802.11ax较802.11n数据点增加~250倍，78.125kHz子载波间距使能细粒度生命体征感知）
 
-[7] T. Zhang, Z. Jiang, and H. Liu, "Domino: Dominant Path-based Compensation for Hardware Impairments in Modern WiFi Sensing," arXiv:2509.13807, 2025. （解决802.11ac/ax芯片硬件损伤对感知的影响，单天线160MHz带宽呼吸率误差<0.24 BPM）
+[7] R. Kong and H. Chen, "Domino: Dominant Path-based Compensation for Hardware Impairments in Modern WiFi Sensing," arXiv:2509.13807, 2025. （解决802.11ac/ax芯片硬件损伤对感知的影响，单天线160MHz带宽呼吸率误差<0.24 BPM）
 
-[8] C. Chen, H. Song, Q. Li, et al., "An Overview on IEEE 802.11bf: WLAN Sensing," *IEEE Communications Surveys and Tutorials*, 2024. DOI: 10.1109/COMST.2024.3366731. （IEEE 802.11bf标准综述——首个原生集成感知能力的WiFi标准，定义CSI测量与感知会话管理标准化流程）
+[8] R. Du, H. Hua, H. Xie, et al., "An Overview on IEEE 802.11bf: WLAN Sensing," *IEEE Communications Surveys and Tutorials*, vol. 27, no. 1, pp. 184-217, 2025. DOI: 10.1109/COMST.2024.3408899. （IEEE 802.11bf标准综述——首个原生集成感知能力的WiFi标准，定义CSI测量与感知会话管理标准化流程）
 
 [9] Y. Zhang, Z. Liu, C. Wu, J. Li, and S. Tang, "WiCG: Heartbeat Sensing Using COTS WiFi Devices with Common Antenna," *ACM Transactions on Sensor Networks*, vol. 21, no. 5, 2025. DOI: 10.1145/3748330. （WiFi心率检测最新进展：PCA空间去噪+奇异谱分析SSA，平均误差仅0.28 BPM，为本项目心率检测算法设计提供对标参考）
 
 ## ESP32-C5 CSI感知与嵌入式平台
 
-[10] Espressif Systems, "ESP-CSI: ESP32 CSI Toolkit," GitHub Repository, 2024. URL: https://github.com/espressif/esp-csi. （乐鑫官方CSI感知框架，支持ESP32-C5双频2.4/5GHz，WiFi 6 160MHz带宽，硬件CSI加速器<2ms CSI输出延迟）
+[10] Espressif Systems, "ESP-CSI: ESP32 CSI Toolkit," GitHub Repository, 2024. URL: https://github.com/espressif/esp-csi. （乐鑫官方CSI感知框架，支持ESP32-C5双频2.4/5GHz，WiFi 6 CSI实时采集输出）
 
 [11] Espressif Systems, "ESP-CRAB: Multi-Receiver CSI Sensing Platform," GitHub Repository, 2024. URL: https://github.com/espressif/esp-csi/tree/master/examples/esp-crab. （双ESP32-C5硬件参考设计，相位同步共晶振实现TDOA定位，自收发模式毫米级精度短距感知）
 
-[12] Espressif Systems, "ESP32-C5 Technical Reference Manual," Version 1.0, 2025. URL: https://docs.espressif.com/projects/esp-idf/en/latest/esp32c5/ （ESP32-C5技术参考手册）
+[12] Espressif Systems, "ESP32-C5 Technical Reference Manual," Version 1.0, 2025. URL: https://www.espressif.com/sites/default/files/documentation/esp32-c5_technical_reference_manual_en.pdf （ESP32-C5技术参考手册）
 
 [13] Espressif Systems, "ESP-IDF Programming Guide v6.0.1 — Wi-Fi CSI," 2026. URL: https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32c5/api-reference/network/esp_wifi.html （ESP-IDF v6.0.1编程指南WiFi CSI API文档，本项目固件开发的核心参考）
 
-[14] Renesas Electronics Corporation, "RZ/G2L — 64-bit MPUs with Dual Cortex-A55 and Cortex-M33 for Entry-Level HMI and AI Inference Processing," White Paper, 2024. URL: https://www.renesas.com/en/document/whp/rzg2l-rzg2lc-64-bit-mpus-enable-entry-level-hmi-ai-inference-processing （RZ/G2L AI推理基准：比Cortex-A53快3倍，MobileNet v1推理44.27ms，本项目主控平台选型依据）
+[14] Renesas Electronics Corporation, "RZ/G2L — 64-bit MPUs with Dual Cortex-A55 and Cortex-M33 for Entry-Level HMI and AI Inference Processing," White Paper, 2024. URL: https://www.renesas.com/en/document/whp/rzg2l-rzg2lc-64-bit-mpus-enable-entry-level-hmi-ai-inference-processing （RZ/G2L AI推理基准：基于Cortex-A55 Int8 dot-product指令，比Cortex-A53快3倍，经70+预构建模型测试验证，本项目主控平台选型依据）
 
-[15] Renesas Electronics, "RZ/G2L Group User's Manual: Hardware," Rev. 1.30, 2024. URL: https://www.renesas.com/us/en/products/microcontrollers-microprocessors/rz-arm-based-high-end-32-64-bit-mpus/rzg2l （RZ/G2L硬件手册）
+[15] Renesas Electronics, "RZ/G2L Group User's Manual: Hardware," Rev. 1.10, 2021. URL: https://www.renesas.com/en/document/mah/rzg2l-group-users-manual-hardware （RZ/G2L硬件手册）
 
 ## START分诊与灾害医学
 
-[16] E. Shaltout, A. Alhaj, M. Al-Mohamed, et al., "Accuracy and Timeliness of Prehospital Global Triage System Protocols in Mass Disasters: A Systematic Review of Systematic Reviews," *Cureus*, 2025. DOI: 10.7759/cureus.412519. （2025年START协议准确性系统综述，指出AI辅助分诊与非接触体征测量提升准确性的需求，正是本文工作的出发点）
+[16] A. E. Shaltout, M. E. Elbadri, K. Kaur, et al., "Accuracy and Timeliness of Prehospital Global Triage System Protocols in Mass Disasters: A Systematic Review of Systematic Reviews," *Cureus*, vol. 17, no. 9, e92796, 2025. DOI: 10.7759/cureus.92796. （2025年START协议准确性系统综述，指出AI辅助分诊与非接触体征测量提升准确性的需求，正是本文工作的出发点）
 
-[17] M. Z. Ahmadi Marzaleh, M. Peyravi, and S. Shokrpour, "START-A (Simple Triage, Rapid Treatment and Analgesia) in Mass Casualty Incidents," *Prehospital and Disaster Medicine*, 2024. DOI: 10.1177/10806032231222474. （START-A分诊演进：在2023年Kahramanmaras地震（>5万人死亡）中得到验证）
+[17] S. Yılmaz, A. C. Tatlıparmak, and R. Ak, "START-A (Simple Triage, Rapid Treatment and Analgesia) in Mass Casualty Incidents," *Wilderness & Environmental Medicine*, vol. 35, no. 2, pp. 246-248, 2024. DOI: 10.1177/10806032231222474. （START-A分诊演进：在2023年Kahramanmaras地震（>5万人死亡）背景下的讨论性通信）
 
-[18] N. E. S. of Trauma, "START Triage (Simple Triage and Rapid Treatment)," U.S. Department of Health and Human Services, 2019. （START分诊标准协议规范，本项目分诊引擎的直接参考标准）
+[18] U.S. Department of Health and Human Services, "START Adult Triage Algorithm," Chemical Hazards Emergency Medical Management (CHEMM), 2022. URL: https://chemm.hhs.gov/startadult.htm （START分诊标准协议规范，本项目分诊引擎的直接参考标准）
 
 ## WiFi感知与深度学习
 
-[19] N. V. Bijlani, O. Z. Sotirios, et al., "Artificial Intelligence Enhanced CSI-based Wi-Fi Sensing for Non-Contact Vital Sign Monitoring: A Systematic Review," *PeerJ Computer Science*, 2025. DOI: 10.7717/peerj-cs.3375. （45项研究的PRISMA系统综述：CNN/LSTM/SVM在WiFi生命体征检测中>95%准确率，指出边缘部署为关键挑战——本项目以全Rust边缘计算回应）
+[19] M. Al-Rajab, K. Qassem, S. Seyam, et al., "Artificial Intelligence Enhanced CSI-based Wi-Fi Sensing for Non-Contact Vital Sign Monitoring: A Systematic Review," *PeerJ Computer Science*, vol. 12, e3375, 2026. DOI: 10.7717/peerj-cs.3375. （45项研究的PRISMA系统综述：CNN/LSTM/SVM在WiFi生命体征检测中>95%准确率，指出边缘部署为关键挑战——本项目以全Rust边缘计算回应）
 
-[20] A. Patidar, O. Krejcar, et al., "Edge-AI Enabled Real-Time ECG and Vital Sign Monitoring System for Elderly Patients," *IEEE Access*, 2025. DOI: 10.1109/ACCESS.2025.11295856. （边缘AI医疗监测双控制器架构ESP32+Raspberry Pi，<20ms检测延迟，11KB量化模型，为本项目端-边协同架构的工程参考）
+[20] R. Manoj, A. Skandan, U. Hemanth, and K. Sindhu, "Edge-AI Enabled Real-Time ECG and Vital Sign Monitoring System for Elderly Patients," in *Proc. 9th Int. Conf. Computational System and Information Technology for Sustainable Solutions (CSITSS)*, Bangalore, India, 2025. DOI: 10.1109/CSITSS67709.2025.11295856. （边缘AI医疗监测双控制器架构ESP32+Raspberry Pi，为本项目端-边协同架构的工程参考）
 
 [21] B. Yue, A. Jiang, C. Yang, et al., "Deep Learning-Enhanced Human Sensing with Channel State Information: A Survey," *Computers, Materials and Continua*, vol. 86, no. 1, 2025. DOI: 10.32604/cmc.2025.071047. （2025年CSI感知全流程综述：采集→预处理→深度学习设计）
 
-[22] A. Ahmad, H. Ullah, and W. Choi, "WiFi-Based Human Sensing with Deep Learning: Recent Advances, Challenges, and Opportunities," *IEEE Open Journal of the Communications Society*, vol. 5, pp. 2347-2385, 2024. DOI: 10.1109/OJCOMS.2024.3386749. （56+引用WiFi感知综述，覆盖活动识别、追踪、跌倒检测、步态识别等）
+[22] I. Ahmad, A. Ullah, and W. Choi, "WiFi-Based Human Sensing with Deep Learning: Recent Advances, Challenges, and Opportunities," *IEEE Open Journal of the Communications Society*, vol. 5, pp. 3595-3623, 2024. DOI: 10.1109/OJCOMS.2024.3411529. （56+引用WiFi感知综述，覆盖活动识别、追踪、跌倒检测、步态识别等）
 
 ## 灾害现场非接触感知
 
-[23] F. Chang, S. Liu, K. Qiu, et al., "MmECare: Enabling Fine-grained Vital Sign Monitoring for Emergency Care with Handheld MmWave Radars," in *Proc. ACM MobiCom 2024*, 2024. DOI: 10.1145/3699766. （解决急救场景中手持设备运动对生命体征监测的干扰——与本项目方舱静态部署形成互补应用场景）
+[23] Z. Chang, F. Zhang, X. Ma, et al., "MmECare: Enabling Fine-grained Vital Sign Monitoring for Emergency Care with Handheld MmWave Radars," *Proc. ACM IMWUT*, vol. 8, no. 4, article 207, 2024. DOI: 10.1145/3699766. （解决急救场景中手持设备运动对生命体征监测的干扰——与本项目方舱静态部署形成互补应用场景）
 
-[24] G. Xu, Y. Zhang, Z. Li, et al., "Advancing Remote Life Sensing for Search and Rescue: A Novel Framework for Precise Vital Signs Detection via Airborne UWB Radar," *Sensors*, vol. 25, no. 17, article 5232, 2025. DOI: 10.3390/s25175232. （空中UWB生物雷达+3km无线数据链，JADE盲源分离+EMD，呼吸率准确率99.46%，验证非接触感知在搜救场景的可行性）
+[24] Y. Jing, Y. Yan, Z. Li, et al., "Advancing Remote Life Sensing for Search and Rescue: A Novel Framework for Precise Vital Signs Detection via Airborne UWB Radar," *Sensors*, vol. 25, no. 17, article 5232, 2025. DOI: 10.3390/s25175232. （空中UWB生物雷达+3km无线数据链，JADE盲源分离+EMD，验证非接触感知在搜救场景的可行性）
 
-[25] S. Zhao, G. Lu, et al., "Reliability of Contactless Vital Sign Measurement Algorithms for Use in Drone-Based Mass Casualty Triage," *Scientific Reports*, vol. 16, 2026. DOI: 10.1038/s41598-026-40691-4. （无人机大规模伤亡分诊：rPPG+热成像，心率准确率97.70%，呼吸率85.22%，与本项目方舱场景互补）
+[25] İ. Tayfur, P. Şimşek, E. C. Akgül, et al., "Reliability of Contactless Vital Sign Measurement Algorithms for Use in Drone-Based Mass Casualty Triage," *Scientific Reports*, vol. 16, 2026. DOI: 10.1038/s41598-026-40691-4. （无人机大规模伤亡分诊：rPPG+热成像，心率准确率97.70%，呼吸率85.22%，与本项目方舱场景互补）
 
 [26] D. Vasisht, S. Kumar, and D. Katabi, "Decimeter-Level Localization with a Single WiFi Access Point," in *Proc. USENIX NSDI 2016*, Santa Clara, CA, USA, 2016, pp. 165-178. （Chronos系统：单WiFi接入点实现分米级定位，通过CSI相位跳频合成宽带信号进行ToF测距，为本项目的CIR稀疏信道估计与ToF定位方案提供理论参考）
 
@@ -928,7 +928,7 @@ Coordinator模式:
 
 [27] The Rust Team, "The Rust Programming Language," 2026. URL: https://doc.rust-lang.org/book/ （Rust编程语言官方文档，本项目全部服务端代码基于Rust语言开发）
 
-[28] K. Qian, C. Wu, Z. Yang, et al., "Widar2.0: Passive Human Tracking with a Single Wi-Fi Link," in *Proc. ACM MobiSys 2018*, Munich, Germany, 2018, pp. 350-361. DOI: 10.1145/3210240.3210314. （单WiFi链路分米级被动追踪，CSI相位清理+速度/多普勒追踪方法被后续生命体征感知系统广泛采用）
+[28] K. Qian, C. Wu, Y. Zhang, et al., "Widar2.0: Passive Human Tracking with a Single Wi-Fi Link," in *Proc. ACM MobiSys 2018*, Munich, Germany, 2018, pp. 350-361. DOI: 10.1145/3210240.3210314. （单WiFi链路分米级被动追踪，CSI相位清理+速度/多普勒追踪方法被后续生命体征感知系统广泛采用）
 
 ---
 

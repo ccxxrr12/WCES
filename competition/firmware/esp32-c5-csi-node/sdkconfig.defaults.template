@@ -1,0 +1,36 @@
+# ESP32-C5 CSI Node — Default SDK Configuration (Template)
+# Copy to sdkconfig.defaults and customize before building.
+# This file is applied automatically by idf.py when no sdkconfig exists.
+#
+# ESP-IDF v5.5+ required for full C5 CSI support (v5.4 has 5GHz CSI cache bug).
+
+# Target: ESP32-C5 (RISC-V, WiFi 6)
+CONFIG_IDF_TARGET="esp32c5"
+
+# Use custom partition table (8MB flash with OTA — ADR-045)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_display.csv"
+
+# Flash configuration: 8MB (Quad SPI)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Compiler optimization: optimize for size
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Enable CSI (Channel State Information) in WiFi driver
+# C5 uses new CSI config API (.acquire_csi_*) — different from S3 (.lltf_en)
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+
+# Disable unused features to reduce binary size
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# LWIP: enable extended socket options for UDP multicast
+CONFIG_LWIP_SO_RCVBUF=y
+
+# FreeRTOS: task stack for CSI processing (C5 has 400KB SRAM)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
+
+# C5: Disable display by default (GPIO pins differ from S3)
+# CONFIG_DISPLAY_ENABLE is not set

@@ -1,0 +1,323 @@
+# apply-config.ps1 — Read wces.config.toml and apply to all subsystems (Windows)
+# Usage: .\apply-config.ps1 [-DryRun] [-NodeId 1|2|3]
+param(
+    [switch]$DryRun,
+    [ValidateSet(1, 2, 3)]
+    [int]$NodeId = 0
+)
+
+$ErrorActionPreference = "Stop"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ConfigFile = Join-Path $ScriptDir "wces.config.toml"
+
+if (-not (Test-Path $ConfigFile)) {
+    Write-Error "Config file not found: $ConfigFile"
+    exit 1
+}
+
+# ── TOML parser (simplified) ──────────────────────────
+function Get-TomlValue {
+    param($Section, $Key)
+    $inSection = $false
+
+    foreach ($line in Get-Content $ConfigFile) {
+        $trimmed = $line -replace '\s*#.*$', '' -replace '^\s+', '' -replace '\s+$', ''
+        if (-not $trimmed) { continue }
+
+        if ($trimmed -match '^\[(.+)\]$') {
+            $sec = $Matches[1] -replace '"', ''
+            $inSection = ($sec -eq $Section) -or $sec.StartsWith($Section + '.')
+            continue
+        }
+
+        if ($inSection -and $trimmed -match '^(\w+)\s*=\s*(.+)$') {
+            if ($Matches[1] -eq $Key) {
+                return ($Matches[2] -replace '"', '').Trim()
+            }
+        }
+    }
+    return ""
+}
+
+# ── Extract config values ──────────────────────────────────
+if ($NodeId -eq 0) {
+    $v = Get-TomlValue "firmware" "node_id"
+    if ($v) { $NodeId = [int]$v } else { $NodeId = 1 }
+}
+
+$SSID        = Get-TomlValue "firmware" "wifi_ssid"
+$PASS        = Get-TomlValue "firmware" "wifi_password"
+$CHANNEL     = Get-TomlValue "firmware" "csi_channel"
+$TARGET_IP   = Get-TomlValue "firmware" "target_ip"
+$TARGET_PORT = Get-TomlValue "firmware" "target_port"
+$CSI_BAND    = Get-TomlValue "firmware" "csi_band"
+
+$TDM_NODE_COUNT = Get-TomlValue "firmware.tdm" "node_count"
+$TDM_SLOT = $NodeId - 1
+
+$EDGE_TIER       = Get-TomlValue "firmware.edge" "tier"
+$TOP_K           = Get-TomlValue "firmware.edge" "top_k_count"
+$PRESENCE_THRESH = Get-TomlValue "firmware.edge" "presence_thresh"
+$FALL_THRESH     = Get-TomlValue "firmware.edge" "fall_thresh"
+$VITAL_WINDOW    = Get-TomlValue "firmware.edge" "vital_window"
+$VITAL_INTERVAL  = Get-TomlValue "firmware.edge" "vital_interval_ms"
+$POWER_DUTY      = Get-TomlValue "firmware.edge" "power_duty"
+
+$HOP_ENABLED = Get-TomlValue "firmware.hop" "enabled"
+$HOP_CHANNELS = Get-TomlValue "firmware.hop" "channels"
+$HOP_DWELL   = Get-TomlValue "firmware.hop" "dwell_ms"
+
+$HTTP_PORT = Get-TomlValue "server" "http_port"
+$WS_PORT   = Get-TomlValue "server" "ws_port"
+$UDP_PORT  = Get-TomlValue "server" "udp_port"
+$SOURCE    = Get-TomlValue "server" "source"
+$UI_PATH   = Get-TomlValue "server" "ui_path"
+
+$RZ_IP     = Get-TomlValue "deploy" "rz_ip"
+$FLASH_BAUD = Get-TomlValue "flash" "baud"
+
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host "  WCES Config Apply (Node $NodeId / $TDM_NODE_COUNT nodes)" -ForegroundColor Cyan
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# ── 1. Generate sdkconfig.defaults ──────────────────
+Write-Host "[1/3] Generating sdkconfig.defaults ..." -ForegroundColor Cyan
+
+$SdkConfig = Join-Path $ScriptDir "firmware\esp32-c5-csi-node\sdkconfig.defaults"
+$timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+
+# Build PassLine
+if ($PASS -and $PASS -ne '""') {
+    $PassLine = 'CONFIG_CSI_WIFI_PASSWORD="' + $PASS + '"'
+} else {
+    $PassLine = '# CONFIG_CSI_WIFI_PASSWORD is not set (open network)'
+}
+
+# Build edge config lines
+if ($EDGE_TIER) {
+    $EdgeTierLine = 'CONFIG_EDGE_TIER=' + $EDGE_TIER
+} else {
+    $EdgeTierLine = 'CONFIG_EDGE_TIER=2'
+}
+
+if ($TOP_K) {
+    $TopKLine = 'CONFIG_EDGE_TOP_K=' + $TOP_K
+} else {
+    $TopKLine = '# CONFIG_EDGE_TOP_K not set (default 8)'
+}
+
+if ($VITAL_INTERVAL) {
+    $VitalIntervalLine = 'CONFIG_EDGE_VITAL_INTERVAL_MS=' + $VITAL_INTERVAL
+} else {
+    $VitalIntervalLine = '# CONFIG_EDGE_VITAL_INTERVAL_MS not set (default 1000)'
+}
+
+if ($FALL_THRESH) {
+    $FallThreshRaw = [int]([float]$FALL_THRESH * 1000)
+} else {
+    $FallThreshRaw = 15000
+}
+$FallThreshLine = 'CONFIG_EDGE_FALL_THRESH=' + $FallThreshRaw
+
+if ($POWER_DUTY) {
+    $PowerDutyLine = 'CONFIG_EDGE_POWER_DUTY=' + $POWER_DUTY
+} else {
+    $PowerDutyLine = '# CONFIG_EDGE_POWER_DUTY not set (default 100)'
+}
+
+# Build channel hop line
+if ($HOP_ENABLED -eq 'true') {
+    $HopEnabledLine = 'CONFIG_CSI_CHANNEL_HOP_ENABLED=y'
+} else {
+    $HopEnabledLine = '# CONFIG_CSI_CHANNEL_HOP_ENABLED is not set'
+}
+
+# Build CSI band line (normalize TOML values to Kconfig: 5G_ONLY→5G, 2G_ONLY→2G, AUTO→skip)
+$KconfigBand = $CSI_BAND
+if ($CSI_BAND -eq '5G_ONLY') { $KconfigBand = '5G' }
+elseif ($CSI_BAND -eq '2G_ONLY') { $KconfigBand = '2G' }
+if ($KconfigBand -and $KconfigBand -ne 'AUTO') {
+    $BandLine = 'CONFIG_CSI_WIFI_BAND="' + $KconfigBand + '"'
+} else {
+    $BandLine = '# CONFIG_CSI_WIFI_BAND not set (AUTO)'
+}
+
+# Assemble sdkconfig content using array join (avoids here-string issues)
+$sdkLines = @()
+$sdkLines += '# ESP32-C5 CSI Node - Generated by apply-config.ps1 (Node ' + $NodeId + ')'
+$sdkLines += '# Generated: ' + $timestamp
+$sdkLines += '# Topology: RZ/G2L at ' + $TARGET_IP + ':' + $TARGET_PORT
+$sdkLines += '#           ESP32-C5 #' + $NodeId + ': TDM slot ' + $TDM_SLOT + '/' + $TDM_NODE_COUNT
+$sdkLines += ''
+$sdkLines += '# Target'
+$sdkLines += 'CONFIG_IDF_TARGET="esp32c5"'
+$sdkLines += ''
+$sdkLines += '# WiFi'
+$sdkLines += 'CONFIG_CSI_WIFI_SSID="' + $SSID + '"'
+$sdkLines += $PassLine
+$sdkLines += 'CONFIG_CSI_TARGET_IP="' + $TARGET_IP + '"'
+$sdkLines += 'CONFIG_CSI_TARGET_PORT=' + $TARGET_PORT
+$sdkLines += 'CONFIG_CSI_WIFI_CHANNEL=' + $CHANNEL
+$sdkLines += 'CONFIG_CSI_NODE_ID=' + $NodeId
+$sdkLines += $BandLine
+$sdkLines += ''
+$sdkLines += '# Partition table (8MB + OTA)'
+$sdkLines += 'CONFIG_PARTITION_TABLE_CUSTOM=y'
+$sdkLines += 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_display.csv"'
+$sdkLines += 'CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y'
+$sdkLines += 'CONFIG_ESPTOOLPY_FLASHSIZE="8MB"'
+$sdkLines += ''
+$sdkLines += '# CSI enable'
+$sdkLines += 'CONFIG_ESP_WIFI_CSI_ENABLED=y'
+$sdkLines += ''
+$sdkLines += '# Channel hopping'
+$sdkLines += $HopEnabledLine
+$sdkLines += ''
+$sdkLines += '# Edge intelligence'
+$sdkLines += $EdgeTierLine
+$sdkLines += $TopKLine
+$sdkLines += $VitalIntervalLine
+$sdkLines += $FallThreshLine
+$sdkLines += $PowerDutyLine
+$sdkLines += ''
+$sdkLines += '# Compiler optimization'
+$sdkLines += 'CONFIG_COMPILER_OPTIMIZATION_SIZE=y'
+$sdkLines += ''
+$sdkLines += '# Logging'
+$sdkLines += 'CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y'
+$sdkLines += 'CONFIG_LOG_DEFAULT_LEVEL_INFO=y'
+$sdkLines += ''
+$sdkLines += '# Network (C5 tuning: limited SRAM, need smaller buffers)'
+$sdkLines += 'CONFIG_LWIP_SO_RCVBUF=y'
+$sdkLines += 'CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=12'
+$sdkLines += 'CONFIG_LWIP_UDP_RECVMBOX_SIZE=8'
+$sdkLines += 'CONFIG_LWIP_MAX_SOCKETS=16'
+$sdkLines += ''
+$sdkLines += '# WiFi buffers — C5: reduce to save heap, async sender avoids TX pressure'
+$sdkLines += 'CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER=y'
+$sdkLines += 'CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8'
+$sdkLines += 'CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16'
+$sdkLines += 'CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6'
+$sdkLines += ''
+$sdkLines += '# Memory (C5 400KB SRAM - limited! Keep allocations small)'
+$sdkLines += 'CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168'
+$sdkLines += ''
+$sdkLines += '# WASM off for C5 (no PSRAM, 640KB arena would exhaust SRAM)'
+$sdkLines += 'CONFIG_WASM_ENABLE=n'
+$sdkLines += ''
+$sdkLines += '# Display off (use external touchscreen via RZ/G2L)'
+$sdkLines += '# CONFIG_DISPLAY_ENABLE is not set'
+$sdkLines += ''
+$sdkLines += '# Mock CSI off (real hardware)'
+$sdkLines += '# CONFIG_CSI_MOCK_ENABLED is not set'
+$sdkLines += ''
+
+$SdkContent = $sdkLines -join "`r`n"
+
+if ($DryRun) {
+    Write-Host "  [DRY-RUN] Would write to: $SdkConfig" -ForegroundColor Yellow
+    Write-Host $SdkContent
+} else {
+    [System.IO.File]::WriteAllText($SdkConfig, $SdkContent)
+    Write-Host "  [OK] $SdkConfig" -ForegroundColor Green
+}
+
+# ── 2. Update deploy.sh ──────────────────────────────────
+Write-Host "[2/3] Updating deploy.sh ..." -ForegroundColor Cyan
+
+$DeployFile = Join-Path $ScriptDir "deploy.sh"
+
+if ($DryRun) {
+    Write-Host "  [DRY-RUN] Would update: HTTP=$HTTP_PORT WS=$WS_PORT UDP=$UDP_PORT RZ_IP=$TARGET_IP" -ForegroundColor Yellow
+} elseif (Test-Path $DeployFile) {
+    $deployContent = Get-Content $DeployFile -Raw
+    $deployContent = $deployContent -replace '(?m)^RZ_IP=.*$', ('RZ_IP=' + $TARGET_IP)
+    $deployContent = $deployContent -replace '(?m)^HTTP_PORT=.*$', ('HTTP_PORT=' + $HTTP_PORT)
+    $deployContent = $deployContent -replace '(?m)^WS_PORT=.*$', ('WS_PORT=' + $WS_PORT)
+    $deployContent = $deployContent -replace '(?m)^UDP_PORT=.*$', ('UDP_PORT=' + $UDP_PORT)
+    [System.IO.File]::WriteAllText($DeployFile, $deployContent)
+    Write-Host "  [OK] $DeployFile (IP/ports synced)" -ForegroundColor Green
+} else {
+    Write-Host "  [SKIP] deploy.sh not found" -ForegroundColor Yellow
+}
+
+# ── 3. NVS provisioning info ─────────────────────
+Write-Host "[3/3] NVS runtime config" -ForegroundColor Cyan
+
+# Calculate NVS fall_thresh (u16, value * 1000)
+if ($FALL_THRESH) {
+    $NvsFallThresh = [int]([float]$FALL_THRESH * 1000)
+} else {
+    $NvsFallThresh = 15000
+}
+
+if ($PRESENCE_THRESH -and [float]$PRESENCE_THRESH -ne 0.0) {
+    $NvsPresenceThresh = [int]([float]$PRESENCE_THRESH * 1000)
+} else {
+    $NvsPresenceThresh = 0
+}
+
+Write-Host ""
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host "  Config applied! (Node $NodeId)" -ForegroundColor Cyan
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "  NVS provision command (Node $NodeId, after first flash):" -ForegroundColor Yellow
+Write-Host "    cd firmware\esp32-c5-csi-node"
+
+# Build NVS command with safe concatenation
+$nvsParts = @()
+$nvsParts += '    python provision.py'
+$nvsParts += '--port COMx'
+$nvsParts += '--node-id ' + $NodeId
+$nvsParts += '--ssid "' + $SSID + '"'
+$nvsParts += '--target-ip ' + $TARGET_IP
+$nvsParts += '--target-port ' + $TARGET_PORT
+if ($TDM_NODE_COUNT) {
+    $nvsParts += '--tdm-slot ' + $TDM_SLOT
+    $nvsParts += '--tdm-total ' + $TDM_NODE_COUNT
+}
+if ($EDGE_TIER) {
+    $nvsParts += '--edge-tier ' + $EDGE_TIER
+}
+if ($TOP_K) {
+    $nvsParts += '--subk-count ' + $TOP_K
+}
+if ($VITAL_INTERVAL) {
+    $nvsParts += '--vital-int ' + $VITAL_INTERVAL
+}
+if ([float]$FALL_THRESH -gt 0) {
+    $nvsParts += '--fall-thresh ' + $NvsFallThresh
+}
+if ($PASS -and $PASS -ne '""') {
+    # W-3 fix: reuse the Kconfig-escaped password for the NVS hint so a password
+    # containing " does not break the displayed command line. The condition
+    # mirrors the sdkconfig block above so $PassEscaped is always defined here.
+    $nvsParts += '--password "' + $PassEscaped + '"'
+}
+Write-Host ($nvsParts -join ' ') -ForegroundColor Gray
+Write-Host ""
+
+Write-Host "  Build + Flash (Node $NodeId):" -ForegroundColor Green
+Write-Host "    cd firmware\esp32-c5-csi-node"
+Write-Host '    idf.py set-target esp32c5'
+Write-Host '    idf.py build'
+Write-Host '    idf.py -p COMx flash'
+Write-Host ""
+
+Write-Host "  Windows dev (simulation mode):" -ForegroundColor Green
+Write-Host "    cd rust-server"
+$cargoCmd = '    cargo run -p wifi-densepose-sensing-server --'
+$cargoCmd += ' --source ' + $SOURCE
+$cargoCmd += ' --ui-path ' + $UI_PATH
+$cargoCmd += ' --bind-addr 0.0.0.0'
+$cargoCmd += ' --http-port ' + $HTTP_PORT
+Write-Host $cargoCmd
+Write-Host ""
+
+Write-Host "  Switch node:" -ForegroundColor Green
+Write-Host '    .\apply-config.ps1 -NodeId 2'
+Write-Host '    .\apply-config.ps1 -NodeId 3'
+Write-Host ""

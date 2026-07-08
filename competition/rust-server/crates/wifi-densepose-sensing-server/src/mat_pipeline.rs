@@ -1,0 +1,708 @@
+//! MAT Pipeline — START 分诊 + 伤员追踪 + 告警 (竞赛核心模块)
+//!
+//! 本模块不重复实现信号处理 — 服务器已有完整的 FFT 呼吸/心率检测。
+//! 本模块专注于将 VitalSigns 转换为 START 分诊、伤员追踪和告警。
+//!
+//! # 使用方式
+//! ```rust,ignore
+//! use mat_pipeline::{TriageEngine, VitalSignsInput};
+//!
+//! let mut engine = TriageEngine::new(TriageConfig::competition());
+//! let input = VitalSignsInput {
+//!     breathing_rate_bpm: Some(15.0),
+//!     heart_rate_bpm: Some(72.0),
+//!     motion_score: 0.3,
+//!     ..Default::default()
+//! };
+//! let update = engine.process(&input);
+//! // 序列化为 JSON 推送到 /ws/triage
+//! ```
+//!
+//! # START 协议参考
+//! - Immediate (红): RR>30 或 RR<10, 或 HR>120 或 HR<40
+//! - Delayed (黄): RR 10-12 或 25-30, 或 HR 40-50 或 100-120, 或高运动
+//! - Minor (绿): 生命体征正常 + 可自主移动
+//! - Deceased (黑): 无生命体征
+
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
+
+// ── 输入类型 (来自服务器的 VitalSigns) ──────────────────────────────────────
+
+/// 从服务器 VitalSignDetector 的输出转换而来的输入
+#[derive(Debug, Clone, Default)]
+pub struct VitalSignsInput {
+    pub breathing_rate_bpm: Option<f64>,
+    pub breathing_confidence: f64,
+    pub heart_rate_bpm: Option<f64>,
+    pub heartbeat_confidence: f64,
+    pub signal_quality: f64,
+    /// 0-1 运动强度 (来自服务器 motion_level)
+    pub motion_score: f64,
+    /// 检测到的人员 ID
+    pub person_id: Option<u32>,
+    /// 来源节点 ID
+    pub node_id: u8,
+    /// RSSI (dBm)
+    pub rssi: f64,
+}
+
+// ── 输出类型 (推送到 triage UI) ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriageUpdate {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub survivors: Vec<SurvivorSnapshot>,
+    pub assessment: MassCasualtySnapshot,
+    pub alerts: Vec<AlertSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurvivorSnapshot {
+    pub id: String,
+    pub triage: String,
+    pub triage_color: String,
+    pub triage_priority: u8,
+    pub breathing_rate: Option<f64>,
+    pub heart_rate: Option<f64>,
+    pub motion_score: f64,
+    pub position: Option<[f64; 3]>,
+    pub position_confidence: f64,
+    pub is_deteriorating: bool,
+    pub tracked_seconds: f64,
+    pub node_id: u8,
+    pub estimated_age: String,
+    pub status: String,
+    /// True if this survivor was re-identified from a previously lost track.
+    pub reidentified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MassCasualtySnapshot {
+    pub total: u32,
+    pub immediate: u32,
+    pub delayed: u32,
+    pub minor: u32,
+    pub deceased: u32,
+    pub unknown: u32,
+    pub severity: String,
+    pub rescuer_estimate: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertSnapshot {
+    pub time: String,
+    pub survivor_id: String,
+    pub alert_type: String,
+    pub message: String,
+    pub priority: u8,
+}
+
+// ── 分诊配置 ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct TriageConfig {
+    pub node_positions: HashMap<u8, (f64, f64, f64)>,
+    pub survivor_timeout_secs: f64,
+    pub deterioration_window: u32,
+    pub min_signal_quality: f64,
+    /// Reference RSSI (dBm) at 1 meter distance. Used by `rssi_to_distance`.
+    pub rssi_ref_power: f64,
+    /// Indoor path-loss exponent (N). Typical: 2.0 free-space, 3.0 indoor,
+    /// 4.0 heavy obstruction. Used by `rssi_to_distance`.
+    pub rssi_path_loss_exponent: f64,
+}
+
+impl Default for TriageConfig {
+    fn default() -> Self {
+        Self {
+            node_positions: HashMap::new(),
+            survivor_timeout_secs: 30.0,
+            deterioration_window: 5,
+            min_signal_quality: 0.1,
+            rssi_ref_power: -30.0,
+            rssi_path_loss_exponent: 3.0,
+        }
+    }
+}
+
+impl TriageConfig {
+    pub fn competition() -> Self {
+        Self { node_positions: node_positions(), ..Default::default() }
+    }
+}
+
+/// Single source of truth for ESP32-C5 node positions in the room coordinate frame.
+///
+/// Nodes form an equilateral triangle (2m side length) at 1m height, centred at origin.
+/// - Node 1: top (north)
+/// - Node 2: bottom-left (southwest)
+/// - Node 3: bottom-right (southeast)
+/// Node spacing scaled to actual physical deployment (≥5m). Update these
+/// coordinates to match the measured floor-plan positions of your ESP32-C5s.
+pub fn node_positions() -> HashMap<u8, (f64, f64, f64)> {
+    let mut pos = HashMap::new();
+    // Equilateral triangle, side ≈ 6m, centred at origin, height 1m
+    let side = 6.0; // metres — adjust to your actual measured spacing
+    let h = side * (3.0_f64.sqrt() / 2.0); // equilateral triangle height
+    pos.insert(1, (0.0, 2.0 * h / 3.0, 1.0));       // top (north)
+    pos.insert(2, (-side / 2.0, -h / 3.0, 1.0));     // bottom-left (southwest)
+    pos.insert(3, (side / 2.0, -h / 3.0, 1.0));      // bottom-right (southeast)
+    pos
+}
+
+/// Convenience: node positions as `[f64; 3]` for bridges that use that format.
+pub fn node_positions_arr() -> HashMap<u8, [f64; 3]> {
+    node_positions().into_iter().map(|(k, (x, y, z))| (k, [x, y, z])).collect()
+}
+
+// ── START 分诊规则 ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum TriageLevel {
+    /// 灰色 — 数据不足（最低严重度）
+    Unknown = 0,
+    /// 绿色 — 轻伤
+    Minor = 1,
+    /// 黄色 — 延迟救治
+    Delayed = 2,
+    /// 红色 — 立即救治
+    Immediate = 3,
+    /// 黑色 — 无生命体征（最高严重度）
+    Deceased = 4,
+}
+
+impl TriageLevel {
+    pub fn name(&self) -> &'static str {
+        match self {
+            TriageLevel::Immediate => "Immediate",
+            TriageLevel::Delayed => "Delayed",
+            TriageLevel::Minor => "Minor",
+            TriageLevel::Deceased => "Deceased",
+            TriageLevel::Unknown => "Unknown",
+        }
+    }
+    pub fn color(&self) -> &'static str {
+        match self {
+            TriageLevel::Immediate => "red",
+            TriageLevel::Delayed => "yellow",
+            TriageLevel::Minor => "green",
+            TriageLevel::Deceased => "black",
+            TriageLevel::Unknown => "gray",
+        }
+    }
+    /// Severity priority: higher value = more severe.
+    /// This matches the severity mapping used in `udp_receiver::is_triage_escalation`.
+    pub fn priority(&self) -> u8 { *self as u8 }
+
+    /// Recover a TriageLevel from its discriminant value.
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(TriageLevel::Unknown),
+            1 => Some(TriageLevel::Minor),
+            2 => Some(TriageLevel::Delayed),
+            3 => Some(TriageLevel::Immediate),
+            4 => Some(TriageLevel::Deceased),
+            _ => None,
+        }
+    }
+
+    /// Parse a TriageLevel from its canonical name (case-sensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Immediate" | "Red" => Some(TriageLevel::Immediate),
+            "Delayed" | "Yellow" => Some(TriageLevel::Delayed),
+            "Minor" | "Green" => Some(TriageLevel::Minor),
+            "Deceased" | "Black" => Some(TriageLevel::Deceased),
+            "Unknown" | "Gray" => Some(TriageLevel::Unknown),
+            _ => None,
+        }
+    }
+}
+
+/// START 分诊计算 (遵循标准 START 协议)
+pub fn calculate_triage(input: &VitalSignsInput) -> TriageLevel {
+    // 信号质量不足 → Unknown
+    if input.signal_quality < 0.05 {
+        return TriageLevel::Unknown;
+    }
+
+    let br = input.breathing_rate_bpm;
+    let hr = input.heart_rate_bpm;
+
+    // BUG 50: no vital signs yet ≠ deceased.
+    if br.is_none() && hr.is_none() {
+        return TriageLevel::Unknown;
+    }
+
+    // Immediate (红): START 协议 — 呼吸 >30/min 或 <10/min
+    if let Some(b) = br {
+        if b > 30.0 || b < 10.0 {
+            return TriageLevel::Immediate;
+        }
+    }
+
+    // Immediate (红): 心率 >120 或 <40 BPM
+    if let Some(h) = hr {
+        if h > 120.0 || h < 40.0 {
+            return TriageLevel::Immediate;
+        }
+    }
+
+    // Minor (绿): 能自主移动 (motion_score 高) + 生命体征正常
+    if let (Some(b), Some(h)) = (br, hr) {
+        if b >= 12.0 && b <= 24.0 && h >= 50.0 && h <= 100.0 && input.motion_score > 0.3 {
+            return TriageLevel::Minor;
+        }
+    }
+
+    // Minor (绿): 生命体征正常 (即使不动)
+    if let (Some(b), Some(h)) = (br, hr) {
+        if b >= 12.0 && b <= 20.0 && h >= 60.0 && h <= 100.0 {
+            return TriageLevel::Minor;
+        }
+    }
+
+    // Delayed (黄): 其余情况 — 稳定但需观察
+    TriageLevel::Delayed
+}
+
+// ── 简易距离估计 (RSSI → 米) ──────────────────────────────────────────────
+
+/// Log-distance path-loss model: d = 10^((ref_rssi - rssi) / (10 * n)).
+///
+/// `ref_rssi` is the calibrated RSSI at 1 meter; `n` is the path-loss exponent
+/// (2.0 free-space, 3.0 typical indoor, 4.0 heavy obstruction). Defaults are
+/// available via `TriageConfig::default()` (ref=-30.0, n=3.0).
+fn rssi_to_distance(rssi: f64, ref_rssi: f64, n: f64) -> f64 {
+    10.0_f64.powf((ref_rssi - rssi.max(-90.0)) / (10.0 * n))
+}
+
+// ── 伤员追踪引擎 ────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct TrackedSurvivor {
+    id: String,
+    triage: TriageLevel,
+    prev_triage: TriageLevel,
+    position: (f64, f64, f64),
+    position_confidence: f64,
+    breathing_history: Vec<f64>,
+    heart_rate_history: Vec<f64>,
+    motion_history: Vec<f64>,
+    first_seen: f64,
+    last_updated: f64,
+    node_id: u8,
+    person_id: Option<u32>,
+    deterioration_count: u32,
+    status: &'static str,  // "active" | "rescued" | "lost" | "deceased"
+    /// 8-dim biometric embedding for cross-time re-identification.
+    /// Generated from vital signs + RSSI + motion pattern at creation time.
+    embedding: Vec<f64>,
+    /// True if this survivor was re-identified from a previous lost track.
+    reidentified: bool,
+}
+
+impl TrackedSurvivor {
+    fn new(id: String, now: f64, node_id: u8, person_id: Option<u32>) -> Self {
+        Self {
+            id, triage: TriageLevel::Unknown, prev_triage: TriageLevel::Unknown,
+            position: (0.0, 0.0, 0.0), position_confidence: 0.0,
+            breathing_history: Vec::new(), heart_rate_history: Vec::new(),
+            motion_history: Vec::new(),
+            first_seen: now, last_updated: now, node_id, person_id,
+            deterioration_count: 0, status: "active",
+            embedding: Vec::new(), reidentified: false,
+        }
+    }
+    fn new_with_embedding(id: String, now: f64, node_id: u8, person_id: Option<u32>, embedding: Vec<f64>) -> Self {
+        Self { embedding, ..Self::new(id, now, node_id, person_id) }
+    }
+}
+
+#[derive(Clone)]
+pub struct TriageEngine {
+    config: TriageConfig,
+    survivors: HashMap<String, TrackedSurvivor>,
+    /// Lost survivors preserved for re-ID. Pruned after 300s.
+    lost_pool: Vec<(TrackedSurvivor, f64)>,
+    alerts: VecDeque<AlertSnapshot>,
+    counter: u32,
+    start_time: f64,
+    /// Per-survivor recent RSSI readings from each node, for multi-node triangulation
+    node_observations: HashMap<String, HashMap<u8, (f64, f64)>>,  // survivor_id -> {node_id -> (rssi, timestamp)}
+}
+
+impl TriageEngine {
+    pub fn new(config: TriageConfig) -> Self {
+        Self {
+            config, survivors: HashMap::new(), lost_pool: Vec::new(), alerts: VecDeque::new(),
+            counter: 0, start_time: now_secs(),
+            node_observations: HashMap::new(),
+        }
+    }
+
+    pub fn process(&mut self, input: &VitalSignsInput) -> TriageUpdate {
+        let now = now_secs();
+
+        // 信号质量过滤
+        if input.signal_quality < self.config.min_signal_quality {
+            return self.build_update();
+        }
+
+        // 伤员匹配/创建
+        let sid = self.match_or_create(input, now);
+
+        // 更新伤员
+        if let Some(s) = self.survivors.get_mut(&sid) {
+            s.last_updated = now;
+            s.node_id = input.node_id;
+            s.prev_triage = s.triage;
+
+            // 平滑生命体征 (最近5个值的均值)
+            if let Some(br) = input.breathing_rate_bpm {
+                s.breathing_history.push(br);
+                if s.breathing_history.len() > 30 { s.breathing_history.remove(0); }
+            }
+            if let Some(hr) = input.heart_rate_bpm {
+                s.heart_rate_history.push(hr);
+                if s.heart_rate_history.len() > 30 { s.heart_rate_history.remove(0); }
+            }
+            s.motion_history.push(input.motion_score);
+            if s.motion_history.len() > 30 { s.motion_history.remove(0); }
+
+            // 位置估计: 多节点三角定位 (替代简易RSSI→距离)
+            // 记录当前节点的RSSI观测
+            let obs = self.node_observations.entry(sid.clone()).or_default();
+            obs.insert(input.node_id, (input.rssi, now));
+            // 清理超过5秒的旧观测
+            obs.retain(|_, (_, t)| now - *t < 5.0);
+            
+            // 多节点三角定位
+            if obs.len() >= 2 {
+                // 使用2+个节点的RSSI距离进行加权位置估计
+                let mut wx = 0.0f64; let mut wy = 0.0f64; let mut wz = 0.0f64;
+                let mut total_w = 0.0f64;
+                for (nid, (rssi, _)) in obs.iter() {
+                    if let Some((nx, ny, nz)) = self.config.node_positions.get(nid) {
+                        let d = rssi_to_distance(
+                            *rssi,
+                            self.config.rssi_ref_power,
+                            self.config.rssi_path_loss_exponent,
+                        );
+                        let w = 1.0 / (d.max(0.3));  // 距离越近权重越高
+                        wx += nx * w; wy += ny * w; wz += nz * w;
+                        total_w += w;
+                    }
+                }
+                if total_w > 0.0 {
+                    s.position = (wx / total_w, wy / total_w, wz / total_w);
+                    s.position_confidence = (obs.len() as f64 / 3.0).min(1.0) * input.signal_quality;
+                }
+            } else if let Some((nx, ny, nz)) = self.config.node_positions.get(&input.node_id) {
+                // BUG 48: single-node RSSI with EMA smoothing.
+                let d = rssi_to_distance(
+                    input.rssi,
+                    self.config.rssi_ref_power,
+                    self.config.rssi_path_loss_exponent,
+                );
+                let raw_x = nx + d * 0.5; let raw_y = ny + d * 0.3; let raw_z = nz * 0.5;
+                const POS_EMA: f64 = 0.15;
+                if s.position == (0.0, 0.0, 0.0) { s.position = (raw_x, raw_y, raw_z); }
+                else { s.position = (s.position.0*(1.0-POS_EMA)+raw_x*POS_EMA, s.position.1*(1.0-POS_EMA)+raw_y*POS_EMA, s.position.2*(1.0-POS_EMA)+raw_z*POS_EMA); }
+                s.position_confidence = input.signal_quality * 0.5;
+            }
+
+            // 分诊判定
+            let smooth_input = VitalSignsInput {
+                breathing_rate_bpm: average_last(&s.breathing_history, 5),
+                heart_rate_bpm: average_last(&s.heart_rate_history, 5),
+                motion_score: average_last64(&s.motion_history, 5) as f64,
+                ..*input
+            };
+            s.triage = calculate_triage(&smooth_input);
+
+            // 恶化检测: 向更紧急变化，或转为Deceased（死亡是终极恶化）
+            // NOTE: priority() now returns severity (higher = more severe), so
+            // deterioration means the new triage has a HIGHER priority value.
+            if s.triage == TriageLevel::Deceased ||
+               (s.triage.priority() > s.prev_triage.priority() && s.prev_triage != TriageLevel::Unknown) {
+                s.deterioration_count += 1;
+                if s.deterioration_count >= self.config.deterioration_window {
+                    s.deterioration_count = 0;
+                    self.alerts.push_back(AlertSnapshot {
+                        time: chrono_now(),
+                        survivor_id: sid.clone(),
+                        alert_type: "DETERIORATION".to_string(),
+                        message: format!("{} → {}", s.prev_triage.name(), s.triage.name()),
+                        priority: s.triage.priority(),
+                    });
+                    // Cap alerts to prevent unbounded memory growth in long-running deployments.
+                    // Use pop_front() in a loop instead of drain(0..n) which is O(n) for Vec.
+                    const MAX_ALERTS: usize = 500;
+                    while self.alerts.len() > MAX_ALERTS {
+                        self.alerts.pop_front();
+                    }
+                }
+            } else {
+                s.deterioration_count = s.deterioration_count.saturating_sub(1);
+            }
+        }
+
+        // 清理过期
+        // Move timed-out survivors to lost_pool for potential re-ID
+        let timeout = self.config.survivor_timeout_secs;
+        let timed_out: Vec<TrackedSurvivor> = self.survivors.iter()
+            .filter(|(_, s)| (now - s.last_updated) >= timeout)
+            .map(|(_, s)| s.clone())
+            .collect();
+        for s in timed_out {
+            self.survivors.remove(&s.id);
+            if !s.embedding.is_empty() {
+                self.lost_pool.push((s, now));
+            }
+        }
+        self.prune_lost_pool(now);
+
+        self.build_update()
+    }
+
+    /// Generate a lightweight 8-dim biometric embedding from vitals + RSSI + motion.
+    /// Used for cross-time person re-identification (inspired by RuView AETHER).
+    fn generate_embedding(input: &VitalSignsInput) -> Vec<f64> {
+        let br = input.breathing_rate_bpm.unwrap_or(0.0);
+        let hr = input.heart_rate_bpm.unwrap_or(0.0);
+        let motion: f64 = if input.motion_score > 0.15 { 0.8 } else if input.motion_score > 0.05 { 0.3 } else { 0.0 };
+        let sq = input.signal_quality;
+        let rssi_norm = (input.rssi as f64 + 90.0).clamp(0.0, 60.0) / 60.0; // normalize RSSI
+        // 8-dim: [br/60, hr/200, motion, sq, br_vs_hr_ratio, rssi, node_parity, 0]
+        vec![
+            (br / 60.0).clamp(0.0, 1.0),
+            (hr / 200.0).clamp(0.0, 1.0),
+            motion.clamp(0.0, 1.0),
+            sq.clamp(0.0, 1.0),
+            if hr > 0.0 { (br / hr * 60.0 / 200.0).clamp(0.0, 2.0) } else { 0.0 },
+            rssi_norm,
+            (input.node_id as f64 % 2.0) / 2.0,
+            0.0,
+        ]
+    }
+
+    /// Cosine similarity between two equal-length vectors.
+    fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+        let n = a.len().min(b.len());
+        if n == 0 { return 0.0; }
+        let (dot, na, nb) = (0..n).fold((0.0, 0.0, 0.0), |(d, na, nb), i| {
+            (d + a[i] * b[i], na + a[i] * a[i], nb + b[i] * b[i])
+        });
+        let denom = (na * nb).sqrt();
+        if denom < 1e-12 { 0.0 } else { (dot / denom).clamp(-1.0, 1.0) }
+    }
+
+    /// Prune lost_pool entries older than 300 seconds.
+    fn prune_lost_pool(&mut self, now: f64) {
+        self.lost_pool.retain(|(_, t)| now - *t < 300.0);
+    }
+
+    fn match_or_create(&mut self, input: &VitalSignsInput, now: f64) -> String {
+        // Step 1: Exact match — same person_id + same node + recent (<5s).
+        if let Some(pid) = input.person_id {
+            for (id, s) in &self.survivors {
+                if s.person_id == Some(pid) && s.node_id == input.node_id && s.last_updated > now - 5.0 {
+                    return id.clone();
+                }
+            }
+        }
+
+        let current_emb = Self::generate_embedding(input);
+
+        // Step 2: Cross-node biometric match against ACTIVE survivors.
+        // When multiple nodes detect the same person, their vital-sign embeddings
+        // will be similar even though person_id differs (per-node tick counters).
+        let active_thresh = 0.65; // BUG 53: lowered from 0.80 for tolerance
+        let mut best_active: Option<(String, f64)> = None;
+        for (id, s) in &self.survivors {
+            if s.embedding.is_empty() || s.last_updated < now - 5.0 { continue; }
+            let sim = Self::cosine_similarity(&current_emb, &s.embedding);
+            if sim > active_thresh && sim > best_active.as_ref().map(|m| m.1).unwrap_or(0.0) {
+                best_active = Some((id.clone(), sim));
+            }
+        }
+        if let Some((match_id, _)) = best_active {
+            // Update the matched survivor with this node's observation.
+            if let Some(s) = self.survivors.get_mut(&match_id) {
+                s.node_id = input.node_id;
+                s.person_id = input.person_id;
+                s.last_updated = now;
+                s.embedding = current_emb; // update embedding with latest vitals
+                return match_id;
+            }
+        }
+
+        // Step 3: Re-ID — check lost pool for biometric match.
+        self.prune_lost_pool(now);
+        let lost_thresh = 0.75;
+        let mut best_lost: Option<(String, f64)> = None;
+        for (lost, _) in &self.lost_pool {
+            if lost.embedding.is_empty() { continue; }
+            let sim = Self::cosine_similarity(&current_emb, &lost.embedding);
+            if sim > lost_thresh && sim > best_lost.as_ref().map(|m| m.1).unwrap_or(0.0) {
+                best_lost = Some((lost.id.clone(), sim));
+            }
+        }
+        if let Some((reid_id, _)) = best_lost {
+            self.lost_pool.retain(|(s, _)| s.id != reid_id);
+            let mut react = TrackedSurvivor::new_with_embedding(
+                reid_id.clone(), now, input.node_id, input.person_id, current_emb,
+            );
+            react.reidentified = true;
+            self.survivors.insert(reid_id.clone(), react);
+            return reid_id;
+        }
+
+        // Step 4: Create new survivor.
+        self.counter += 1;
+        let id = format!("SURV-{:03x}", self.counter);
+        self.survivors.insert(id.clone(), TrackedSurvivor::new_with_embedding(
+            id.clone(), now, input.node_id, input.person_id, current_emb,
+        ));
+        id
+    }
+
+    fn build_update(&self) -> TriageUpdate {
+        let mut immediate = 0u32; let mut delayed = 0u32; let mut minor = 0u32;
+        let mut deceased = 0u32; let mut unknown = 0u32;
+        let now = now_secs();
+
+        let survivors: Vec<SurvivorSnapshot> = self.survivors.iter().map(|(id, s)| {
+            match s.triage {
+                TriageLevel::Immediate => immediate += 1,
+                TriageLevel::Delayed => delayed += 1,
+                TriageLevel::Minor => minor += 1,
+                TriageLevel::Deceased => deceased += 1,
+                TriageLevel::Unknown => unknown += 1,
+            }
+            SurvivorSnapshot {
+                id: id.clone(),
+                triage: s.triage.name().to_string(),
+                triage_color: s.triage.color().to_string(),
+                triage_priority: s.triage.priority(),
+                breathing_rate: average_last(&s.breathing_history, 3),
+                heart_rate: average_last(&s.heart_rate_history, 3),
+                motion_score: average_last64(&s.motion_history, 3) as f64,
+                position: Some([s.position.0, s.position.1, s.position.2]),
+                position_confidence: s.position_confidence,
+                is_deteriorating: s.deterioration_count > 0,
+                tracked_seconds: now - s.first_seen,
+                node_id: s.node_id,
+                estimated_age: estimate_age(average_last(&s.breathing_history, 3), average_last(&s.heart_rate_history, 3)),
+                status: s.status.to_string(),
+                reidentified: s.reidentified,
+            }
+        }).collect();
+
+        let total = immediate + delayed + minor + deceased + unknown;
+        let rescuer = immediate * 4 + delayed * 2 + minor / 2;
+        let severity = if total == 0 { "Minimal" }
+            else if immediate >= 3 { "Critical" }
+            else if immediate >= 1 { "Major" }
+            else if delayed >= 1 { "Moderate" }
+            else { "Minimal" };
+
+        TriageUpdate {
+            msg_type: "triage_update".to_string(),
+            survivors,
+            assessment: MassCasualtySnapshot {
+                total, immediate, delayed, minor, deceased, unknown,
+                severity: severity.to_string(),
+                rescuer_estimate: rescuer,
+            },
+            alerts: self.alerts.iter().cloned().collect(),
+        }
+    }
+}
+
+// ── 辅助函数 ────────────────────────────────────────────────────────────────
+
+fn average_last(data: &[f64], n: usize) -> Option<f64> {
+    if data.is_empty() { return None; }
+    let window: Vec<&f64> = data.iter().rev().take(n).collect();
+    if window.is_empty() { return None; }
+    Some(window.iter().copied().sum::<f64>() / window.len() as f64)
+}
+
+fn average_last64(data: &[f64], n: usize) -> f64 {
+    average_last(data, n).unwrap_or(0.0)
+}
+
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64()
+}
+
+fn chrono_now() -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = t.as_secs() % 86400;
+    format!("{:02}:{:02}:{:02}", secs/3600, (secs%3600)/60, secs%60)
+}
+
+fn estimate_age(br: Option<f64>, hr: Option<f64>) -> String {
+    match (br, hr) {
+        (Some(b), Some(h)) if b > 25.0 && h > 100.0 => "Infant (<2y)".into(),
+        (Some(b), Some(h)) if b > 18.0 && h > 80.0 => "Child (2-12y)".into(),
+        (Some(b), Some(h)) if b < 16.0 && h < 65.0 => "Elderly (60y+)".into(),
+        _ => "Adult".into(),
+    }
+}
+
+// ── 测试 ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_start_immediate_high_rr() {
+        let v = VitalSignsInput { breathing_rate_bpm: Some(35.0), signal_quality: 0.8, ..Default::default() };
+        assert_eq!(calculate_triage(&v), TriageLevel::Immediate);
+    }
+
+    #[test]
+    fn test_start_immediate_low_hr() {
+        let v = VitalSignsInput { breathing_rate_bpm: Some(15.0), heart_rate_bpm: Some(35.0), signal_quality: 0.8, ..Default::default() };
+        assert_eq!(calculate_triage(&v), TriageLevel::Immediate);
+    }
+
+    #[test]
+    fn test_start_minor_ambulatory() {
+        let v = VitalSignsInput {
+            breathing_rate_bpm: Some(15.0), heart_rate_bpm: Some(72.0),
+            motion_score: 0.5, signal_quality: 0.8,
+            ..Default::default()
+        };
+        assert_eq!(calculate_triage(&v), TriageLevel::Minor);
+    }
+
+    #[test]
+    fn test_start_unknown_no_vitals() {
+        let v = VitalSignsInput { signal_quality: 0.5, ..Default::default() };
+        assert_eq!(calculate_triage(&v), TriageLevel::Unknown);
+    }
+
+    #[test]
+    fn test_engine_creates_survivor() {
+        let mut engine = TriageEngine::new(TriageConfig::competition());
+        let input = VitalSignsInput {
+            breathing_rate_bpm: Some(15.0), heart_rate_bpm: Some(70.0),
+            motion_score: 0.3, signal_quality: 0.8, node_id: 1,
+            breathing_confidence: 0.9, heartbeat_confidence: 0.8,
+            rssi: -50.0, person_id: None,
+        };
+        let update = engine.process(&input);
+        assert_eq!(update.survivors.len(), 1);
+        assert_eq!(update.assessment.total, 1);
+    }
+}

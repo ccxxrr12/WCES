@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WCES — WiFi CSI 应急感知系统</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --primary-blue: #007AFF;
+            --success-green: #34C759;
+            --warning-orange: #FF9500;
+            --danger-red: #FF3B30;
+            --gray: #8E8E93;
+            --bg-primary: #000000;
+            --bg-secondary: #1C1C1E;
+            --bg-tertiary: #2C2C2E;
+            --text-primary: #FFFFFF;
+            --text-secondary: #98989D;
+            --separator: #38383A;
+            --glass-bg: rgba(30,30,32,0.8);
+            --card-shadow: rgba(0,0,0,0.4);
+            --card-glow: rgba(0,122,255,0.08);
+            --gradient-hero: linear-gradient(180deg, #1C1C1E 0%, #000000 100%);
+        }
+        :root.light {
+            --bg-primary: #F2F2F7;
+            --bg-secondary: #FFFFFF;
+            --bg-tertiary: #F2F2F7;
+            --text-primary: #1C1C1E;
+            --text-secondary: #636366;
+            --separator: #E5E5EA;
+            --glass-bg: rgba(255,255,255,0.85);
+            --card-shadow: rgba(0,0,0,0.08);
+            --card-glow: rgba(0,122,255,0.04);
+            --gradient-hero: linear-gradient(180deg, #FFFFFF 0%, #F2F2F7 100%);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            transition: background .3s, color .3s;
+            display: flex; flex-direction: column;
+        }
+
+        /* ── Header ── */
+        .header {
+            background: var(--bg-secondary);
+            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            padding: 14px 24px;
+            border-bottom: .5px solid var(--separator);
+            display: flex; align-items: center; justify-content: space-between;
+            position: sticky; top: 0; z-index: 100;
+        }
+        .header-left{display:flex;align-items:center;gap:14px}
+        .logo{display:flex;align-items:center;gap:10px}
+        .logo-icon{width:38px;height:38px;background:linear-gradient(135deg,var(--primary-blue) 0%,#5856D6 100%);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;box-shadow:0 3px 12px rgba(0,122,255,.3)}
+        .logo-text h1{font-size:16px;font-weight:600;letter-spacing:-.3px}
+        .logo-text p{font-size:11px;color:var(--text-secondary)}
+        .header-right{display:flex;align-items:center;gap:10px}
+        .status-indicator{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--bg-tertiary);border-radius:16px;font-size:12px}
+        .status-dot{width:7px;height:7px;border-radius:50%;background:var(--gray);transition:all .3s}
+        .status-dot.online{background:var(--success-green);box-shadow:0 0 6px rgba(52,199,89,.5);animation:pulse 2s infinite}
+        .status-dot.offline{background:var(--danger-red)}
+        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.1)}}
+        .theme-toggle{width:34px;height:34px;background:var(--bg-tertiary);border:.5px solid var(--separator);border-radius:8px;color:var(--text-primary);cursor:pointer;font-size:16px;transition:all .2s;display:flex;align-items:center;justify-content:center}
+        .theme-toggle:hover{background:var(--separator);transform:scale(1.05)}
+
+        /* ── Hero ── */
+        .hero {
+            background: var(--gradient-hero);
+            padding: 48px 24px 36px;
+            text-align: center;
+            border-bottom: .5px solid var(--separator);
+        }
+        .hero h2{font-size:28px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+        .hero p{font-size:15px;color:var(--text-secondary);max-width:600px;margin:0 auto;line-height:1.5}
+        .hero-tags{display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap}
+        .hero-tag{padding:5px 12px;background:var(--bg-tertiary);border-radius:16px;font-size:11px;color:var(--text-secondary)}
+
+        /* ── App Grid ── */
+        .apps-container{padding:32px 24px;max-width:1100px;margin:0 auto;width:100%}
+        .section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-secondary);margin-bottom:16px}
+        .apps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:36px}
+        @media(max-width:700px){.apps-grid{grid-template-columns:1fr}}
+
+        .app-card{
+            background:var(--bg-secondary);
+            border:.5px solid var(--separator);
+            border-radius:16px;
+            padding:24px;
+            cursor:pointer;
+            text-decoration:none;
+            color:inherit;
+            transition:all .25s;
+            position:relative;
+            overflow:hidden;
+            display:flex;flex-direction:column;gap:14px;
+        }
+        .app-card:hover{
+            transform:translateY(-3px);
+            box-shadow:0 8px 24px var(--card-shadow), 0 0 0 1px var(--primary-blue);
+            border-color:var(--primary-blue);
+        }
+        .app-card:active{transform:scale(.98)}
+        .app-icon{
+            width:48px;height:48px;
+            border-radius:12px;
+            display:flex;align-items:center;justify-content:center;
+            font-size:24px;flex-shrink:0;
+        }
+        .app-icon.map{background:linear-gradient(135deg,#007AFF 0%,#40A9FF 100%)}
+        .app-icon.skeleton{background:linear-gradient(135deg,#5856D6 0%,#AF52DE 100%)}
+        .app-icon.chart{background:linear-gradient(135deg,#34C759 0%,#30D158 100%)}
+        .app-icon.monitor{background:linear-gradient(135deg,#FF9500 0%,#FF6B00 100%)}
+        .app-icon.mobile{background:linear-gradient(135deg,#5AC8FA 0%,#007AFF 100%)}
+        .app-icon.test{background:linear-gradient(135deg,#8E8E93 0%,#636366 100%)}
+        .app-body h3{font-size:16px;font-weight:600;margin-bottom:4px}
+        .app-body p{font-size:13px;color:var(--text-secondary);line-height:1.45}
+        .app-badge{
+            align-self:flex-start;
+            padding:4px 10px;border-radius:6px;
+            font-size:10px;font-weight:600;text-transform:uppercase;
+            background:rgba(0,122,255,.12);color:var(--primary-blue);
+        }
+        .app-badge.live{background:rgba(52,199,89,.12);color:var(--success-green)}
+        .app-badge.realtime{background:rgba(255,149,0,.12);color:var(--warning-orange)}
+        .app-badge.tool{background:rgba(142,142,147,.12);color:var(--gray)}
+
+        /* ── Status Panel ── */
+        .status-panel{
+            background:var(--bg-secondary);
+            border:.5px solid var(--separator);
+            border-radius:16px;
+            padding:20px 24px;
+            max-width:1100px;
+            margin:0 auto 40px;
+            width:100%;
+        }
+        .status-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-secondary);margin-bottom:14px}
+        .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+        .status-item{display:flex;align-items:center;gap:8px;font-size:13px}
+        .status-label{color:var(--text-secondary);flex-shrink:0}
+        .status-value{font-weight:500;font-variant-numeric:tabular-nums}
+        .status-dot-sm{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+
+        /* ── Footer ── */
+        .footer{
+            margin-top:auto;padding:16px 24px;
+            border-top:.5px solid var(--separator);
+            text-align:center;font-size:11px;color:var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-left">
+        <div class="logo">
+            <div class="logo-icon">W</div>
+            <div class="logo-text">
+                <h1>WCES 控制中心</h1>
+                <p>WiFi CSI Emergency Sensing — 瑞萨 RZ/G2L + ESP32-C5</p>
+            </div>
+        </div>
+    </div>
+    <div class="header-right">
+        <div class="status-indicator" id="sysStatus">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusLabel">检测中…</span>
+        </div>
+        <button class="theme-toggle" id="themeToggle" title="切换主题">☀</button>
+    </div>
+</header>
+
+<!-- Hero -->
+<section class="hero">
+    <h2>穿墙生命体征监测与分诊</h2>
+    <p>基于 WiFi CSI 信号的穿墙人体感知系统 — 实时骨架重建、多人生体征监测、START 分诊协议与端侧 LLM 辅助决策</p>
+    <div class="hero-tags">
+        <span class="hero-tag">WiFi CSI 感知</span>
+        <span class="hero-tag">3D 骨架重建</span>
+        <span class="hero-tag">生命体征监测</span>
+        <span class="hero-tag">START 分诊</span>
+        <span class="hero-tag">端侧 LLM</span>
+        <span class="hero-tag">ESP32-C5 ×3</span>
+    </div>
+</section>
+
+<!-- Main Apps -->
+<div class="apps-container">
+    <div class="section-title">核心功能</div>
+    <div class="apps-grid">
+        <a href="triage.html" class="app-card" style="max-width:420px">
+            <div class="app-icon skeleton">🏥</div>
+            <div class="app-body">
+                <h3>方舱分诊仪表盘</h3>
+                <p>START 分诊协议 — 伤员地图、生命体征趋势、热力图、3D 骨架、EHR 面板、边缘模块告警、Agent 辅助分析</p>
+            </div>
+            <span class="app-badge realtime">竞赛核心</span>
+        </a>
+
+    </div>
+</div>
+
+<!-- System Status -->
+<div class="status-panel" id="statusPanel">
+    <div class="status-title">系统状态</div>
+    <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+        <div class="status-item">
+            <span class="status-dot-sm" id="httpDot" style="background:var(--gray)"></span>
+            <span class="status-label">HTTP API</span>
+            <span class="status-value" id="httpStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="wsDot" style="background:var(--gray)"></span>
+            <span class="status-label">WebSocket</span>
+            <span class="status-value" id="wsStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="udpDot" style="background:var(--gray)"></span>
+            <span class="status-label">UDP CSI</span>
+            <span class="status-value" id="udpStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="srcDot" style="background:var(--gray)"></span>
+            <span class="status-label">数据源</span>
+            <span class="status-value" id="srcStatus">—</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot-sm" id="fpsDot" style="background:var(--gray)"></span>
+            <span class="status-label">帧率</span>
+            <span class="status-value" id="fpsStatus">—</span>
+        </div>
+    </div>
+</div>
+
+<!-- Footer -->
+<footer class="footer">
+    WCES — WiFi CSI Emergency Sensing System &nbsp;|&nbsp; 瑞萨 RZ/G2L &nbsp;|&nbsp; ESP32-C5 ×3 &nbsp;|&nbsp; Rust axum + WASM 推理
+</footer>
+
+<script>
+(function(){
+    const $ = s => document.querySelector(s);
+    const API = `${location.protocol}//${location.hostname}:${location.port || 8080}`;
+
+    /* ── Theme ── */
+    const saved = localStorage.getItem('wces-theme');
+    if (saved === 'light') document.documentElement.classList.add('light');
+    updateThemeIcon();
+
+    $('#themeToggle').addEventListener('click', () => {
+        document.documentElement.classList.toggle('light');
+        localStorage.setItem('wces-theme',
+            document.documentElement.classList.contains('light') ? 'light' : 'dark');
+        updateThemeIcon();
+    });
+
+    function updateThemeIcon(){
+        const isLight = document.documentElement.classList.contains('light');
+        $('#themeToggle').textContent = isLight ? '🌙' : '☀';
+    }
+
+    /* ── System Status Check ── */
+    async function checkStatus(){
+        const setDot = (el, ok) => el.style.background = ok ? 'var(--success-green)' : 'var(--danger-red)';
+        let httpOk = false;
+
+        // HTTP health check
+        try {
+            const r = await fetch(`${API}/health`, {signal: AbortSignal.timeout(3000)});
+            if (r.ok) {
+                httpOk = true;
+                setDot($('#httpDot'), true);
+                $('#httpStatus').textContent = '在线';
+                const j = await r.json();
+                $('#srcStatus').textContent = j.source || 'auto';
+                setDot($('#srcDot'), true);
+            }
+        } catch(e) {
+            setDot($('#httpDot'), false);
+            $('#httpStatus').textContent = '离线';
+        }
+
+        // Metrics check
+        try {
+            const r = await fetch(`${API}/api/v1/metrics`, {signal: AbortSignal.timeout(3000)});
+            if (r.ok) {
+                const j = await r.json();
+                $('#fpsStatus').textContent = (j.fps || 0) + ' fps';
+                setDot($('#fpsDot'), j.fps > 0);
+            }
+        } catch(e) {
+            $('#fpsStatus').textContent = '—';
+        }
+
+        // Overall status
+        if (httpOk) {
+            $('#statusDot').classList.add('online');
+            $('#statusDot').classList.remove('offline');
+            $('#statusLabel').textContent = '系统在线';
+            $('#wsStatus').textContent = '就绪';
+            $('#udpStatus').textContent = '就绪';
+            setDot($('#wsDot'), true);
+            setDot($('#udpDot'), true);
+        }
+    }
+
+    checkStatus();
+    setInterval(checkStatus, 10000);
+})();
+</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
