@@ -60,12 +60,13 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_QUAD=y
 CONFIG_SPIRAM_SPEED_80M=y
-CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 CONFIG_SPIRAM_BOOT_INIT=y
-# Route WiFi/lwIP allocations through PSRAM to relieve 384KB SRAM pressure
+# Route ALL dynamic allocations through PSRAM (CAPS_ALLOC is mutually exclusive with USE_MALLOC)
 CONFIG_SPIRAM_USE_MALLOC=y
+# WiFi and lwIP protocol stack dynamic buffers also go through PSRAM
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# 16KB threshold: allocations >=16KB stay in SRAM (rare); smaller use PSRAM
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 
 # WASM deferred to RZ/G2L native Rust (edge_module_engine.rs)

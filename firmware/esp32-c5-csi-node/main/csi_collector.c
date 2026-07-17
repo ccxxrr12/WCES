@@ -477,7 +477,7 @@ void csi_collector_init(void)
     wifi_csi_acquire_config_t csi_config = {
         .enable                   = true,
         .acquire_csi_legacy       = false,  /* L-LTF 52sc — SNR too low */
-        .acquire_csi_ht20         = false,  /* HT20 56sc — dimension jitter */
+        .acquire_csi_ht20         = true,   /* HT20 56sc — 11n fallback (BW20 limited, no HT40) */
         .acquire_csi_ht40         = true,   /* HT40 114sc — 11n fallback */
         .acquire_csi_su           = true,   /* HE SU 242sc — primary */
         .acquire_csi_mu           = false,  /* MU OFDMA — rare, no benefit */

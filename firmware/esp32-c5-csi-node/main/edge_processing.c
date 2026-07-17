@@ -41,8 +41,8 @@ static const char *TAG = "edge_proc";
  * Total static .bss from this file: ~172 KB on ESP32-C5 (2068-byte IQ slots).
  * C5 has 384 KB HP SRAM (ESP32-C5 Datasheet v1.0); ~80 KB is reserved for WiFi/BT/lwIP, leaving
  * ~304 KB for application. This file's allocations consume ~57% of app SRAM.
- * PSRAM malloc integration (CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y) offloads
- * WiFi/lwIP dynamic allocations to the 8 MB Quad SPI PSRAM, relieving ~50-80 KB.
+ * PSRAM is configured as the malloc backend (CONFIG_SPIRAM_USE_MALLOC=y) with
+ * WiFi/lwIP allocations routed to PSRAM (CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y),
  * MEDIUM-6 fix: previous comment underreported by 4x (claimed 16 slots/72 KB).
  * EDGE_RING_SLOTS was raised 16→64 to relieve SRAM pressure via PSRAM-backed
  * heap_caps_malloc, but the comment was never updated. Updated breakdown

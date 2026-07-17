@@ -217,8 +217,7 @@ static void wifi_init_sta(void)
     };
     ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
     /* ESP32-C5 in 802.11ax: HE20 242-tone (C5 WiFi 6 is 20MHz-only non-AP).
-     * 802.11n fallback: HT40 114-tone. BW40 is set below for 11n fallback;
-     * in 11ax mode the PHY auto-limits to 20 MHz per the C5 datasheet. */
+     * BW20 is set for 11ax compliance; 11ax HE SU (242sc) is the primary CSI source. */
     wifi_bandwidths_t bandwidth = {
         .ghz_2g = WIFI_BW20,
         .ghz_5g = WIFI_BW20,
@@ -308,16 +307,11 @@ void app_main(void)
 #endif
 
     /* Enable channel-hopping for multi-channel CSI diversity.
-     * HIGH-4 fix: default hop table uses only 2.4 GHz channels (1/6/11) to
-     * guarantee compatibility with 2.4 GHz-only deployments. The original
-     * {1,6,11,36,40,44} mixed-band table caused esp_wifi_set_channel() to
-     * fail on 5 GHz-incapable configurations. For multi-band sensing,
-     * operators should set channel_list in NVS to include 5 GHz channels
-     * (36-177) AND ensure WIFI_BAND_MODE_AUTO is enabled. */
+     * Default: 5 GHz channels (matching the configured CSI band).
+     * For 2.4 GHz deployments, override channel_list in NVS. */
     if (g_nvs_config.channel_hop_count > 0 && g_nvs_config.channel_hop_count <= 16) {
         csi_collector_set_hop_table(g_nvs_config.channel_list, g_nvs_config.channel_hop_count, g_nvs_config.dwell_ms);
     } else {
-        /* Default: 5GHz channels (P2: same-band only to avoid STA disconnect) */
         static const uint8_t default_hop[] = {36, 40, 44};
         csi_collector_set_hop_table(default_hop, sizeof(default_hop)/sizeof(default_hop[0]), 50);
     }
