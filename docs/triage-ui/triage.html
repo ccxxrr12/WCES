@@ -1242,7 +1242,18 @@ function handleUpdate(data){
 function connectWebSocket(){
     if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
     const wsProto=location.protocol==='https:'?'wss:':'ws:';
-    const wsUrl=`${wsProto}//${location.hostname}:${location.port||8080}/ws/sensing`;
+    // LOW-3 fix: support optional token auth. If the server has WCES_WS_TOKEN
+    // configured, clients must pass ?token=<value>. The token is read from
+    // a global `WS_TOKEN` if set (e.g., via a templated HTML response or a
+    // separate /api/v1/ws_token endpoint with API-key auth), or from
+    // localStorage['ws_token'] for operator-configured deployments. If
+    // neither is set, no token is sent (backward-compatible with local
+    // deployments that have not enabled WS auth).
+    const wsToken = (typeof window.WS_TOKEN !== 'undefined' && window.WS_TOKEN)
+        || (window.localStorage && window.localStorage.getItem('ws_token'))
+        || '';
+    const wsTokenQuery = wsToken ? `?token=${encodeURIComponent(wsToken)}` : '';
+    const wsUrl=`${wsProto}//${location.hostname}:${location.port||8080}/ws/sensing${wsTokenQuery}`;
     console.log('[TRIAGE] WS connecting to:',wsUrl);
     ws=new WebSocket(wsUrl);
     ws.onopen=()=>{

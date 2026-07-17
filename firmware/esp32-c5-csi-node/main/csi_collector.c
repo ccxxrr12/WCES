@@ -714,7 +714,7 @@ esp_err_t csi_inject_ndp_frame(void)
 
     /* Addr2 (Source) & Addr3 (BSSID): local STA MAC. */
     uint8_t local_mac[6] = {0};
-    esp_wifi_get_macaddr(WIFI_IF_STA, local_mac);
+    esp_wifi_get_mac(WIFI_IF_STA, local_mac);
     memcpy(&ndp_frame[10], local_mac, 6);  /* Addr2 (SA) */
     memcpy(&ndp_frame[16], local_mac, 6);  /* Addr3 (BSSID) */
 
@@ -728,4 +728,14 @@ esp_err_t csi_inject_ndp_frame(void)
     }
 
     return err;
+}
+
+/**
+ * Timer callback adapter for NDP injection.
+ * Matching esp_timer_cb_t: void(*)(void*).
+ */
+void csi_inject_ndp_cb(void *arg)
+{
+    (void)arg;
+    csi_inject_ndp_frame();
 }

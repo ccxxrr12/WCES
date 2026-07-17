@@ -320,9 +320,9 @@ static void swarm_task(void *arg)
         if ((now - last_heartbeat) >= pdMS_TO_TICKS(s_cfg.heartbeat_sec * 1000U)) {
             last_heartbeat = now;
 
-            bool presence = vit_valid && (vit.flags & 0x01);
-
             /* Heartbeat ID: node_id * 1000000 + 100000 + ts_sec */
+
+            /* Heartbeat is always sent regardless of presence state. */
             uint32_t hb_id = (uint32_t)s_node_id * 1000000U + 100000U + (uptime_s % 100000U);
             char json[SWARM_JSON_BUF];
             int len = snprintf(json, sizeof(json),
@@ -331,7 +331,7 @@ static void swarm_task(void *arg)
                 hv[0], hv[1], hv[2], hv[3], hv[4], hv[5], hv[6], hv[7]);
 
             if (len < 0 || len >= (int)sizeof(json)) len = (int)sizeof(json) - 1;
-        if (swarm_post_json(client, json, len) == ESP_OK) {
+            if (swarm_post_json(client, json, len) == ESP_OK) {
                 s_cnt_heartbeats++;
             }
         }
@@ -340,8 +340,9 @@ static void swarm_task(void *arg)
         if ((now - last_ingest) >= pdMS_TO_TICKS(s_cfg.ingest_sec * 1000U)) {
             last_ingest = now;
 
-            bool presence = vit_valid && (vit.flags & 0x01);
-            if (presence) {
+            /* Ingest is gated on presence: only transmit when viable sensor data exists. */
+            bool ingest_presence = vit_valid && (vit.flags & 0x01);
+            if (ingest_presence) {
                 /* Happiness ID: node_id * 1000000 + 200000 + ts_sec */
                 uint32_t h_id = (uint32_t)s_node_id * 1000000U + 200000U + (ts / 1000U % 100000U);
                 char json[SWARM_JSON_BUF];
@@ -351,11 +352,12 @@ static void swarm_task(void *arg)
                     hv[0], hv[1], hv[2], hv[3], hv[4], hv[5], hv[6], hv[7]);
 
                 if (len < 0 || len >= (int)sizeof(json)) len = (int)sizeof(json) - 1;
-        if (swarm_post_json(client, json, len) == ESP_OK) {
+                if (swarm_post_json(client, json, len) == ESP_OK) {
                     s_cnt_ingests++;
                 }
             }
         }
+
     }
 
     /* Unreachable, but clean up for completeness. */

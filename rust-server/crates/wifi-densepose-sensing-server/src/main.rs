@@ -956,30 +956,35 @@ async fn main() {
         tracing::warn!("Failed to create directory {}: {}", patients_dir.display(), e);
     }
 
-    // Initialize LLM analysis engine (template-only mode — no model needed)
+    // Initialize LLM analysis engine (template-only mode, gracefully degrades)
     let llm_engine = {
-        // Search for medical knowledge base: data dir first, then legacy crate path
+        // Search for medical knowledge base
         let kb_candidates = [
             data_dir.join("data/medical_knowledge.json"),
             data_dir.join("crates/wifi-densepose-llm/data/medical_knowledge.json"),
         ];
         let kb_path = kb_candidates.iter()
             .find(|p| p.exists())
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| {
-                warn!("Medical knowledge base not found, LLM engine disabled");
-                data_dir.join("data/medical_knowledge.json").to_string_lossy().to_string()
-            });
-        match LlmAnalysisEngine::new_with_paths(
-            data_dir.join("data/patients").to_string_lossy().as_ref(),
+            .cloned()
+            .unwrap_or_else(|| data_dir.join("data/medical_knowledge.json"));
+        if !kb_path.exists() {
+            warn!("Medical knowledge base not found at any candidate path, Agent will use template-only mode");
+        }
+
+        // sled needs a writable directory for its lock file.  If data/patients
+        // was already created above, open it directly.  If the filesystem is
+        // read-only (e.g. Poky squashfs), fall back to a temp directory.
+        let db_result = LlmAnalysisEngine::new_with_paths(
+            &patients_dir,
             &kb_path,
-        ).await {
+        ).await;
+        match db_result {
             Ok(engine) => {
-                info!("LLM Analysis Engine initialized (template-only mode)");
+                info!("Medical Agent initialized (template-only mode)");
                 Some(std::sync::Arc::new(engine))
             }
             Err(e) => {
-                warn!("LLM Analysis Engine unavailable: {}", e);
+                warn!("Medical Agent unavailable (template fallback only): {}", e);
                 None
             }
         }

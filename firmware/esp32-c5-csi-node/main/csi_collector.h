@@ -22,8 +22,10 @@
 
 /** Maximum frame buffer size.
  *  HE20 1 antenna: header + 1 ant × 256 sc × 2 bytes (I/Q) = 532 bytes.
- *  Round to 576 for cache-line alignment. */
-#define CSI_MAX_FRAME_SIZE (CSI_HEADER_SIZE + 1 * 256 * 2)  /* 532 → 576 aligned */
+ *  HT40 fallback: header + 1 ant × 128 sc × 2 bytes = 276 bytes, well within.
+ *  NOTE: Static (BSS) buffer for the fallback UDP path.
+ *  PSRAM burst ring uses heap_caps_malloc from SPIRAM. */
+#define CSI_MAX_FRAME_SIZE (CSI_HEADER_SIZE + 1 * 256 * 2)  /* 532 */
 
 /** Maximum number of channels in the hop table (ADR-029). */
 #define CSI_HOP_CHANNELS_MAX 6
@@ -86,5 +88,12 @@ void csi_collector_start_hop_timer(void);
  *       null-data frame as a placeholder.
  */
 esp_err_t csi_inject_ndp_frame(void);
+
+/**
+ * Timer callback wrapper for NDP injection via esp_timer.
+ * Thin adapter matching esp_timer_cb_t (void* → void) that calls
+ * csi_inject_ndp_frame() with no argument.
+ */
+void csi_inject_ndp_cb(void *arg);
 
 #endif /* CSI_COLLECTOR_H */

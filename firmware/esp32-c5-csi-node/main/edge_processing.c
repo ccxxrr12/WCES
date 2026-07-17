@@ -38,19 +38,28 @@ static const char *TAG = "edge_proc";
 /* ======================================================================
  * BSS Memory Budget (Bug 2 doc)
  * ======================================================================
- * Total static .bss from this file: ~72 KB on ESP32-C5 (2068-byte IQ slots).
- * C5 has 400 KB SRAM total; ~80 KB is reserved for WiFi/BT/lwIP stack, leaving
- * ~320 KB for application. This file's allocations consume ~22% of app SRAM.
- *
- * Breakdown (C5 worst-case with EDGE_MAX_IQ_BYTES=2068):
- *   s_ring            ~33.1 KB  (16 slots x 2068+ bytes)
- *   s_subcarrier_var   ~10.0 KB  (512 x 20-byte welford_t)
- *   s_person state     ~12.3 KB  (4 persons: history + filtered + biquad)
- *   s_phase_history     ~1.0 KB  (256 floats)
- *   s_*_filtered        ~2.0 KB  (breathing + heartrate history)
- *   s_prev_iq           ~2.0 KB  (delta compression reference)
- *   static locals       ~9.3 KB  (phases, amplitudes, variances, xor_buf, comp_buf, pkt)
+ * Total static .bss from this file: ~172 KB on ESP32-C5 (2068-byte IQ slots).
+ * C5 has 384 KB HP SRAM (ESP32-C5 Datasheet v1.0); ~80 KB is reserved for WiFi/BT/lwIP, leaving
+ * ~304 KB for application. This file's allocations consume ~57% of app SRAM.
+ * PSRAM malloc integration (CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y) offloads
+ * WiFi/lwIP dynamic allocations to the 8 MB Quad SPI PSRAM, relieving ~50-80 KB.
+ * MEDIUM-6 fix: previous comment underreported by 4x (claimed 16 slots/72 KB).
+ * EDGE_RING_SLOTS was raised 16→64 to relieve SRAM pressure via PSRAM-backed
+ * heap_caps_malloc, but the comment was never updated. Updated breakdown
+ * (C5 worst-case with EDGE_MAX_IQ_BYTES=2068, EDGE_RING_SLOTS=64):
+ *   s_ring           ~133.2 KB  (64 slots x 2082 bytes incl. metadata)
+ *   s_subcarrier_var  ~10.0 KB  (512 x 20-byte welford_t)
+ *   s_person state    ~12.3 KB  (4 persons: history + filtered + biquad)
+ *   s_phase_history    ~1.0 KB  (256 floats)
+ *   s_*_filtered       ~2.0 KB  (breathing + heartrate history)
+ *   s_prev_iq          ~2.0 KB  (delta compression reference)
+ *   static locals      ~9.3 KB  (phases, amplitudes, variances, xor_buf, comp_buf, pkt)
  *   misc (top_k, bq, cfg, etc.) ~2.3 KB
+ *
+ * NOTE: s_ring is the dominant consumer. If SRAM pressure becomes critical,
+ * migrate s_ring to PSRAM via heap_caps_malloc(MALLOC_CAP_SPIRAM) — the SPSC
+ * semantics are unaffected by memory location on C5 (single-core, no cache
+ * coherency concerns). Other structures are small enough to remain in SRAM.
  * ======================================================================
  *
  * SPSC Ring Buffer (lock-free, single-producer single-consumer)
@@ -160,6 +169,62 @@ static inline float biquad_process(edge_biquad_t *bq, float x)
     bq->y2 = bq->y1;
     bq->y1 = y;
     return y;
+}
+
+/**
+ * @brief Redesign all biquad filters if sampling rate has drifted significantly.
+ *
+ * CRITICAL-1 fix: biquad coefficients depend on fs. When the dynamic sample
+ * rate (s_measured_sample_rate) deviates more than BQ_REDESIGN_THRESHOLD
+ * (10%) from the fs used at last design, all bandpass filters are rebuilt.
+ * State (x1/x2/y1/y2) is preserved to avoid transient discontinuities —
+ * only coefficients change. Cutoff frequencies (breathing 0.1-0.5 Hz,
+ * heart rate 0.8-2.0 Hz) remain constant across redesigns.
+ *
+ * @param fs  Current measured sampling rate in Hz.
+ * @return true if redesign happened, false if skipped (within threshold).
+ */
+static bool edge_redesign_biquads_if_needed(float fs)
+{
+    if (fs <= 0.0f) return false;
+
+    /* Skip redesign if within ±10% of last design fs. */
+    float prev_fs = s_last_bq_design_fs;
+    if (prev_fs > 0.0f) {
+        float rel_err = fabsf(fs - prev_fs) / prev_fs;
+        if (rel_err < BQ_REDESIGN_THRESHOLD) return false;
+    }
+
+    /* Save state to preserve continuity across coefficient swap. */
+    edge_biquad_t br_state = s_bq_breathing;
+    edge_biquad_t hr_state = s_bq_heartrate;
+
+    biquad_bandpass_design(&s_bq_breathing, fs, 0.1f, 0.5f);
+    biquad_bandpass_design(&s_bq_heartrate, fs, 0.8f, 2.0f);
+
+    /* Restore delay-line state (coefficients already updated by design). */
+    s_bq_breathing.x1 = br_state.x1; s_bq_breathing.x2 = br_state.x2;
+    s_bq_breathing.y1 = br_state.y1; s_bq_breathing.y2 = br_state.y2;
+    s_bq_heartrate.x1 = hr_state.x1; s_bq_heartrate.x2 = hr_state.x2;
+    s_bq_heartrate.y1 = hr_state.y1; s_bq_heartrate.y2 = hr_state.y2;
+
+    for (uint8_t p = 0; p < EDGE_MAX_PERSONS; p++) {
+        edge_biquad_t p_br = s_person_bq_br[p];
+        edge_biquad_t p_hr = s_person_bq_hr[p];
+
+        biquad_bandpass_design(&s_person_bq_br[p], fs, 0.1f, 0.5f);
+        biquad_bandpass_design(&s_person_bq_hr[p], fs, 0.8f, 2.0f);
+
+        s_person_bq_br[p].x1 = p_br.x1; s_person_bq_br[p].x2 = p_br.x2;
+        s_person_bq_br[p].y1 = p_br.y1; s_person_bq_br[p].y2 = p_br.y2;
+        s_person_bq_hr[p].x1 = p_hr.x1; s_person_bq_hr[p].x2 = p_hr.x2;
+        s_person_bq_hr[p].y1 = p_hr.y1; s_person_bq_hr[p].y2 = p_hr.y2;
+    }
+
+    s_last_bq_design_fs = fs;
+    ESP_LOGI(TAG, "Biquad redesigned for fs=%.2f Hz (was %.2f Hz)",
+             fs, prev_fs);
+    return true;
 }
 
 /* ======================================================================
@@ -313,6 +378,15 @@ static float s_prev_phase_velocity;
  * Seed at 20 Hz; adapts within ~7 frames at 100 Hz. */
 static float   s_measured_sample_rate = 20.0f;
 static int64_t s_last_frame_us = 0;
+
+/* Last sampling rate used to design biquad filters.
+ * CRITICAL-1 fix: when dynamic sample rate drifts >10% from this value,
+ * biquads are redesigned to keep cutoff frequencies accurate.
+ * Initialized to 0.0f to force first design on init. */
+static float   s_last_bq_design_fs = 0.0f;
+/* Hysteresis threshold (fraction) for biquad redesign. Avoids
+ * oscillating redesigns when sample rate hovers near the boundary. */
+#define BQ_REDESIGN_THRESHOLD  0.10f
 
 /** Fall detection debounce state (issue #263). */
 static uint8_t  s_fall_consec_count;   /**< Consecutive frames above threshold. */
@@ -696,13 +770,13 @@ static void process_frame(const edge_ring_slot_t *slot)
     s_frame_count++;
     s_latest_rssi = slot->rssi;
 
-    /* Assumed CSI sample rate (~20 Hz for typical ESP32 CSI).
-     * KNOWN LIMITATION: This is hardcoded to 20.0 Hz because there is no
-     * reliable dynamic rate measurement in the current implementation.
-     * If actual callback rate differs (e.g., 10 Hz on quiet networks or
-     * 50+ Hz in promiscuous mode), BPM estimates and biquad filter design
-     * will be inaccurate. Dynamic measurement uses frame-to-frame interval
-     * with EMA smoothing (α=0.15, same as Rust measured_sample_rate). */
+    /* Dynamic CSI sample rate measurement (ADR-159).
+     * EMA-smoothed (α=0.15) to suppress burst-mode jitter. Seeds at 20 Hz
+     * and adapts within ~7 frames at 100 Hz. Used both for BPM estimation
+     * and (via edge_redesign_biquads_if_needed) for biquad coefficient
+     * refresh — CRITICAL-1 fix: previous implementation hardcoded fs=20 Hz
+     * at init and never updated biquads, causing cutoff drift when the
+     * true callback rate differed (channel hop, promiscuous mode, etc.). */
     float sample_rate;
     int64_t now_us = esp_timer_get_time();
     if (s_last_frame_us > 0) {
@@ -713,6 +787,11 @@ static void process_frame(const edge_ring_slot_t *slot)
     }
     s_last_frame_us = now_us;
     sample_rate = s_measured_sample_rate > 0.0f ? s_measured_sample_rate : 20.0f;
+
+    /* CRITICAL-1: redesign biquads if sample rate has drifted >10%.
+     * Skipped on the first frame (s_last_bq_design_fs == 0 forces a design).
+     * Per-person biquads are also refreshed inside this call. */
+    edge_redesign_biquads_if_needed(sample_rate);
 
     /* --- Step 1-2: Phase extraction + unwrapping per subcarrier --- */
     /* Static allocation: 512 floats = 2048 bytes each. Stack would
@@ -856,7 +935,7 @@ static void process_frame(const edge_ring_slot_t *slot)
     }
 
     /* --- Step 13: Send vitals packet at configured interval --- */
-    int64_t now_us = esp_timer_get_time();
+    now_us = esp_timer_get_time();
     int64_t interval_us = (int64_t)s_cfg.vital_interval_ms * 1000;
     if ((now_us - s_last_vitals_send_us) >= interval_us) {
         send_vitals_packet();
@@ -1044,16 +1123,13 @@ esp_err_t edge_processing_init(const edge_config_t *cfg)
     }
 
     /* Design biquad bandpass filters.
-     * Sampling rate ~20 Hz (typical ESP32 CSI callback rate). */
-    const float fs = 20.0f;
-    biquad_bandpass_design(&s_bq_breathing, fs, 0.1f, 0.5f);
-    biquad_bandpass_design(&s_bq_heartrate, fs, 0.8f, 2.0f);
-
-    /* Design per-person filters. */
-    for (uint8_t p = 0; p < EDGE_MAX_PERSONS; p++) {
-        biquad_bandpass_design(&s_person_bq_br[p], fs, 0.1f, 0.5f);
-        biquad_bandpass_design(&s_person_bq_hr[p], fs, 0.8f, 2.0f);
-    }
+     * CRITICAL-1 fix: initialize s_last_bq_design_fs to 0 so the first
+     * call to edge_redesign_biquads_if_needed() in process_frame()
+     * performs a real design. We no longer design here at init time —
+     * the design happens on the first frame using the seeded 20 Hz
+     * sample rate, then adapts as s_measured_sample_rate converges.
+     * This centralizes all coefficient design in one code path. */
+    s_last_bq_design_fs = 0.0f;  /* Force redesign on first frame. */
 
     if (s_cfg.tier == 0) {
         ESP_LOGI(TAG, "Edge tier 0: raw passthrough (no DSP task)");

@@ -36,7 +36,11 @@
 #define EDGE_MAX_SUBCARRIERS  128   /**< S3/C3/ESP32: up to 114 subcarriers (40MHz HT). */
 #define EDGE_MAX_IQ_BYTES     1024  /**< S3/C3: 114 subcarriers × 2 bytes × 4 antennas. */
 #endif
-#define EDGE_RING_SLOTS       64    /**< SPSC ring buffer slots (16→64: PSRAM relieves SRAM pressure). */
+#define EDGE_RING_SLOTS       64    /**< SPSC ring buffer slots.
+                                         *  MEDIUM-6: was 16, raised to 64 to reduce frame drops under
+                                         *  burst-mode CSI callbacks. Consumes ~133 KB of BSS on C5
+                                         *  (64 × ~2082 bytes). See edge_processing.c BSS budget
+                                         *  comment for migration-to-PSRAM guidance. */
 #define EDGE_PHASE_HISTORY_LEN 256  /**< Phase history buffer depth. */
 #define EDGE_TOP_K            8     /**< Top-K subcarriers to track. */
 

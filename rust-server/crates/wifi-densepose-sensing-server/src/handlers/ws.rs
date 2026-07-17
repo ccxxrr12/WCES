@@ -1,10 +1,13 @@
 //! WebSocket message handlers for sensing and pose streams.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
-use axum::response::IntoResponse;
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
 use tracing::{info, warn};
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use crate::SharedState;
@@ -16,13 +19,47 @@ use wifi_densepose_llm::{
 };
 use crate::edge_module_engine::EdgeAlert;
 
+// LOW-3 fix: optional WebSocket authentication via WCES_WS_TOKEN env var.
+// If the env var is unset, auth is disabled (backward-compatible with
+// local-network deployments — the historical default). If set, clients
+// must connect with `?token=<value>` in the query string. Constant-time
+// comparison prevents timing side-channels on the token check.
+static WS_AUTH_TOKEN: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("WCES_WS_TOKEN").ok().filter(|s| !s.is_empty()));
+
+/// Query string parameters extracted from the WebSocket upgrade request.
+/// Currently only `token` is consumed (LOW-3 auth).
+#[derive(Deserialize)]
+pub(crate) struct WsAuthQuery {
+    token: Option<String>,
+}
+
+/// Constant-time string comparison to prevent timing attacks on the token.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() { return false; }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) { diff |= x ^ y; }
+    diff == 0
+}
+
 // ── Sensing WebSocket handler ──────────────────────────────────────────────────
 
 pub(crate) async fn ws_sensing_handler(
     ws: WebSocketUpgrade,
+    Query(query): Query<WsAuthQuery>,
     State(state): State<SharedState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_ws_client(socket, state))
+) -> Response {
+    // LOW-3 fix: enforce optional token auth before upgrading.
+    // Returning Err(StatusCode) BEFORE calling ws.on_upgrade() causes axum
+    // to short-circuit with an HTTP 401 and NOT perform the upgrade.
+    if let Some(expected) = &*WS_AUTH_TOKEN {
+        let provided = query.token.as_deref().unwrap_or("");
+        if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+            warn!("WebSocket upgrade rejected: missing/invalid token");
+            return (StatusCode::UNAUTHORIZED, "missing or invalid token").into_response();
+        }
+    }
+    ws.on_upgrade(|socket| handle_ws_client(socket, state)).into_response()
 }
 
 pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) {
@@ -72,6 +109,16 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                             .as_array()
                                             .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                                             .unwrap_or_default();
+                                        let chief_complaint = msg["chief_complaint"].as_str().map(|s| s.to_string());
+                                        let medications: Vec<String> = msg["medications"]
+                                            .as_array()
+                                            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                            .unwrap_or_default();
+                                        let allergies: Vec<String> = msg["allergies"]
+                                            .as_array()
+                                            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                            .unwrap_or_default();
+                                        let notes = msg["notes"].as_str().map(|s| s.to_string());
 
                                         let mut record = PatientRecord::new(pid.to_string());
                                         record.age = age;
@@ -83,6 +130,10 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                         record.name = name;
                                         record.node_id = node_id;
                                         record.pre_existing = pre_existing;
+                                        record.chief_complaint = chief_complaint;
+                                        record.medications = medications;
+                                        record.allergies = allergies;
+                                        record.notes = notes;
 
                                         if let Err(e) = engine.register_patient(record).await {
                                             warn!("Failed to register patient: {}", e);
@@ -94,8 +145,30 @@ pub(crate) async fn handle_ws_client(mut socket: WebSocket, state: SharedState) 
                                 }
                                 Some("agent_analyze_request") => {
                                     let patient_id = msg["patient_id"].as_str().unwrap_or("UNKNOWN");
-                                    let patient_id_num: u32 = patient_id.parse().unwrap_or(1);
                                     let pid_str = patient_id.to_string();
+
+                                    // HIGH-2 fix: previously `patient_id.parse::<u32>().unwrap_or(1)`
+                                    // silently defaulted to 1 because survivor IDs are strings like
+                                    // "SURV-001". Now we look up the survivor in the latest triage
+                                    // update to obtain its actual node_id (u8 → u32). Falls back to
+                                    // parsing the numeric suffix of "SURV-NNN" (e.g. "SURV-001" → 1),
+                                    // then to 1 only if all else fails. This preserves the LLM
+                                    // engine's u32 patient_id contract without churning every
+                                    // downstream type.
+                                    let patient_id_num: u32 = {
+                                        let s = state.read().await;
+                                        s.latest_update.as_ref()
+                                            .and_then(|u| u.triage_update.as_ref())
+                                            .and_then(|t| t.survivors.iter()
+                                                .find(|surv| surv.id == patient_id)
+                                                .map(|surv| surv.node_id as u32))
+                                            .or_else(|| {
+                                                pid_str.split('-')
+                                                    .nth(1)
+                                                    .and_then(|n| n.parse::<u32>().ok())
+                                            })
+                                            .unwrap_or(1)
+                                    };
 
                                     // Single read lock: capture medical_agent (primary path),
                                     // llm_engine (fallback path), raw vitals (for fallback),

@@ -107,8 +107,15 @@ pub struct PatientRecordDB {
 
 impl PatientRecordDB {
     /// Open or create a patient database at the given path.
+    /// Creates the parent directory if it does not exist (sled requires
+    /// the directory to be present but creates the database files itself).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let db = sled::open(path).context("Failed to open patient database")?;
+        let p = path.as_ref();
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent)
+                .context("Failed to create patient database directory")?;
+        }
+        let db = sled::open(p).context("Failed to open patient database")?;
         let patients = db.open_tree("patients")?;
         let node_index = db.open_tree("node_index")?;
         Ok(Self { db, patients, node_index })

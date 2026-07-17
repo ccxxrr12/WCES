@@ -84,9 +84,16 @@ pub struct MedicalKnowledgeBase {
 
 impl MedicalKnowledgeBase {
     /// Load the knowledge base from a JSON file.
+    /// Load from a JSON file. Returns an empty knowledge base (zero conditions)
+    /// when the file does not exist, making knowledge base optional at startup.
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let p = path.as_ref();
+        if !p.exists() {
+            tracing::warn!("Medical knowledge base not found at {}, using empty KB", p.display());
+            return Ok(Self { conditions: Vec::new() });
+        }
         let content =
-            std::fs::read_to_string(&path).context("Failed to read medical knowledge base")?;
+            std::fs::read_to_string(p).context("Failed to read medical knowledge base")?;
         let conditions: Vec<MedicalCondition> =
             serde_json::from_str(&content).context("Failed to parse medical knowledge base")?;
         Ok(Self { conditions })

@@ -30,7 +30,7 @@ static int sender_init_internal(const char *ip, uint16_t port)
      * The flush timer drains the ring and retries next cycle. */
     struct timeval tv = {
         .tv_sec  = 0,
-        .tv_usec = 10 * 1000,  /* 10 ms (was 100ms) */
+        .tv_usec = 50 * 1000,  /* 50 ms — balances latency vs. reliability on 384KB SRAM (was 10ms) */
     };
     /* M-3 fix: Check setsockopt return — if it fails, sends may still block
      * but we log the issue rather than silently ignoring it. */
@@ -53,7 +53,7 @@ static int sender_init_internal(const char *ip, uint16_t port)
         close(s_sock); s_sock = -1; return -1;
     }
 
-    ESP_LOGI(TAG, "UDP ready: %s:%d (send timeout 100 ms)", ip, port);
+    ESP_LOGI(TAG, "UDP ready: %s:%d (send timeout 50 ms)", ip, port);
     return 0;
 }
 

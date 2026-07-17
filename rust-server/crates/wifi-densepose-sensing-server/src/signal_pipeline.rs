@@ -157,8 +157,9 @@ impl SignalPipeline {
         let motion_detector = MotionDetector::new(motion_config);
 
         // Feature extractor: needed by MotionDetector.
-        // sampling_rate is initialized to 100 Hz (C5 burst mode); updated
-        // per-frame via set_sample_rate() to match measured CSI arrival rate.
+        // sampling_rate is initialized to 100 Hz (C5 burst mode). Doppler features
+        // are disabled (enable_doppler=false), so sampling_rate is not actively used.
+        // If Doppler is re-enabled, the rate must be updated per-frame.
         let feature_config = FeatureExtractorConfig {
             fft_size: 128,
             sampling_rate: 100.0,
@@ -314,8 +315,8 @@ mod tests {
         let output = pipe.process(&amps, &phases, 2.437e9, 20e6);
         assert!(output.is_some(), "Pipeline should process valid frame");
         let out = output.unwrap();
-        assert_eq!(out.cleaned_amplitudes.len(), 56); // canonical-56
-        assert_eq!(out.cleaned_phases.len(), 56);
+        assert_eq!(out.cleaned_amplitudes.len(), 242); // canonical-242 (C5 HE20)
+        assert_eq!(out.cleaned_phases.len(), 242);
         assert!(out.motion_score >= 0.0 && out.motion_score <= 1.0);
     }
 

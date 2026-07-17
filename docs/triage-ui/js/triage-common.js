@@ -10,15 +10,23 @@
 /**
  * Escape HTML special characters for safe innerHTML insertion.
  *
- * SAFE for: text content between tags and inside quoted attribute values
- *   whose content is drawn from a fixed server-side enum (CSS class names).
- * NOT safe for: attribute values that may contain user-controlled double
- *   quotes — textContent mapping does NOT encode " or '.  For those cases
- *   use data-* attributes + getAttribute() instead of inline on* handlers.
+ * LOW-2 fix: previous comment claimed quotes were NOT encoded, but the
+ * implementation has always encoded both ' and " (lines 27-28 below).
+ * Updated to reflect actual behavior.
+ *
+ * SAFE for:
+ *   - Text content between tags
+ *   - Attribute values (single- or double-quoted), since both ' and "
+ *     are encoded to their numeric entity forms
+ *
+ * The encoding chain is:
+ *   1. textContent assignment encodes & < > (browser-standard)
+ *   2. innerHTML readback returns the encoded string
+ *   3. Additional regex replace encodes ' → &#39; and " → &quot;
  *
  * - null/undefined → '' (empty string)
  * - 0, false, "" → their String representation (safe)
- * - everything else → DOM-encoded via textContent (& < > encoded)
+ * - everything else → DOM-encoded + quote-encoded
  */
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';

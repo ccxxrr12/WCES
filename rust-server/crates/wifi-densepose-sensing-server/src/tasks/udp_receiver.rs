@@ -58,7 +58,12 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
     const POS_EMA: f64 = 0.08;
     const TOP_K: usize = 24;     // ~10% of 242 subcarriers (was 12/114)
 
-    let mut buf = [0u8; 2048];
+    // HIGH-1 fix: was 2048 bytes, which truncated compressed frames (magic
+    // 0xC511_0003) that can be up to 2078 bytes (10-byte header + comp_len
+    // ≤ 2068). The Rust parser doesn't currently decode compressed frames,
+    // but a too-small buffer silently drops them on recv_from, masking
+    // future enablement. 4096 covers all current frame types with margin.
+    let mut buf = [0u8; 4096];
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, src)) => {
@@ -421,7 +426,17 @@ pub(crate) async fn udp_receiver_task(state: SharedState, udp_port: u16) {
                         let pos = crate::mat_pipeline::node_positions_arr()
                             .get(&nid).copied().unwrap_or([2.,0.,1.5]);
                         if nid == frame.node_id {
-                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: frame.amplitudes.clone(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel: if frame.freq_mhz > 5000 { ((frame.freq_mhz - 5000) / 5) as u8 } else { ((frame.freq_mhz - 2407) / 5) as u8 }, band: if frame.freq_mhz > 5000 { "5GHz".into() } else { "2.4GHz".into() } }
+                            // MEDIUM-1 fix: channel 14 (2484 MHz, Japan-only) is 12 MHz above
+                            // channel 13 (2472 MHz), not 5 MHz. The generic formula
+                            // (freq-2407)/5 yields 15 for ch14. Special-case it.
+                            let channel = if frame.freq_mhz > 5000 {
+                                ((frame.freq_mhz - 5000) / 5) as u8
+                            } else if frame.freq_mhz == 2484 {
+                                14
+                            } else {
+                                ((frame.freq_mhz - 2407) / 5) as u8
+                            };
+                            NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: frame.amplitudes.clone(), subcarrier_count: frame.n_subcarriers as usize, breathing_rate_bpm: vitals.breathing_rate_bpm, heart_rate_bpm: vitals.heart_rate_bpm, motion_level: Some(classification.motion_level.clone()), presence: classification.presence, active: true, channel, band: if frame.freq_mhz > 5000 { "5GHz".into() } else { "2.4GHz".into() } }
                         } else if active {
                             NodeInfo { node_id: nid, rssi_dbm: rssi, position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: br, heart_rate_bpm: hr, motion_level: Some(ml.clone()), presence: pres, active: true, channel: 0, band: "2.4GHz".into() }
                         } else { NodeInfo { node_id: nid, rssi_dbm: 0., position: pos, amplitude: vec![], subcarrier_count: 0, breathing_rate_bpm: None, heart_rate_bpm: None, motion_level: None, presence: false, active: false, channel: 0, band: "".into() } }

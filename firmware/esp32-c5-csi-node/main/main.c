@@ -10,9 +10,9 @@
  * Differences from S3 version:
  *   - Target chip: ESP32-C5 (RISC-V 32-bit, WiFi 6).
  *   - CSI API identical (esp_wifi_set_csi_rx_cb, wifi_csi_info_t).
- *   - WiFi 6 HE-LTF provides more subcarriers (up to 484 vs 114 on S3).
- *   - 400KB SRAM (vs 512KB on S3) — stacks/buffers adjusted.
- *   - 22 GPIOs (vs 45 on S3) — display disabled by default.
+ *   - WiFi 6 HE-LTF provides more subcarriers (242 HE20 vs 114 HT40 on S3).
+ *   - HP SRAM: 384 KB (Espressif C5 Datasheet v1.0). PSRAM: 8 MB Quad SPI.
+ *   - 22 GPIOs on WROOM-1 module (29 on chip; 16-22 reserved for flash/PSRAM).
  */
 
 #include <string.h>
@@ -213,15 +213,15 @@ static void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
     wifi_protocols_t protocols = {
         .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX,
-        .ghz_5g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX,
+        .ghz_5g = WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX,
     };
     ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
     /* ESP32-C5 in 802.11ax: HE20 242-tone (C5 WiFi 6 is 20MHz-only non-AP).
      * 802.11n fallback: HT40 114-tone. BW40 is set below for 11n fallback;
      * in 11ax mode the PHY auto-limits to 20 MHz per the C5 datasheet. */
     wifi_bandwidths_t bandwidth = {
-        .ghz_2g = WIFI_BW40,
-        .ghz_5g = WIFI_BW40,
+        .ghz_2g = WIFI_BW20,
+        .ghz_5g = WIFI_BW20,
     };
     ESP_ERROR_CHECK(esp_wifi_set_bandwidths(WIFI_IF_STA, &bandwidth));
 #endif
@@ -307,11 +307,18 @@ void app_main(void)
     csi_collector_init();
 #endif
 
-    /* Enable channel-hopping across 2.4+5 GHz channels for multi-band CSI diversity. */
+    /* Enable channel-hopping for multi-channel CSI diversity.
+     * HIGH-4 fix: default hop table uses only 2.4 GHz channels (1/6/11) to
+     * guarantee compatibility with 2.4 GHz-only deployments. The original
+     * {1,6,11,36,40,44} mixed-band table caused esp_wifi_set_channel() to
+     * fail on 5 GHz-incapable configurations. For multi-band sensing,
+     * operators should set channel_list in NVS to include 5 GHz channels
+     * (36-177) AND ensure WIFI_BAND_MODE_AUTO is enabled. */
     if (g_nvs_config.channel_hop_count > 0 && g_nvs_config.channel_hop_count <= 16) {
         csi_collector_set_hop_table(g_nvs_config.channel_list, g_nvs_config.channel_hop_count, g_nvs_config.dwell_ms);
     } else {
-        static const uint8_t default_hop[] = {1, 6, 11, 36, 40, 44};
+        /* Default: 5GHz channels (P2: same-band only to avoid STA disconnect) */
+        static const uint8_t default_hop[] = {36, 40, 44};
         csi_collector_set_hop_table(default_hop, sizeof(default_hop)/sizeof(default_hop[0]), 50);
     }
     csi_collector_start_hop_timer();
@@ -418,6 +425,30 @@ void app_main(void)
              (ota_ret == ESP_OK) ? "ready" : "off",
              (wasm_ret == ESP_OK) ? "ready" : "off",
              (swarm_ret == ESP_OK) ? g_nvs_config.seed_url : "off");
+
+    /* ── NDP injection timer (ADR-159) ───────────────────────────────── */
+    /* Periodically inject null data frames to force AP → STA PPDU traffic.
+     * Without NDP injection, CSI callbacks fire only on passive RX frames
+     * (beacons at ~10 Hz, sporadic data). Active injection raises effective
+     * CSI frame rate to 50+ Hz independent of ambient network load.
+     * The timer runs alongside the flush timer in csi_collector.c. */
+    {
+        esp_timer_create_args_t ndp_timer_args = {
+            .callback = csi_inject_ndp_cb,
+            .arg      = NULL,
+            .name     = "ndp_inject",
+        };
+        esp_timer_handle_t ndp_timer = NULL;
+        esp_err_t ndp_ret = esp_timer_create(&ndp_timer_args, &ndp_timer);
+        if (ndp_ret == ESP_OK) {
+            /* Fire every 10 ms → 100 Hz NDP frame rate. */
+            esp_timer_start_periodic(ndp_timer, 10 * 1000);
+            ESP_LOGI(TAG, "NDP injection timer: 100 Hz (10 ms interval)");
+        } else {
+            ESP_LOGW(TAG, "NDP injection timer create failed: %s",
+                     esp_err_to_name(ndp_ret));
+        }
+    }
 
     /* Main loop — keep alive */
     while (1) {

@@ -2,7 +2,7 @@
  * @file display_task.c
  * @brief ADR-045: FreeRTOS display task — LVGL pump on Core 0, priority 1.
  *
- * Gracefully skips if RM67162 panel or SPIRAM is absent.
+ * Gracefully skips if SH8601 panel or SPIRAM is absent.
  * Reads from edge_get_vitals() / edge_get_multi_person() (thread-safe).
  */
 
@@ -96,11 +96,15 @@ esp_err_t display_task_start(void)
     ESP_LOGW(TAG, "SPIRAM not enabled — using internal DMA memory (smaller buffers)");
 #endif
 
-    /* Probe display hardware */
+    /* Probe display hardware.
+     * MEDIUM-7 fix: previously returned ESP_OK on panel init failure,
+     * masking the error from callers. Now returns ESP_ERR_NOT_FOUND so
+     * main.c can log and continue headless without confusing "success"
+     * with "display actually initialized". */
     esp_err_t ret = display_hal_init_panel();
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Display not available — running headless");
-        return ESP_OK;
+        ESP_LOGW(TAG, "Display not available — running headless (err=0x%x)", ret);
+        return ESP_ERR_NOT_FOUND;
     }
 
     /* Init touch (optional) */
@@ -116,11 +120,14 @@ esp_err_t display_task_start(void)
     lv_color_t *buf1 = heap_caps_malloc(buf_size, alloc_caps);
     lv_color_t *buf2 = heap_caps_malloc(buf_size, alloc_caps);
     if (!buf1 || !buf2) {
+        /* MEDIUM-7 fix: return ESP_ERR_NO_MEM instead of ESP_OK so caller
+         * knows display init failed. Previously the misleading ESP_OK led
+         * main.c to believe the display was up while no task was running. */
         ESP_LOGE(TAG, "Failed to allocate LVGL buffers (%u bytes, caps=0x%lx)",
                  (unsigned)buf_size, (unsigned long)alloc_caps);
         if (buf1) free(buf1);
         if (buf2) free(buf2);
-        return ESP_OK;
+        return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "LVGL buffers: 2x %u bytes (%u lines, %s)",
              (unsigned)buf_size, (unsigned)buf_lines, use_psram ? "PSRAM" : "internal DMA");
@@ -150,8 +157,12 @@ esp_err_t display_task_start(void)
         NULL, DISP_TASK_PRIORITY, NULL, DISP_TASK_CORE);
 
     if (xret != pdPASS) {
+        /* MEDIUM-7 fix: return ESP_FAIL instead of ESP_OK on task creation
+         * failure. Buffers are leaked here intentionally — freeing would
+         * require tracking static draw_buf/disp_drv state, and a task
+         * creation failure indicates a deeper resource exhaustion. */
         ESP_LOGE(TAG, "Failed to create display task");
-        return ESP_OK;
+        return ESP_FAIL;
     }
 
     ESP_LOGI(TAG, "Display task started (Core %d, priority %d, %d fps)",

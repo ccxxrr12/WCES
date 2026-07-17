@@ -1681,7 +1681,12 @@
         function connectWebSocket() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const port = location.port || '8080';
-            ws = new WebSocket(`${proto}//${location.hostname}:${port}/ws/sensing`);
+            // LOW-3 fix: optional token auth (see triage.html for full docs).
+            const wsToken = (typeof window.WS_TOKEN !== 'undefined' && window.WS_TOKEN)
+                || (window.localStorage && window.localStorage.getItem('ws_token'))
+                || '';
+            const wsTokenQuery = wsToken ? `?token=${encodeURIComponent(wsToken)}` : '';
+            ws = new WebSocket(`${proto}//${location.hostname}:${port}/ws/sensing${wsTokenQuery}`);
 
             ws.onopen = () => {
                 wsRetryCount = 0;

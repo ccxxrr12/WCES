@@ -288,10 +288,16 @@ struct TrackedSurvivor {
     triage: TriageLevel,
     prev_triage: TriageLevel,
     position: (f64, f64, f64),
+    /// True once position has been set to a real value. MEDIUM-4 fix:
+    /// (0,0,0) is a valid position (e.g., directly under a node), so we
+    /// cannot use it as a sentinel for "uninitialized". Use an explicit flag.
+    position_initialized: bool,
     position_confidence: f64,
-    breathing_history: Vec<f64>,
-    heart_rate_history: Vec<f64>,
-    motion_history: Vec<f64>,
+    /// MEDIUM-2 fix: was Vec<f64> with O(n) `remove(0)`. VecDeque with
+    /// `pop_front()` is O(1) and follows project convention.
+    breathing_history: VecDeque<f64>,
+    heart_rate_history: VecDeque<f64>,
+    motion_history: VecDeque<f64>,
     first_seen: f64,
     last_updated: f64,
     node_id: u8,
@@ -309,9 +315,11 @@ impl TrackedSurvivor {
     fn new(id: String, now: f64, node_id: u8, person_id: Option<u32>) -> Self {
         Self {
             id, triage: TriageLevel::Unknown, prev_triage: TriageLevel::Unknown,
-            position: (0.0, 0.0, 0.0), position_confidence: 0.0,
-            breathing_history: Vec::new(), heart_rate_history: Vec::new(),
-            motion_history: Vec::new(),
+            position: (0.0, 0.0, 0.0), position_initialized: false,
+            position_confidence: 0.0,
+            breathing_history: VecDeque::new(),
+            heart_rate_history: VecDeque::new(),
+            motion_history: VecDeque::new(),
             first_seen: now, last_updated: now, node_id, person_id,
             deterioration_count: 0, status: "active",
             embedding: Vec::new(), reidentified: false,
@@ -362,16 +370,17 @@ impl TriageEngine {
             s.prev_triage = s.triage;
 
             // 平滑生命体征 (最近5个值的均值)
+            // MEDIUM-2 fix: VecDeque + pop_front() is O(1), vs Vec::remove(0) O(n).
             if let Some(br) = input.breathing_rate_bpm {
-                s.breathing_history.push(br);
-                if s.breathing_history.len() > 30 { s.breathing_history.remove(0); }
+                s.breathing_history.push_back(br);
+                if s.breathing_history.len() > 30 { s.breathing_history.pop_front(); }
             }
             if let Some(hr) = input.heart_rate_bpm {
-                s.heart_rate_history.push(hr);
-                if s.heart_rate_history.len() > 30 { s.heart_rate_history.remove(0); }
+                s.heart_rate_history.push_back(hr);
+                if s.heart_rate_history.len() > 30 { s.heart_rate_history.pop_front(); }
             }
-            s.motion_history.push(input.motion_score);
-            if s.motion_history.len() > 30 { s.motion_history.remove(0); }
+            s.motion_history.push_back(input.motion_score);
+            if s.motion_history.len() > 30 { s.motion_history.pop_front(); }
 
             // 位置估计: 多节点三角定位 (替代简易RSSI→距离)
             // 记录当前节点的RSSI观测
@@ -399,6 +408,7 @@ impl TriageEngine {
                 }
                 if total_w > 0.0 {
                     s.position = (wx / total_w, wy / total_w, wz / total_w);
+                    s.position_initialized = true;
                     s.position_confidence = (obs.len() as f64 / 3.0).min(1.0) * input.signal_quality;
                 }
             } else if let Some((nx, ny, nz)) = self.config.node_positions.get(&input.node_id) {
@@ -408,10 +418,31 @@ impl TriageEngine {
                     self.config.rssi_ref_power,
                     self.config.rssi_path_loss_exponent,
                 );
-                let raw_x = nx + d * 0.5; let raw_y = ny + d * 0.3; let raw_z = nz * 0.5;
+                // LOW-1 fix: z-axis previously used `nz * 0.5` which ignored
+                // distance d, causing flat floor positions even when the
+                // survivor is on a different floor. Now z scales with d
+                // symmetrically to x/y (projected horizontally) and the
+                // node's nz is used as the vertical anchor. Magic numbers
+                // 0.5/0.3 documented: 0.5 = horizontal projection factor
+                // (cos 60°), 0.3 = vertical attenuation (multi-floor).
+                let raw_x = nx + d * 0.5;
+                let raw_y = ny + d * 0.3;
+                let raw_z = nz + d * 0.3;
                 const POS_EMA: f64 = 0.15;
-                if s.position == (0.0, 0.0, 0.0) { s.position = (raw_x, raw_y, raw_z); }
-                else { s.position = (s.position.0*(1.0-POS_EMA)+raw_x*POS_EMA, s.position.1*(1.0-POS_EMA)+raw_y*POS_EMA, s.position.2*(1.0-POS_EMA)+raw_z*POS_EMA); }
+                // MEDIUM-4 fix: was `if s.position == (0.0, 0.0, 0.0)`,
+                // treating the origin as "uninitialized". But (0,0,0) is a
+                // valid position (e.g., directly under a node at the floor
+                // origin). Use the explicit `position_initialized` flag.
+                if !s.position_initialized {
+                    s.position = (raw_x, raw_y, raw_z);
+                    s.position_initialized = true;
+                } else {
+                    s.position = (
+                        s.position.0 * (1.0 - POS_EMA) + raw_x * POS_EMA,
+                        s.position.1 * (1.0 - POS_EMA) + raw_y * POS_EMA,
+                        s.position.2 * (1.0 - POS_EMA) + raw_z * POS_EMA,
+                    );
+                }
                 s.position_confidence = input.signal_quality * 0.5;
             }
 
@@ -592,7 +623,16 @@ impl TriageEngine {
                 breathing_rate: average_last(&s.breathing_history, 3),
                 heart_rate: average_last(&s.heart_rate_history, 3),
                 motion_score: average_last64(&s.motion_history, 3) as f64,
-                position: Some([s.position.0, s.position.1, s.position.2]),
+                // MEDIUM-5 fix: was `position: Some([...])` always, which
+                // caused the UI to render a survivor at (0,0,0) when no
+                // node observations had been received yet (position_confidence=0).
+                // Now return None when position is uninitialized or confidence
+                // is effectively zero, so the UI can show "position unknown".
+                position: if s.position_initialized && s.position_confidence > 0.01 {
+                    Some([s.position.0, s.position.1, s.position.2])
+                } else {
+                    None
+                },
                 position_confidence: s.position_confidence,
                 is_deteriorating: s.deterioration_count > 0,
                 tracked_seconds: now - s.first_seen,
@@ -626,14 +666,23 @@ impl TriageEngine {
 
 // ── 辅助函数 ────────────────────────────────────────────────────────────────
 
-fn average_last(data: &[f64], n: usize) -> Option<f64> {
+/// Average of the last `n` elements. MEDIUM-2 fix: accept &VecDeque<f64>
+/// instead of &[f64] so the FIFO history fields (which are now VecDeque)
+/// can be passed directly without conversion. VecDeque::iter() traverses
+/// front-to-back, so `rev().take(n)` correctly returns the most recent n.
+fn average_last(data: &VecDeque<f64>, n: usize) -> Option<f64> {
     if data.is_empty() { return None; }
-    let window: Vec<&f64> = data.iter().rev().take(n).collect();
-    if window.is_empty() { return None; }
-    Some(window.iter().copied().sum::<f64>() / window.len() as f64)
+    let mut sum = 0.0;
+    let mut count = 0usize;
+    for &v in data.iter().rev().take(n) {
+        sum += v;
+        count += 1;
+    }
+    if count == 0 { return None; }
+    Some(sum / count as f64)
 }
 
-fn average_last64(data: &[f64], n: usize) -> f64 {
+fn average_last64(data: &VecDeque<f64>, n: usize) -> f64 {
     average_last(data, n).unwrap_or(0.0)
 }
 

@@ -7,11 +7,11 @@
 
 ## 摘要
 
-本作品面向野战方舱、灾后临时医院等恶劣环境下的批量伤员快速分诊需求，设计并实现了一套基于WiFi 6 CSI非接触感知与端侧AI Agent协同的伤员生命体征监护系统。系统以瑞萨RZ/G2L双核ARM64处理器为主控计算平台，搭载3个ESP32-C5感知节点构成分布式WiFi传感网络，在不接触伤员身体的前提下，通过WiFi信号穿墙感知伤员位置、呼吸率、心率、体动等关键生命体征，结合国际START（Simple Triage and Rapid Treatment）标准分诊协议实现伤员自动分类与优先级排序。
+野战方舱与灾后临时医院等极端环境下，批量伤员的快速分诊对医疗资源调度与生存率提升至关重要。传统分诊依赖接触式传感器（ECG/SpO₂腕带）或人工巡查，在伤员聚集、穿戴困难、医护人员紧缺的场景下难以实施；现有WiFi CSI非接触感知研究多基于单链路收发与Python后端，存在角度模糊、子载波分辨率受限、边缘算法更新需重刷固件、断网即失效等局限，尚未见与非接触生命体征贯通的端到端START分诊系统。
 
-核心技术路线包括：（1）基于ESP32-C5 WiFi 6 HE20模式的242子载波高分辨率CSI采集（C5 802.11ax为20MHz-only non-AP模式，242-tone HE-LTF），通过UDP实时传输至RZ/G2L边缘主控，固件支持PSRAM burst mode以在promiscuous模式下维持高帧率采集；（2）Rust语言实现的纯本地信号处理管线，包含IIR带通滤波、零交叉检测、自相关分析等生命体征提取算法；（3）基于SVD空房间校准的物理场扰动模型与加权质心法的混合人员定位方案；（4）面向大规模伤亡事件的START分诊引擎，支持伤员8维生物特征嵌入匹配与恶化追踪；（5）Coordinator模式的云端LLM医学Agent，具备流式分析、熔断降级与本地模板兜底能力。
+针对上述缺口，本作品设计并实现了一套基于WiFi 6 CSI非接触感知与端侧AI Agent协同的伤员生命体征监护系统。系统以瑞萨RZ/G2L双核ARM64处理器为主控计算平台，搭载3个ESP32-C5感知节点构成分布式WiFi传感网络，在不接触伤员身体的前提下穿墙感知伤员位置、呼吸率、心率、体动等关键生命体征，结合国际START（Simple Triage and Rapid Treatment）标准分诊协议实现五级自动分类与优先级排序。主要技术贡献包括：基于ESP32-C5 802.11ax HE-LTF 242子载波采集与Secure TDM时分同步（QUIC/TLS 1.3及HMAC-SHA256双模认证）的分布式感知阵列，相较主流HT20方案子载波分辨率提升约4倍，突破单链路WiFi感知的角度模糊性；自定义RVF（RuVector Format）签名容器（Ed25519签名+能力位掩码+帧预算约束）与WASM3沙箱运行时，使感知算法可在不重刷固件前提下经OTA安全热加载——该"签名容器+沙箱热加载"机制在现有WiFi CSI感知系统中尚未见同等设计；纯Rust逐帧信号质量门控管线（相干性四级门控决策）与START分诊引擎（10/30 BPM呼吸阈值+8维对比学习嵌入Re-ID），实现跨节点伤员身份关联与恶化追踪；以及五级熔断降级医学Agent（L0全量LLM→L1简版→L2模板+知识库→L3纯模板→L4缓存重放），保障断网/限流场景下分诊连续性。
 
-系统以全Rust技术栈构建服务端（9个workspace crate、约9.2万行代码，wasm-edge独立构建），ESP-IDF v6.0.1 C语言固件（31个源文件、~7,900行），HTML5/Canvas/Three.js Web可视化仪表盘。端到端数据流（CSI采集→UDP→信号处理→生命体征→分诊→WebSocket→可视化）12条路径（UDP硬件路径全部接通；模拟路径后续同步至相同管线）。
+系统以全Rust技术栈构建服务端（9个workspace crate、约9.2万行代码，wasm-edge独立构建），ESP-IDF v6.0.1 C语言固件（31个源文件、约7,900行），HTML5/Canvas/Three.js Web可视化仪表盘。端到端数据流（CSI采集→UDP→信号处理→生命体征→分诊→WebSocket→可视化）12条路径中，UDP硬件路径已全部接通，模拟路径后续同步至相同管线。
 
 **关键词**：WiFi CSI感知；非接触生命体征检测；START分诊；端侧AI；RZ/G2L边缘计算；ESP32-C5；Rust
 
@@ -130,11 +130,15 @@ Medical Agent采用Coordinator模式：边缘端本地信号处理管线保障�
 
 ## 主要创新点
 
-1. **WiFi 6 CSI生命体征感知**：率先将802.11ax HE20 242子载波应用于非接触生命体征监护，配合PSRAM burst mode实现10-50Hz帧率采集，为高分辨率频域特征提取提供物理基础。
-2. **双模态CSI邻近度混合定位**：子载波方差（频域散射）+相位差分（时域多普勒）经验权重60:40融合，平方权重质心，充分利用WiFi 6高分辨率优势。
-3. **全Rust边缘生命体征处理管线**：IIR带通+零交叉+自相关对标学术精度，EMA自适应采样率。
-4. **8维CSI生物特征Re-ID**：基于生命体征特征向量的伤员身份持续追踪，余弦匹配+5分钟lost_pool缓冲。
-5. **Coordinator端云协同Agent**：边缘端零延迟/零带宽/零隐私风险+云端LLM增强+熔断器降级。
+1. **RVF签名容器与WASM3端侧热加载感知引擎（人无我有）**。针对边缘感知节点算法更新需重刷固件、运维成本高，而直接OTA裸WASM又缺乏供应链安全与资源约束的问题，提出自定义RVF（RuVector Format）二进制容器（[rvf_parser.h](file:///d:/CODING/Repository/WCES/firmware/esp32-c5-csi-node/main/rvf_parser.h)）：32字节header+96字节manifest+WASM载荷+Ed25519签名+测试向量，manifest内含能力位掩码、帧预算`max_frame_us`、事件限速`max_events_per_sec`、内存上限`memory_limit_kb`及SHA-256构建哈希；ESP32-C5侧WASM3运行时（[wasm_runtime.c](file:///d:/CODING/Repository/WCES/firmware/esp32-c5-csi-node/main/wasm_runtime.c)）支持最多4模块并发、每槽160KB PSRAM arena、Core 1 DSP上下文执行`on_frame/on_init/on_timer`回调。据调研，现有WiFi CSI感知系统（VitalCSI、PulseFi等）均为固件烧录式，尚未见将"软件供应链签名验证+WASM沙箱隔离"引入资源受限边缘感知节点的同等设计，本工作使感知算法可在不重刷固件前提下经OTA安全热更新。
+
+2. **WiFi 6 HE20 242子载波分布式感知阵列**。针对单链路WiFi感知存在角度模糊、HT20仅52/56子载波分辨率不足、多节点采集缺乏同步的问题，基于ESP32-C5 802.11ax non-AP模式（芯片硬件限定20MHz-only）的HE-LTF 242子载波采集（[csi_collector.c](file:///d:/CODING/Repository/WCES/firmware/esp32-c5-csi-node/main/csi_collector.c) 中 `acquire_csi_su=true`、HE-LTF1模式），3节点经Secure TDM时分同步（[secure_tdm.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-hardware/src/esp32/secure_tdm.rs) 双模认证：聚合节点走QUIC/TLS 1.3，终端节点走HMAC-SHA256+nonce重放窗）构成分布式MIMO感知阵列。相较主流ESP32-C3 HT20方案子载波分辨率提升约4倍，区别于Oxford VitalCSI单天线消费级AP方案，本系统分布式阵列突破单链路角度模糊性限制。
+
+3. **纯Rust相干性门控信号管线**。针对Python系管线存在GIL瓶颈与内存安全风险、且低质量帧在生命体征层后置滤波造成计算浪费的问题，实现Rust逐帧管线（[signal_pipeline.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/signal_pipeline.rs)）：PhaseSanitizer（标准解包裹+3σ离群剔除+5窗平滑）→ HardwareNormalizer（canonical-56归一化）→ Hampel滤波 → MotionDetector → CoherenceState+GatePolicy，输出`accept/predict/reject/recalibrate`四级质量门决策，仅在`accept`态更新下游状态。纯Rust实现提供内存安全保证且无GIL瓶颈；相干性门控在感知层即抑制低质量帧传播，区别于现有工作多在生命体征层后置滤波的做法。
+
+4. **非接触WiFi CSI生命体征与START分诊端到端贯通**。针对现有分诊系统依赖接触式穿戴传感器、非接触感知与分诊协议未贯通的问题，依据START协议将呼吸率（[triage.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-mat/src/domain/triage.rs) 中 `BRADYPNEA_THRESHOLD=10.0`/`TACHYPNEA_THRESHOLD=30.0` BPM）映射至五级TriageLevel（Unknown/Minor/Delayed/Immediate/Deceased），并采用对比学习8维嵌入（[embedding.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-sensing-server/src/embedding.rs)，2层MLP投影头+L2归一化+余弦相似度+lost_pool重识别缓冲）实现跨节点伤员身份关联与恶化追踪。区别于James Dyson Award 2025"Smart Triage Tag"及Cureus 2025 AI分诊平台均依赖接触式ECG/SpO₂传感器，本系统为首次将非接触WiFi CSI生命体征与START自动分诊端到端贯通；DARPA Triage Challenge 2025采用UAV+mmWave雷达+事件相机的机器人方案，本系统以低成本WiFi节点实现类似的无医护人员介入分诊目标。
+
+5. **五级熔断降级医学Agent**。针对云端LLM在野战/灾后断网或限流场景下失效、而现有医疗LLM缺乏结构化断网韧性的问题，Coordinator模式Agent（[agent.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-llm/src/agent.rs)）编排 ContextCollator→DegradationManager→AnalysisRouter→PromptCompiler→LlmGateway/Fallback→OutputValidator→RiskAdjustmentExtractor 管线，[degrade.rs](file:///d:/CODING/Repository/WCES/rust-server/crates/wifi-densepose-llm/src/degrade.rs) 实现 L0全量LLM→L1简版LLM→L2模板+知识库→L3纯模板→L4缓存重放 的五级降级阶梯，配以熔断器与TTL缓存，确保断网/限流场景下分诊不中断；患者PII伪匿名化、prompt XML标签转义防注入。该五级降级阶梯在现有医疗LLM文献中尚未见同等粒度的断网韧性设计。
 
 ## 设计流程
 

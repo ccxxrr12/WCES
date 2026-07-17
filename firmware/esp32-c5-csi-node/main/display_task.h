@@ -15,7 +15,7 @@ extern "C" {
 /**
  * Start the display task on Core 0, priority 1.
  *
- * Probes for RM67162 panel and SPIRAM. If either is absent,
+ * Probes for SH8601 panel and SPIRAM. If either is absent,
  * logs a warning and returns ESP_OK (graceful skip).
  *
  * @return ESP_OK always (display is optional).

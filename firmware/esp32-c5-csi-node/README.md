@@ -12,10 +12,10 @@
 | WiFi | WiFi 4 (802.11n) | **WiFi 6 (802.11ax)** |
 | CSI 性能 | C3 ≈ S3 | **C5 > C6 > C3 ≈ S3** (官方排名) |
 | 子载波数 (20MHz) | 56 | 242 (HE) |
-| 子载波数 (40MHz) | 114 | 484 (HE) |
+| 子载波数 (40MHz) | 114 | N/A (20MHz-only in 11ax) |
 | CSI 配置结构体 | `.lltf_en` / `.htltf_en` 等 (旧 API) | `.acquire_csi_*` (新 API, IDF v5.4+) |
-| SRAM | 512KB | 400KB |
-| GPIO | 45 | 29 (flash模块保留16-22) |
+| HP SRAM | 512KB | 384KB |
+| GPIO | 45 | 29 (module exposes 22; 16-22 reserved for flash/PSRAM) |
 | 频段 | 2.4GHz | 2.4GHz + 5GHz |
 | 工具链 | xtensa-esp-elf | riscv32-esp-elf |
 | ESP-IDF 最低版本 | v5.0 | **v5.4+** (推荐 v5.5+) |
@@ -68,7 +68,7 @@ ESP32-C5 使用与 S3 **相同的函数名**（`esp_wifi_set_csi_rx_cb`、`esp_w
 2. **工具链**: 使用 riscv32-esp-elf（不是 xtensa-esp-elf）
 3. **显示**: 默认禁用（C5 GPIO 引脚不足），如需启用需重配引脚
 4. **内存**: 主任务栈 7168 字节（比 S3 的 8192 略小）
-5. **帧缓冲**: `CSI_MAX_FRAME_SIZE` 增大至 4116 字节（适配 WiFi 6 484 子载波）
+5. **帧缓冲**: `CSI_MAX_FRAME_SIZE` 优化为 532 字节（HE20 242子载波最大值），PSRAM burst ring 独立SPIRAM分配
 
 ## 参考
 

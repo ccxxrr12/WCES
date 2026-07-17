@@ -1,8 +1,8 @@
 /**
  * @file lv_conf.h
- * @brief LVGL compile-time configuration for ESP32-S3 AMOLED display (ADR-045).
+ * @brief LVGL compile-time configuration for AMOLED display (ADR-045).
  *
- * Tuned for RM67162 536x240 QSPI AMOLED with 8MB PSRAM.
+ * Tuned for SH8601 368x448 QSPI AMOLED with 8MB PSRAM.
  * Color depth: RGB565 (16-bit) for QSPI bandwidth.
  * Double-buffered in SPIRAM, 30fps target.
  */

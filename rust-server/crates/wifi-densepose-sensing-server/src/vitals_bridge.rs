@@ -35,7 +35,12 @@ impl VitalsBridge {
                 n_sc, sample_rate.max(1.0), 30.0, // 30-second window
             ),
             heartrate: HeartRateExtractor::new(
-                n_sc, sample_rate.max(1.0), 15.0, // 15-second window
+                n_sc, sample_rate.max(1.0), 30.0, // MEDIUM-3 fix: 30s window to align with
+                                                  // CLAUDE.md spec (was 15s, which contradicted
+                                                  // the documented "30s window" for heart rate
+                                                  // extraction). 30s matches BreathingExtractor
+                                                  // and provides better FFT frequency resolution
+                                                  // at low heart rates (40 BPM = 1.5s/cycle).
             ),
             sample_rate,
         }
