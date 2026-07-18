@@ -304,69 +304,80 @@ CSI 采集          UDP:5005 →
 │       ├── wifi-densepose-llm/        ← Medical Agent 分析引擎 ⭐ (6,216行, 21文件)
 │       ├── wifi-densepose-nn/         ← ONNX 推理 (2,959行, 7文件)
 │       ├── wifi-densepose-mat/        ← 分诊系统 ⭐ (19,667行, 43文件)
-│       ├── wifi-densepose-sensing-server/ ← 主服务 (16,956行, 31文件)
+│       ├── wifi-densepose-sensing-server/ ← 主服务 (16,956行, 40文件)
 │       │   ├── src/main.rs                 ← 入口 + CLI + 状态初始化 (1,341行)
 │       │   ├── src/lib.rs                  ← crate 入口
 │       │   ├── src/types.rs                ← 数据类型 + 常量
 │       │   ├── src/signal_processing.rs    ← 14 个纯信号处理函数
+│       │   ├── src/signal_pipeline.rs      ← 信号处理管道
 │       │   ├── src/state_ops.rs            ← 有状态操作 (smooth/classify)
 │       │   ├── src/parser.rs               ← ADR-018 二进制帧解析
 │       │   ├── src/server.rs               ← HTTP/WS 服务器启动
 │       │   ├── src/vital_signs.rs          ← FFT 生命体征检测 (呼吸/心率)
 │       │   ├── src/mat_pipeline.rs         ← START 分诊 + 伤员追踪
 │       │   ├── src/edge_module_engine.rs   ← 19 边缘模块引擎
-│       │   ├── src/handlers/               ← 路由处理器 (7 files: mod, ws, routes, model, recording, llm, path_util)
+│       │   ├── src/handlers/               ← 路由处理器 (7 files: mod, ws, routes, model_routes, recording_routes, llm_routes, path_util)
 │       │   ├── src/tasks/                  ← 后台任务 (4 files: mod, udp_receiver, simulated_data, broadcast_tick)
 │       │   ├── src/app_config.rs            ← 应用配置管理
 │       │   ├── src/rvf_container.rs        ← RVF 模型容器
 │       │   ├── src/rvf_pipeline.rs         ← RVF 推理管道
 │       │   ├── src/adaptive_classifier.rs  ← 自适应分类器
+│       │   ├── src/alerting_bridge.rs      ← 告警桥接层
+│       │   ├── src/cir_bridge.rs           ← CIR 桥接层
 │       │   ├── src/dataset.rs              ← 数据集管理
+│       │   ├── src/detection_bridge.rs     ← 检测桥接层
 │       │   ├── src/embedding.rs            ← 嵌入层
+│       │   ├── src/field_bridge.rs         ← 信号场桥接层
+│       │   ├── src/field_localize.rs       ← 信号场定位
 │       │   ├── src/graph_transformer.rs    ← 图神经网络
+│       │   ├── src/localization_bridge.rs  ← 定位桥接层
 │       │   ├── src/sona.rs                 ← SONA 配置文件
 │       │   ├── src/sparse_inference.rs     ← 稀疏推理
+│       │   ├── src/tracking_bridge.rs      ← 追踪桥接层
 │       │   ├── src/trainer.rs              ← 模型训练
+│       │   ├── src/vitals_bridge.rs        ← 生命体征桥接层
 │       ├── wifi-densepose-wasm-edge/  ← WASM 边缘模块 (68 .rs, wasm32 独立编译, workspace 排除)
 │       └── wifi-densepose-config/     ← 系统配置 namespace 占位 (deprecated, 配置在 app_config.rs)
 ├── ui/                                ← Web 可视化
 │   ├── index.html                     ← 统一入口门户页
 │   ├── triage.html                    ← 分诊仪表盘 (新版, 暗色/亮色主题)
+│   ├── app.js                         ← 应用入口逻辑
+│   ├── style.css                      ← 统一样式表
+│   ├── start-ui.sh                    ← UI 启动脚本
 │   ├── lib/
 │   │   ├── three.min.js               ← Three.js r140 UMD (离线可用)
 │   │   └── OrbitControls.js           ← OrbitControls r140 UMD
+│   ├── js/
+│   │   └── triage-common.js           ← 分诊通用 JS 逻辑
 │   ├── mobile/                        ← React Native Expo 移动端
 │   ├── observatory/                   ← 3D 信号观测站
 │   └── tests/                         ← 自动化测试
 ├── scripts/
-│   └── provision.py                   ← C5 烧录脚本 (固件内也有副本)
-└── docs/                              ← 竞赛设计文档 (24 个 .md 文件)
+│   ├── provision.py                   ← C5 烧录脚本 (固件内也有副本)
+│   └── csi_stim.sh                    ← CSI 激励测试脚本
+└── docs/                              ← 竞赛设计文档 (13 个 .md 文件)
     ├── README_COMPETITION.md          ← 竞赛版 README
     ├── 项目全览.md                     ← 全项目技术全览
     ├── PROGRESS.md                    ← 构建进度 (实时更新)
     ├── 代码审计与修复报告.md           ← 第七轮全项目审计 (144 issues, 43 fixes, 2026-07-07)
     ├── 性能优化与验证报告.md           ← ESP32-C5 CSI + 定位 + 呼吸/心跳优化报告
     ├── 数据流审计报告.md               ← 12 条端到端数据流审计 (2026-07-07)
-    ├── 竞赛改造方案.md                 ← 完整改造计划 (A/B/C/D/E类)
-    ├── 竞赛差距分析.md                 ← 需求 vs 能力对比
-    ├── 竞赛准备清单.md                 ← PPT/视频/展板等材料清单
     ├── ML架构详解.md                   ← CSI→姿态 ML 架构
     ├── 端侧Agent开发计划.md             ← Medical Agent 开发计划
     ├── 端侧Agent技术文档.md             ← Agent 架构/接口/技术文档 (Coordinator 模式 + 端到端验证)
-    ├── 端侧LLM方案设计.md              ← (历史) LLM 伤病报告方案
-    ├── 端侧LLM技术文档.md              ← (历史) LLM 接口/技术文档
     ├── 项目完整分析报告.md             ← 项目完整分析
-    ├── ESP32-C5 移植审计报告.md        ← 39 处修改审计
-    ├── ESP32-C5 移植指南.md            ← C5 移植指南
-    ├── 瑞萨 RZ_G2L 移植计划.md         ← RZ/G2L 移植计划
-    ├── 固件官方文档审计报告.md         ← 固件 vs 官方 API 审计
-    ├── 目录审计报告.md                 ← 目录完整性审计
-    ├── API_REFERENCE.md               ← WebSocket 数据接口文档
     ├── 硬件部署与使用指南.md           ← 硬件部署完整指南
     ├── 解决问题.md                     ← 极端场景伤病员连续监测痛点分析
+    ├── 项目介绍PPT大纲与视频文案.md     ← 竞赛 PPT/视频文案
     └── triage-ui/
         ├── triage.html                ← 分诊仪表盘 (暗色/亮色主题, 热力图, 3D骨架, EHR面板)
-        └── triage-v1.html             ← 旧版分诊仪表盘 (备份)
+        ├── triage-v1.html             ← 旧版分诊仪表盘 (备份)
+        ├── demo-alert.html            ← 告警演示页
+        ├── demo-walk.html             ← 伤员走动演示页
+        ├── js/triage-common.js        ← 分诊通用 JS 逻辑
+        └── lib/                       ← Three.js 库副本
+            ├── three.min.js
+            └── OrbitControls.js
 ```
 
 ---
@@ -389,25 +400,19 @@ CSI 采集          UDP:5005 →
 
 | 文档 | 内容 |
 |------|------|
-| `docs/竞赛改造方案.md` | 从开源项目到竞赛版本的完整改造计划 |
-| `docs/竞赛差距分析.md` | 竞赛需求 vs 项目现有能力对比 |
-| `docs/竞赛准备清单.md` | PPT/视频/展板等竞赛材料清单 |
+| `docs/项目全览.md` | 全项目技术全览 |
 | `docs/ML架构详解.md` | DensePose 模型架构 + 训练 + 推理 |
-| `docs/ESP32-C5 移植审计报告.md` | C5 移植 39 处修改审计 |
-| `docs/ESP32-C5 移植指南.md` | C5 移植完整指南 |
-| `docs/固件官方文档审计报告.md` | 固件 vs 官方 API 对照审计 |
-| `docs/瑞萨 RZ_G2L 移植计划.md` | RZ/G2L 主控移植计划 |
 | `docs/端侧Agent开发计划.md` | Medical Agent 开发计划 |
 | `docs/端侧Agent技术文档.md` | Agent 架构/接口/技术文档（含端到端验证结论）|
-| `docs/项目全览.md` | 全项目技术全览 |
-| `docs/API_REFERENCE.md` | WebSocket 数据接口完整文档 |
-| `docs/目录审计报告.md` | 目录完整性审计 |
 | `docs/硬件部署与使用指南.md` | 硬件部署完整指南 |
 | `docs/代码审计与修复报告.md` | 第七轮全项目审计：144 issues 发现、43 fixes 修复（2026-07-07）|
 | `docs/性能优化与验证报告.md` | ESP32-C5 CSI 性能 + 人员定位 + 呼吸/心跳检测优化报告 |
 | `docs/数据流审计报告.md` | 12 条端到端数据流审计 + 完整性检查（2026-07-07）|
 | `docs/解决问题.md` | 极端场景伤病员连续监测痛点分析 |
+| `docs/项目完整分析报告.md` | 项目完整分析报告 |
+| `docs/项目介绍PPT大纲与视频文案.md` | 竞赛 PPT/视频文案 |
 | `docs/PROGRESS.md` | 构建进度追踪（实时更新）|
+| `docs/README_COMPETITION.md` | 竞赛版 README |
 
 ---
 
