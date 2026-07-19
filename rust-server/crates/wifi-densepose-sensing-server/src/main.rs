@@ -1218,6 +1218,7 @@ async fn main() {
         "esp32" => {
             tokio::spawn(tasks::udp_receiver::udp_receiver_task(state.clone(), args.udp_port));
             tokio::spawn(tasks::broadcast_tick::broadcast_tick_task(state.clone(), 500)); // 0.5 Hz rebroadcast, primary data via UDP
+            tokio::spawn(tasks::ping_stimulator::ping_stimulator_task()); // keep ESP32 CSI callbacks firing
         }
         _ => {
             tokio::spawn(tasks::simulated_data::simulated_data_task(state.clone(), tick_ms));

@@ -3,3 +3,4 @@
 pub mod udp_receiver;
 pub mod simulated_data;
 pub mod broadcast_tick;
+pub mod ping_stimulator;

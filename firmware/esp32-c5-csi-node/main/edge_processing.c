@@ -171,6 +171,14 @@ static inline float biquad_process(edge_biquad_t *bq, float x)
     return y;
 }
 
+/* ── Forward declarations for edge_redesign_biquads_if_needed() ── */
+#define BQ_REDESIGN_THRESHOLD  0.10f
+static edge_biquad_t s_bq_breathing;
+static edge_biquad_t s_bq_heartrate;
+static float        s_last_bq_design_fs = 0.0f;
+static edge_biquad_t s_person_bq_br[EDGE_MAX_PERSONS];
+static edge_biquad_t s_person_bq_hr[EDGE_MAX_PERSONS];
+
 /**
  * @brief Redesign all biquad filters if sampling rate has drifted significantly.
  *
@@ -352,10 +360,6 @@ static float s_phase_history[EDGE_PHASE_HISTORY_LEN];
 static uint16_t s_history_len;
 static uint16_t s_history_idx;
 
-/** Biquad filters for breathing and heart rate. */
-static edge_biquad_t s_bq_breathing;
-static edge_biquad_t s_bq_heartrate;
-
 /** Filtered signal histories for BPM estimation. */
 static float s_breathing_filtered[EDGE_PHASE_HISTORY_LEN];
 static float s_heartrate_filtered[EDGE_PHASE_HISTORY_LEN];
@@ -379,14 +383,7 @@ static float s_prev_phase_velocity;
 static float   s_measured_sample_rate = 20.0f;
 static int64_t s_last_frame_us = 0;
 
-/* Last sampling rate used to design biquad filters.
- * CRITICAL-1 fix: when dynamic sample rate drifts >10% from this value,
- * biquads are redesigned to keep cutoff frequencies accurate.
- * Initialized to 0.0f to force first design on init. */
-static float   s_last_bq_design_fs = 0.0f;
-/* Hysteresis threshold (fraction) for biquad redesign. Avoids
- * oscillating redesigns when sample rate hovers near the boundary. */
-#define BQ_REDESIGN_THRESHOLD  0.10f
+/* ── Per-person biquad filters (now forward-declared above at line ~179) ── */
 
 /** Fall detection debounce state (issue #263). */
 static uint8_t  s_fall_consec_count;   /**< Consecutive frames above threshold. */
@@ -409,8 +406,6 @@ static bool s_has_prev_iq;
 
 /** Multi-person vitals state. */
 static edge_person_vitals_t s_persons[EDGE_MAX_PERSONS];
-static edge_biquad_t s_person_bq_br[EDGE_MAX_PERSONS];
-static edge_biquad_t s_person_bq_hr[EDGE_MAX_PERSONS];
 static float s_person_br_filt[EDGE_MAX_PERSONS][EDGE_PHASE_HISTORY_LEN];
 static float s_person_hr_filt[EDGE_MAX_PERSONS][EDGE_PHASE_HISTORY_LEN];
 
@@ -994,10 +989,15 @@ static void edge_task(void *arg)
              * BPM estimation, multi-person vitals) and can take several ms.
              * Without this yield, edge_dsp at priority 5 starves IDLE1 at
              * priority 0, triggering the task watchdog. See issue #266. */
-            vTaskDelay(1);
+            taskYIELD();
         } else {
-            /* No frames available — yield briefly. */
-            vTaskDelay(pdMS_TO_TICKS(1));
+            /* No frames available — sleep one tick (10ms at 100Hz).
+             * BUG FIX: pdMS_TO_TICKS(1)=0 at 100Hz tick rate, so vTaskDelay(0)
+             * only yields to same-priority tasks, never to IDLE (pri 0).
+             * edge_dsp at priority 5 would starve IDLE forever in the empty-ring
+             * spin loop, triggering the task watchdog at 5s. vTaskDelay(1) with
+             * ≥1 tick guarantees the scheduler runs IDLE. */
+            vTaskDelay(1);
         }
     }
 }
